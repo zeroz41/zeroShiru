@@ -64,6 +64,14 @@ export const debridTransport = derived(settings, value => {
 /** Lowercase info hashes known to play instantly on the configured service. */
 export const debridCachedHashes = writable(new Set())
 
+/**
+ * Whether debrid owns what the player is showing. Set the moment playback is routed to a
+ * service, before the resolve that takes a few seconds, because the player opens straight
+ * away and must not look like a torrent while it waits. Cleared whenever playback goes to
+ * the torrent client instead.
+ */
+export const debridPlayback = writable(false)
+
 settings.subscribe(value => {
   const key = `${value.debridService}:${value.debridApiKey}`
   if (serviceKey !== null && serviceKey !== key) {
@@ -112,12 +120,14 @@ export async function streamDebrid (torrentID, hash, search) {
     offline: status.value === 'offline',
     mode: settings.value.debridMode
   })
-  if (route.action === 'torrent') return false
+  if (route.action === 'torrent') return handOver(false)
   const debridOnly = route.only
   if (route.action === 'block') {
     toast.error('Debrid', { description: blockedMessages[route.reason]() })
-    return true
+    return handOver(true) // nothing plays, so nothing is owned
   }
+  // claimed before the resolve, which takes seconds the player spends already open
+  debridPlayback.set(true)
   try {
     files.set(await resolveDebridFiles(route.id, search))
     return true
@@ -126,19 +136,28 @@ export async function streamDebrid (torrentID, hash, search) {
       debug(`Torrent not cached: ${error.message}`)
       if (!debridOnly) {
         toast('Debrid', { description: 'Not cached on ' + serviceTitle() + ', streaming via torrent instead.' })
-        return false
+        return handOver(false)
       }
       toast.error('Debrid', { description: 'This torrent is not cached on ' + serviceTitle() + '. Pick a different release or disable debrid only mode.' })
     } else {
       debug('Debrid resolve failed:', error)
       if (!debridOnly) {
         toast.warning('Debrid Error', { description: `${error.message || error}\nStreaming via torrent instead.` })
-        return false
+        return handOver(false)
       }
       toast.error('Debrid Error', { description: '' + (error.message || error) })
     }
-    return true // handled, only mode never falls back to the torrent client
+    return handOver(true) // handled, only mode never falls back to the torrent client
   }
+}
+
+/**
+ * Releases the player back to the torrent client and reports the routing outcome.
+ * @param {boolean} handled - What streamDebrid returns to its caller.
+ */
+function handOver (handled) {
+  debridPlayback.set(false)
+  return handled
 }
 
 /**
