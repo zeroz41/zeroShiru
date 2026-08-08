@@ -696,6 +696,9 @@ export const defaults = {
   showLabels: true,
   expandingSidebar: false,
   torrentPathNew: undefined,
+  debridService: 'none',
+  debridApiKey: '',
+  debridMode: 'prefer',
   donate: true,
   w2g: false,
   font: undefined,
@@ -742,6 +745,7 @@ export const defaults = {
  * @property {any} [stagingTorrents]
  * @property {any} [seedingTorrents]
  * @property {any} [completedTorrents]
+ * @property {Record<string, Record<string, number>>} [debridResolvedHashes]
  * @property {string} posMiniplayer
  * @property {string} widthMiniplayer
  */
@@ -754,6 +758,7 @@ export const generalDefaults = {
   stagingTorrents: [],
   seedingTorrents: [],
   completedTorrents: [],
+  debridResolvedHashes: {},
   posMiniplayer: 'bottom right',
   widthMiniplayer: '0px'
 }

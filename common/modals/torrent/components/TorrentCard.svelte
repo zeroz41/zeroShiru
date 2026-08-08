@@ -6,6 +6,7 @@
   import { getEpisodeMetadataForMedia, getKitsuMappings } from '@/modules/anime/anime.js'
   import { copyToClipboard } from '@/modules/lib/clipboard.js'
   import { malDubs } from '@/modules/anime/animedubs.js'
+  import { debridEnabled, debridCachedHashes } from '@/modules/debrid/debrid.js'
   import { settings } from '@/modules/settings.js'
   import { Database, BadgeCheck, HardDrive, FileQuestion, AlertCircle, TriangleAlert } from 'lucide-svelte'
 
@@ -447,6 +448,11 @@
           <div class='text-light d-flex align-items-center text-nowrap'>{since(new Date(result.date))}</div>
         </div>
         <div class='secondary-metadata d-flex flex-wrap ml-auto justify-content-end gap-5'>
+          {#if $debridEnabled && $debridCachedHashes.has(result.hash?.toLowerCase())}
+            <div class='rounded px-15 py-5 border text-nowrap font-weight-bold d-flex align-items-center' style='background: hsla(var(--primary-color-dim-hsl), .15); border-color: var(--primary-color-light) !important; color: var(--primary-color-light)' title='Plays instantly from your debrid service'>
+              Debrid Cached
+            </div>
+          {/if}
           {#if result.type === 'best'}
             <div class='rounded px-15 py-5 border text-nowrap font-weight-bold d-flex align-items-center' style='background: var(--success-color-very-dim); border-color: var(--success-color-light) !important; color: var(--success-color-light)'>
               Best Release

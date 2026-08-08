@@ -10,13 +10,14 @@
   import { anitomyscript, getMediaMaxEp, getKitsuMappings, getEpisodeMetadataForMedia } from '@/modules/anime/anime.js'
   import { loadedTorrent, completedTorrents, seedingTorrents, stagingTorrents } from '@/modules/torrent.js'
   import { dedupe, getTorrentResults, updatePeerCounts } from '@/modules/extensions/handler.js'
+  import { debridEnabled, debridCachedHashes, debridServices, refreshDebridCache } from '@/modules/debrid/debrid.js'
   import { getId, getHash } from '@/modules/anime/animehash.js'
   import AnimeResolver from '@/modules/anime/animeresolver.js'
   import { anilistClient } from '@/modules/providers/anilist/anilist.js'
   import { click } from '@/modules/lib/click.js'
   import { toast } from 'svelte-sonner'
   import NestedDropdown from '@/components/overlays/NestedDropdown.svelte'
-  import { X, Search, EllipsisVertical, Timer, Clapperboard, MonitorCog, ArrowDownWideNarrow, Paintbrush, ListMusic, ChevronUp, ChevronDown, Radio, RefreshCw } from 'lucide-svelte'
+  import { X, Search, EllipsisVertical, Timer, Clapperboard, MonitorCog, ArrowDownWideNarrow, Paintbrush, ListMusic, ChevronUp, ChevronDown, Radio, RefreshCw, Cloud } from 'lucide-svelte'
   import Debug from 'debug'
   const debug = Debug('ui:torrents')
 
@@ -86,15 +87,17 @@
    * @param {Result[]} results
    * @param {string} sort
    * @param {boolean} batch
+   * @param {Set<string>} [debridHashes] - Hashes that play instantly via debrid, listed even without seeders.
    */
-  function sortResults(results, sort, batch) {
+  function sortResults(results, sort, batch, debridHashes) {
     if (!results) return { results: [], hiddenResults: [] }
     const deduped = Array.from(dedupe(results)).map(result => {
       if (!(result.parseObject?.release_group && result.parseObject.release_group.length < 20)) result.parseObject = { ...result.parseObject, release_group: 'No Group' }
       return result
     })
+    const available = entry => entry.seeders > 0 || entry.source?.managed || debridHashes?.has(entry.hash?.toLowerCase())
     return {
-      results: deduped.filter(entry => entry.seeders > 0 || entry.source?.managed).sort((a, b) => {
+      results: deduped.filter(available).sort((a, b) => {
         switch (sort) {
           case 'smallest': return a.size - b.size
           case 'best': return ((b.type === 'best') - (a.type === 'best') || (b.type === 'alt') - (a.type === 'alt')) || b.seeders - a.seeders
@@ -108,7 +111,7 @@
           default: return b.seeders - a.seeders
         }
       }),
-      hiddenResults: deduped.filter(entry => !entry.seeders && !entry.source?.managed)
+      hiddenResults: deduped.filter(entry => !available(entry))
     }
   }
 
@@ -247,6 +250,7 @@
 
   async function queryExtensions(request, resolution) {
     scrollTop()
+    if ($debridEnabled) refreshDebridCache()
     $results = {}
     const cachedHashes = []
     for (const resolvedHash of getHash(search?.media?.id, { episode: search?.episode, client: true, batchGuess: true }, false, true, true) ?? []) {
@@ -329,7 +333,7 @@
   $: resolution = $settings.rssQuality
   $: queries = queryExtensions({...search}, resolution)
   $: errors = getErrors({...search}, queries)
-  $: queryResults = sortResults($results?.torrents, $settings.torrentSort, batch)
+  $: queryResults = sortResults($results?.torrents, $settings.torrentSort, batch, $debridEnabled ? $debridCachedHashes : undefined)
   $: lookup = queryResults?.results
   $: (episodeSearch || resolution || $settings.torrentSort || $settings.audioLanguage) && scrollTop()
 
@@ -476,6 +480,12 @@
           <Clapperboard size='2.75rem' class='position-absolute z-10 text-dark-light pl-10 pointer-events-none' />
           <input type='number' inputmode='numeric' pattern='[0-9]*' max={maxEpisode} class='form-control bg-dark-very-light pl-40 control' placeholder='5' step='1' value={episodeSearch} on:input={episodeInput} disabled={(!search.episode && search.episode !== 0) || movie} />
         </div>
+        {#if debridServices[$settings.debridService]}
+          <div class='d-flex align-items-center px-10 py-5 rounded border text-nowrap font-weight-bold' style='background: hsla(var(--primary-color-dim-hsl), .15); border-color: var(--primary-color-light) !important; color: var(--primary-color-light)' title={$settings.debridMode === 'only' ? 'Debrid Only: playback always uses your debrid service, torrents never start.' : 'Debrid First: cached releases stream from your debrid service, anything uncached falls back to torrents.'}>
+            <Cloud size='1.8rem' class='mr-5' />
+            {$settings.debridMode === 'only' ? 'Debrid Only' : 'Debrid First'}
+          </div>
+        {/if}
       </div>
       <div class='col-12 col-sm-6 d-flex align-items-center mt-5 justify-content-center mt-sm-0 justify-content-sm-end'>
         <div class='d-flex align-items-center mr-5' data-toggle='tooltip' data-placement='top' data-title='Scrape Peer Data'>

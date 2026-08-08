@@ -11,6 +11,7 @@
   import { writable } from 'simple-store-svelte'
   import { createEventDispatcher } from 'svelte'
   import Subtitles from '@/modules/subtitles.js'
+  import DebridMetadata from '@/modules/debrid/metadata.js'
   import { toTS, fastPrettyBytes, capitalize, matchPhrase, videoRx, isValidNumber, debounce } from '@/modules/util.js'
   import { toast } from 'svelte-sonner'
   import { getChaptersAniSkip } from '@/modules/anime/anime.js'
@@ -28,7 +29,7 @@
   import 'rvfc-polyfill'
   import { ELECTRON, ANDROID, TORRENT } from '@/modules/bridge.js'
   import { unload } from '@/modules/torrent.js'
-  import { Settings, Gauge, Timer, X, Minus, ArrowDown, ArrowUp, Captions, CaptionsOff, CircleHelp, Contrast, FastForward, Keyboard, EllipsisVertical, SquareArrowOutUpRight, List, Eye, FilePlus2, ListMusic, ListVideo, Maximize, Minimize, Pause, PictureInPicture, PictureInPicture2, Play, Proportions, RefreshCcw, Rewind, RotateCcw, RotateCw, ScreenShare, SkipBack, SkipForward, Users, Volume1, Volume2, VolumeX, SlidersVertical, SquarePen, Milestone, ClockArrowDown, ClockArrowUp } from 'lucide-svelte'
+  import { Settings, Gauge, Timer, X, Minus, ArrowDown, ArrowUp, Captions, CaptionsOff, CircleHelp, Contrast, FastForward, Keyboard, EllipsisVertical, SquareArrowOutUpRight, List, Eye, FilePlus2, ListMusic, ListVideo, Maximize, Minimize, Pause, PictureInPicture, PictureInPicture2, Play, Proportions, RefreshCcw, Rewind, RotateCcw, RotateCw, ScreenShare, SkipBack, SkipForward, Users, Volume1, Volume2, VolumeX, SlidersVertical, SquarePen, Milestone, ClockArrowDown, ClockArrowUp, Cloud } from 'lucide-svelte'
   import Debug from 'debug'
   const debug = Debug('ui:player')
 
@@ -67,6 +68,7 @@
   let container = null
   let current = null
   let subs = null
+  let debridMeta = null
   let duration = 0.1
   let muted = false
   let wasPaused = null
@@ -226,6 +228,10 @@
         subs.destroy()
         subs = null
       }
+      if (debridMeta) {
+        debridMeta.destroy()
+        debridMeta = null
+      }
     }
   }
 
@@ -279,6 +285,10 @@
         subs.destroy()
         subs = null
       }
+      if (debridMeta) {
+        debridMeta.destroy()
+        debridMeta = null
+      }
       current = file
       setCurrent(file)
     }
@@ -290,6 +300,8 @@
       src = file.url
       if (!launchExternal) {
         subs = new Subtitles(video, files, current, handleHeaders)
+        // debrid streams never pass through the torrent client, parse metadata from the remote file instead
+        if (current?.debrid) debridMeta = new DebridMetadata(current, files, subs, { getTime: () => currentTime, onChapters: _chapters => { chapters = _chapters; embeddedChapters = _chapters } })
         video.load()
         await loadAnimeProgress()
       } else video.load()
@@ -1731,12 +1743,17 @@
       </div>
     {/if}
     <div class='d-flex justify-content-center bottom-0 d-title d-filler' class:col-4={$settings.playerTitleTop}>
-      <span class='icon'><Users class='pt-5 block-scale-30' strokeWidth={3} /> </span>
-      <span class='stats font-scale-24'>{torrent.peers || 0}</span>
-      <span class='icon'><ArrowDown class='block-scale-30' /></span>
-      <span class='stats font-scale-24'>{fastPrettyBytes(torrent.down)}/s</span>
-      <span class='icon'><ArrowUp class='block-scale-30' /></span>
-      <span class='stats font-scale-24'>{fastPrettyBytes(torrent.up)}/s</span>
+      {#if current?.debrid}
+        <span class='icon' title='Streaming from your debrid service'><Cloud class='pt-5 block-scale-30' strokeWidth={3} /> </span>
+        <span class='stats font-scale-24' title='Streaming from your debrid service'>Debrid</span>
+      {:else}
+        <span class='icon'><Users class='pt-5 block-scale-30' strokeWidth={3} /> </span>
+        <span class='stats font-scale-24'>{torrent.peers || 0}</span>
+        <span class='icon'><ArrowDown class='block-scale-30' /></span>
+        <span class='stats font-scale-24'>{fastPrettyBytes(torrent.down)}/s</span>
+        <span class='icon'><ArrowUp class='block-scale-30' /></span>
+        <span class='stats font-scale-24'>{fastPrettyBytes(torrent.up)}/s</span>
+      {/if}
       {#if resolvePrompt}
         <div class='position-absolute text-monospace rounded skipPrompt d-flex flex-column align-items-center text-center bg-dark-light p-20 z-50 mt-60' class:w-500={SUPPORTS.isAndroid}>
           <div class='skipFont'>

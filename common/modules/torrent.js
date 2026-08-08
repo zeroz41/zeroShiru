@@ -8,6 +8,7 @@ import { writable } from 'simple-store-svelte'
 import { toast } from 'svelte-sonner'
 import { capitalize } from '@/modules/util.js'
 import clipboard from '@/modules/lib/clipboard.js'
+import { streamDebrid } from '@/modules/debrid/debrid.js'
 import { setHash } from '@/modules/anime/animehash.js'
 import { TORRENT, ELECTRON } from '@/modules/bridge.js'
 import { get } from 'svelte/store'
@@ -138,6 +139,7 @@ export async function add(torrentID, search, hash, magnet, base64 = false) {
     media.value = search ? { media: (search.media || media.value?.media), episode: (search.episode || media.value?.episode), ...(media.value?.torrent ? { torrent: true } : { feed: true }) } : { torrent: true }
     if (hash && search) setHash(hash, { mediaId: search.media?.id, episode: search.episode, client: true })
     if (SUPPORTS.isAndroid && !settings.value.enableExternal) document.querySelector('.content-wrapper').requestFullscreen() // this WILL not work with auto-select torrents due to permissions check.
+    if (await streamDebrid(torrentID, hash, search)) return
     TORRENT.stream(torrentID, (hash === torrentID && torrentID) || false, magnet, base64)
   }
 }
