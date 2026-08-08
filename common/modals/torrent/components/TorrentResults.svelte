@@ -10,7 +10,7 @@
   import { anitomyscript, getMediaMaxEp, getKitsuMappings, getEpisodeMetadataForMedia } from '@/modules/anime/anime.js'
   import { loadedTorrent, completedTorrents, seedingTorrents, stagingTorrents } from '@/modules/torrent.js'
   import { dedupe, getTorrentResults, updatePeerCounts } from '@/modules/extensions/handler.js'
-  import { debridEnabled, debridCachedHashes, debridServices, refreshDebridCache } from '@/modules/debrid/debrid.js'
+  import { debridEnabled, debridCachedHashes, debridTransport, refreshDebridCache } from '@/modules/debrid/debrid.js'
   import { getId, getHash } from '@/modules/anime/animehash.js'
   import AnimeResolver from '@/modules/anime/animeresolver.js'
   import { anilistClient } from '@/modules/providers/anilist/anilist.js'
@@ -480,10 +480,10 @@
           <Clapperboard size='2.75rem' class='position-absolute z-10 text-dark-light pl-10 pointer-events-none' />
           <input type='number' inputmode='numeric' pattern='[0-9]*' max={maxEpisode} class='form-control bg-dark-very-light pl-40 control' placeholder='5' step='1' value={episodeSearch} on:input={episodeInput} disabled={(!search.episode && search.episode !== 0) || movie} />
         </div>
-        {#if debridServices[$settings.debridService]}
-          <div class='d-flex align-items-center px-10 py-5 rounded border text-nowrap font-weight-bold' style='background: hsla(var(--primary-color-dim-hsl), .15); border-color: var(--primary-color-light) !important; color: var(--primary-color-light)' title={$settings.debridMode === 'only' ? 'Debrid Only: playback always uses your debrid service, torrents never start.' : 'Debrid First: cached releases stream from your debrid service, anything uncached falls back to torrents.'}>
+        {#if $debridTransport}
+          <div class='d-flex align-items-center px-10 py-5 rounded border text-nowrap font-weight-bold' style='background: hsla(var(--primary-color-dim-hsl), .15); border-color: var(--primary-color-light) !important; color: var(--primary-color-light)' title={$debridTransport.description}>
             <Cloud size='1.8rem' class='mr-5' />
-            {$settings.debridMode === 'only' ? 'Debrid Only' : 'Debrid First'}
+            {$debridTransport.label}
           </div>
         {/if}
       </div>

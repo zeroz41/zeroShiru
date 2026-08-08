@@ -12,6 +12,7 @@
   import { createEventDispatcher } from 'svelte'
   import Subtitles from '@/modules/subtitles.js'
   import DebridMetadata from '@/modules/debrid/metadata.js'
+  import { debridTransport } from '@/modules/debrid/debrid.js'
   import { toTS, fastPrettyBytes, capitalize, matchPhrase, videoRx, isValidNumber, debounce } from '@/modules/util.js'
   import { toast } from 'svelte-sonner'
   import { getChaptersAniSkip } from '@/modules/anime/anime.js'
@@ -69,6 +70,8 @@
   let current = null
   let subs = null
   let debridMeta = null
+  // the player shows the service name in place of peers and speeds, which debrid streams have none of
+  $: debridTitle = `Streaming from ${$debridTransport?.title ?? 'your debrid service'}, no torrent peers involved`
   let duration = 0.1
   let muted = false
   let wasPaused = null
@@ -1744,8 +1747,8 @@
     {/if}
     <div class='d-flex justify-content-center bottom-0 d-title d-filler' class:col-4={$settings.playerTitleTop}>
       {#if current?.debrid}
-        <span class='icon' title='Streaming from your debrid service'><Cloud class='pt-5 block-scale-30' strokeWidth={3} /> </span>
-        <span class='stats font-scale-24' title='Streaming from your debrid service'>Debrid</span>
+        <span class='icon' title={debridTitle}><Cloud class='pt-5 block-scale-30' strokeWidth={3} /> </span>
+        <span class='stats font-scale-24' title={debridTitle}>{$debridTransport?.title ?? 'Debrid'}</span>
       {:else}
         <span class='icon'><Users class='pt-5 block-scale-30' strokeWidth={3} /> </span>
         <span class='stats font-scale-24'>{torrent.peers || 0}</span>

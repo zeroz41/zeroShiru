@@ -1,29 +1,20 @@
 // relative import keeps this module loadable under plain Node for API tests
-import DebridService, { DebridError } from './service.js'
+import DebridService from './service.js'
 
 /**
- * Premiumize stub, see https://www.premiumize.me/api
- * Untested skeleton kept out of the settings menu until someone with an account
- * implements and verifies it. The relevant endpoints are:
- * - GET  /account/info?apikey=      -> account and premium status for validate()
- * - GET  /transfer/list?apikey=     -> account transfers for listCachedHashes()
- * - GET  /cache/check?apikey=&items[]= -> Premiumize still offers a real cache check
- * - POST /transfer/directdl?apikey=&src= -> direct stream URLs for a magnet in one call
- * Note: Premiumize authenticates through a query parameter instead of a header.
+ * Premiumize template, see https://www.premiumize.me/api
+ *
+ * Implementation template: the base class already provides authentication, rate
+ * limiting, typed errors and clear not-implemented reporting, so adding support
+ * means writing `validate`, `listCachedHashes` and `resolve` here and flipping
+ * `available` to true. Nothing outside this file has to change. Useful endpoints:
+ * - GET  /account/info      -> account and premium status for validate()
+ * - GET  /transfer/list     -> account transfers for listCachedHashes()
+ * - GET  /cache/check       -> Premiumize still offers a real cache check (`items[]=`)
+ * - POST /transfer/directdl -> direct stream URLs for a magnet in one call (`src=`)
  */
 export default class Premiumize extends DebridService {
   static id = 'premiumize'
   static title = 'Premiumize'
-
-  async validate () {
-    throw new DebridError(`${Premiumize.title} support is not implemented yet`)
-  }
-
-  async listCachedHashes () {
-    throw new DebridError(`${Premiumize.title} support is not implemented yet`)
-  }
-
-  async resolve (magnet, opts) {
-    throw new DebridError(`${Premiumize.title} support is not implemented yet`)
-  }
+  static auth = 'query'
 }

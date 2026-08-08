@@ -11,16 +11,22 @@ import RealDebrid from '@/modules/debrid/realdebrid.js'
 import AllDebrid from '@/modules/debrid/alldebrid.js'
 import TorBox from '@/modules/debrid/torbox.js'
 import Premiumize from '@/modules/debrid/premiumize.js'
-import { DebridNotCachedError } from '@/modules/debrid/service.js'
+import { DebridNotCachedError, secureFiles } from '@/modules/debrid/service.js'
 import { routeDebrid } from '@/modules/debrid/route.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
 
-// register new services here, stubs stay hidden from the settings menu until
-// their `available` flag is flipped after being implemented and tested
-export const debridServices = Object.fromEntries([RealDebrid, AllDebrid, TorBox, Premiumize].filter(Service => Service.available).map(Service => [Service.id, Service]))
+// register new services here, implementation templates stay hidden from the settings
+// menu until their `available` flag is flipped after being implemented and tested.
+// This registry is the only place that touches service classes, everything else in
+// the app goes through the stores and functions exported below.
+const debridServices = Object.fromEntries([RealDebrid, AllDebrid, TorBox, Premiumize].filter(Service => Service.available).map(Service => [Service.id, Service]))
+
+/** Selectable services for the settings menu, as plain data. */
+export const debridOptions = Object.values(debridServices).map(Service => ({ id: Service.id, title: Service.title }))
 
 const MAX_REMEMBERED = 300
+const REFRESH_INTERVAL = 60_000
 
 // user facing messages for the routing policy's blocked outcomes
 const blockedMessages = {
@@ -32,9 +38,28 @@ const blockedMessages = {
 /** @type {import('@/modules/debrid/service.js').default | null} */
 let service = null
 let serviceKey = null
+let lastRefresh = 0
 
 /** Whether a debrid service is selected and has an API key. */
 export const debridEnabled = derived(settings, value => Boolean(debridServices[value.debridService] && value.debridApiKey))
+
+/**
+ * How playback is routed right now, or null when no debrid service is selected.
+ * The single source the UI reads to describe the active transport.
+ */
+export const debridTransport = derived(settings, value => {
+  const Service = debridServices[value.debridService]
+  if (!Service) return null
+  const only = value.debridMode === 'only'
+  return {
+    title: Service.title,
+    only,
+    label: only ? 'Debrid Only' : 'Debrid First',
+    description: only
+      ? `Debrid Only: playback always uses ${Service.title}, torrents never start.`
+      : `Debrid First: releases cached on ${Service.title} stream from it, anything uncached falls back to torrents.`
+  }
+})
 
 /** Lowercase info hashes known to play instantly on the configured service. */
 export const debridCachedHashes = writable(new Set())
@@ -77,16 +102,18 @@ export async function testDebrid () {
  * @param {{ episode?: number }} [search] - Playback context for picking the right file in packs.
  */
 export async function streamDebrid (torrentID, hash, search) {
-  const debridOnly = Boolean(debridServices[settings.value.debridService]) && settings.value.debridMode === 'only'
+  const serviceSelected = Boolean(debridServices[settings.value.debridService])
   const route = routeDebrid({
     torrentID,
     hash,
-    serviceSelected: Boolean(debridServices[settings.value.debridService]),
-    serviceReady: Boolean(getService()),
+    serviceSelected,
+    // only build the service once the selection alone cannot decide the outcome
+    serviceReady: serviceSelected && Boolean(getService()),
     offline: status.value === 'offline',
     mode: settings.value.debridMode
   })
   if (route.action === 'torrent') return false
+  const debridOnly = route.only
   if (route.action === 'block') {
     toast.error('Debrid', { description: blockedMessages[route.reason]() })
     return true
@@ -126,8 +153,10 @@ export async function resolveDebridFiles (torrentID, search) {
     fileFilter: name => videoRx.test(name) || subRx.test(name),
     pickFile: Number.isFinite(episode) ? files => pickEpisodeFile(files, episode) : undefined
   })
+  const files = secureFiles(resolved.files, serviceTitle())
+  if (files.length !== resolved.files.length) debug(`Discarded ${resolved.files.length - files.length} non-HTTPS links from ${serviceTitle()}`)
   rememberHash(resolved.hash)
-  return Promise.all(resolved.files.map(async file => ({
+  return Promise.all(files.map(async file => ({
     infoHash: resolved.hash,
     fileHash: await sha1hex(`${resolved.hash}:${file.name}:${file.size}`), // same key the torrent client uses, so watch progress is shared
     torrent_name: resolved.name,
@@ -140,7 +169,6 @@ export async function resolveDebridFiles (torrentID, search) {
   })))
 }
 
-let lastRefresh = 0
 /**
  * Updates the cached hash set from remembered resolves and, at most once a
  * minute, the list of torrents already downloaded on the account.
@@ -150,7 +178,7 @@ export function refreshDebridCache () {
   if (!service) return
   const remembered = Object.keys(cache.getEntry(caches.GENERAL, 'debridResolvedHashes')?.[serviceId()] || {})
   if (remembered.length) debridCachedHashes.update(set => new Set([...set, ...remembered]))
-  if (Date.now() - lastRefresh < 60_000 || status.value === 'offline') return
+  if (Date.now() - lastRefresh < REFRESH_INTERVAL || status.value === 'offline') return
   lastRefresh = Date.now()
   service.listCachedHashes().then(hashes => {
     debridCachedHashes.update(set => new Set([...set, ...hashes]))

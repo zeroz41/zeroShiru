@@ -6,9 +6,9 @@
   import { getEpisodeMetadataForMedia, getKitsuMappings } from '@/modules/anime/anime.js'
   import { copyToClipboard } from '@/modules/lib/clipboard.js'
   import { malDubs } from '@/modules/anime/animedubs.js'
-  import { debridEnabled, debridCachedHashes } from '@/modules/debrid/debrid.js'
+  import { debridEnabled, debridCachedHashes, debridTransport } from '@/modules/debrid/debrid.js'
   import { settings } from '@/modules/settings.js'
-  import { Database, BadgeCheck, HardDrive, FileQuestion, AlertCircle, TriangleAlert } from 'lucide-svelte'
+  import { Database, BadgeCheck, HardDrive, FileQuestion, AlertCircle, TriangleAlert, Cloud } from 'lucide-svelte'
 
   const { reactive, init } = createListener(['torrent-button', 'torrent-safe-area'])
   init(true)
@@ -449,8 +449,9 @@
         </div>
         <div class='secondary-metadata d-flex flex-wrap ml-auto justify-content-end gap-5'>
           {#if $debridEnabled && $debridCachedHashes.has(result.hash?.toLowerCase())}
-            <div class='rounded px-15 py-5 border text-nowrap font-weight-bold d-flex align-items-center' style='background: hsla(var(--primary-color-dim-hsl), .15); border-color: var(--primary-color-light) !important; color: var(--primary-color-light)' title='Plays instantly from your debrid service'>
-              Debrid Cached
+            <div class='rounded px-15 py-5 border text-nowrap font-weight-bold d-flex align-items-center' style='background: hsla(var(--primary-color-dim-hsl), .15); border-color: var(--primary-color-light) !important; color: var(--primary-color-light)' title={`Cached on ${$debridTransport?.title ?? 'your debrid service'}, streams instantly instead of downloading`}>
+              <Cloud size='1.4rem' class='mr-5' />
+              Debrid
             </div>
           {/if}
           {#if result.type === 'best'}

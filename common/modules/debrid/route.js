@@ -19,14 +19,17 @@ function usable (torrentID) {
  * @param {boolean} options.serviceReady - The service has an API key configured.
  * @param {boolean} options.offline - The client has no network connection.
  * @param {string} options.mode - The debridMode setting, 'prefer' or 'only'.
- * @returns {{ action: 'torrent' } | { action: 'block', reason: 'key' | 'offline' | 'source' } | { action: 'resolve', id: string }}
+ * @returns {{ action: 'torrent', only: boolean } | { action: 'block', reason: 'key' | 'offline' | 'source', only: boolean } | { action: 'resolve', id: string, only: boolean }}
+ *   `only` reports whether debrid only mode governs this decision, so callers never
+ *   have to re-derive the fallback rules that were already applied here.
  */
 export function routeDebrid ({ torrentID, hash, serviceSelected, serviceReady, offline, mode }) {
-  if (!serviceSelected) return { action: 'torrent' }
-  const debridOnly = mode === 'only'
-  if (!serviceReady) return debridOnly ? { action: 'block', reason: 'key' } : { action: 'torrent' }
-  if (offline) return debridOnly ? { action: 'block', reason: 'offline' } : { action: 'torrent' }
+  // with no service selected debrid is entirely out of the picture, only mode included
+  if (!serviceSelected) return { action: 'torrent', only: false }
+  const only = mode === 'only'
+  if (!serviceReady) return only ? { action: 'block', reason: 'key', only } : { action: 'torrent', only }
+  if (offline) return only ? { action: 'block', reason: 'offline', only } : { action: 'torrent', only }
   const id = usable(torrentID) || usable(hash)
-  if (!id) return debridOnly ? { action: 'block', reason: 'source' } : { action: 'torrent' }
-  return { action: 'resolve', id }
+  if (!id) return only ? { action: 'block', reason: 'source', only } : { action: 'torrent', only }
+  return { action: 'resolve', id, only }
 }

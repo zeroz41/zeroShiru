@@ -830,3 +830,23 @@ export const videoRx = new RegExp(`.(${videoExtensions.join('|')})$`, 'i')
 // freetype supported
 export const fontExtensions = ['ttf', 'ttc', 'woff', 'woff2', 'otf', 'cff', 'otc', 'pfa', 'pfb', 'pcf', 'fnt', 'bdf', 'pfr', 'eot']
 export const fontRx = new RegExp(`.(${fontExtensions.join('|')})$`, 'i')
+
+// containers the Matroska parser can read embedded tracks, fonts and chapters out of
+export const matroskaRx = /\.(mkv|webm)$/i
+
+/**
+ * Picks the external subtitle files belonging to one video out of a release's file list.
+ * Season packs ship a subtitle per episode, so subtitles are matched against the playing
+ * file's name unless the release holds a single video, in which case they all belong to it.
+ * Shared by the torrent client and debrid playback so both lanes stay in step.
+ * @param {{ name: string }[]} files - Every file in the release.
+ * @param {string} videoName - Name of the video being played, with extension.
+ * @param {number} [videoCount] - Videos in the release, counted from `files` when omitted.
+ * @returns {any[]} The matching subtitle files, in the order given.
+ */
+export function matchSubtitleFiles (files, videoName, videoCount) {
+  if (!files?.length || !videoName) return []
+  const videos = videoCount ?? files.filter(file => videoRx.test(file.name)).length
+  const stem = videoName.substring(0, videoName.lastIndexOf('.')) || videoName
+  return files.filter(file => subRx.test(file.name) && (videos <= 1 || file.name.includes(stem)))
+}

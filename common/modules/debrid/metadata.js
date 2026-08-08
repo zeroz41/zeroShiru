@@ -1,6 +1,6 @@
 import Metadata from 'matroska-metadata'
 import { arr2hex, hex2bin } from 'uint8-util'
-import { fontRx, subRx, sleep } from '@/modules/util.js'
+import { fontRx, matroskaRx, matchSubtitleFiles, sleep } from '@/modules/util.js'
 import { SUPPORTS } from '@/modules/support.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
@@ -39,6 +39,10 @@ class RemoteFile {
             const res = await fetch(url, { headers: { Range: range }, signal: controller.signal })
             if (!res.ok && res.status !== 206) throw new Error(`Failed to fetch stream: ${res.status}`)
             yield * res.body
+          } catch (error) {
+            // the only thing that aborts these is our own teardown, so end the stream
+            // quietly rather than surfacing a failure nobody can act on
+            if (error?.name !== 'AbortError') throw error
           } finally {
             controllers.delete(controller)
             controller.abort()
@@ -62,6 +66,10 @@ class RemoteFile {
  */
 export default class DebridMetadata {
   destroyed = false
+  /** @type {RemoteFile | null} */
+  remote = null
+  /** @type {Metadata | null} */
+  metadata = null
 
   /**
    * @param {any} file - The playing debrid file object.
@@ -73,13 +81,28 @@ export default class DebridMetadata {
     debug('Initializing debrid metadata parser for: ' + file?.name)
     this.file = file
     this.getTime = getTime
+
+    // external subtitle files that were resolved alongside the video, matched to it
+    // exactly like the torrent client does so season packs load one episode's subs
+    for (const sub of matchSubtitleFiles(files, file.name)) {
+      fetch(sub.url).then(res => res.arrayBuffer()).then(data => {
+        if (!this.destroyed) subtitles.handleSubtitleFile({ name: sub.name, data })
+      }).catch(error => debug(`Failed to fetch subtitle file ${sub.name}:`, error))
+    }
+
+    // everything below reads the Matroska container, which only these formats have
+    if (!matroskaRx.test(file.name)) {
+      debug('Not a Matroska container, skipping embedded metadata: ' + file.name)
+      return
+    }
     this.remote = new RemoteFile(file.url, file.size, file.name)
     this.metadata = new Metadata(this.remote)
 
     this.metadata.getTracks().then(tracks => {
       if (this.destroyed) return
       debug(`Found ${tracks?.length} subtitle tracks`)
-      if (!tracks.length) return this.destroy()
+      // nothing embedded to stream, drop the parser but stay alive for external subtitle files
+      if (!tracks.length) return this.#releaseParser()
       subtitles.handleTracks(tracks)
       this.#streamSubtitles()
     }).catch(error => debug('Failed to read tracks:', error))
@@ -104,13 +127,6 @@ export default class DebridMetadata {
     this.metadata.on('subtitle', (subtitle, trackNumber) => {
       if (!this.destroyed) subtitles.handleSubtitle({ subtitle, trackNumber })
     })
-
-    // external subtitle files that were resolved alongside the video
-    for (const sub of (files || []).filter(({ name }) => subRx.test(name))) {
-      fetch(sub.url).then(res => res.arrayBuffer()).then(data => {
-        if (!this.destroyed) subtitles.handleSubtitleFile({ name: sub.name, data })
-      }).catch(error => debug(`Failed to fetch subtitle file ${sub.name}:`, error))
-    }
   }
 
   /** Streams the file through the parser, throttled against the playback position. */
@@ -135,15 +151,20 @@ export default class DebridMetadata {
     }
   }
 
-  destroy () {
-    if (this.destroyed) return
-    debug('Destroying debrid metadata parser')
-    this.destroyed = true
+  /** Releases the container parser and its range requests, leaving external subtitles alone. */
+  #releaseParser () {
     this.metadata?.removeAllListeners()
     this.metadata?.destroy()
     this.remote?.destroy()
     this.metadata = null
     this.remote = null
+  }
+
+  destroy () {
+    if (this.destroyed) return
+    debug('Destroying debrid metadata parser')
+    this.destroyed = true
+    this.#releaseParser()
     this.file = null
   }
 }

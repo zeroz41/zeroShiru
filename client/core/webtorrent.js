@@ -3,7 +3,7 @@ import HTTPTracker from 'http-tracker'
 import Client from 'bittorrent-tracker'
 import { hex2bin, arr2hex, text2arr } from 'uint8-util'
 import { makeHash, getInfoHash, hasIntegrity, getProgressAndSize, stringifyQuery, errorToString, TMP } from '@client/lib/util.js'
-import { fontRx, sleep, subRx, videoRx, isValidNumber } from '@/modules/util.js'
+import { fontRx, sleep, matchSubtitleFiles, isValidNumber } from '@/modules/util.js'
 import { SUPPORTS } from '@/modules/support.js'
 import { spawn } from 'node:child_process'
 import Metadata from '@client/lib/metadata.js'
@@ -229,10 +229,8 @@ export default class TorrentClient extends WebTorrent {
   async findSubtitleFiles(targetFile) {
     const currentTorrent = this.torrents.find(torrent => torrent.current)
     if (!currentTorrent?.files) return
-    const videoFiles = currentTorrent.files.filter(file => videoRx.test(file.name))
-    const videoName = targetFile.name.substring(0, targetFile.name.lastIndexOf('.')) || targetFile.name
-    // array of subtitle files that match video name, or all subtitle files when only 1 vid file
-    const subfiles = currentTorrent.files.filter(file => subRx.test(file.name) && (videoFiles.length === 1 ? true : file.name.includes(videoName)))
+    // shared with debrid playback so both lanes match subtitles to the video the same way
+    const subfiles = matchSubtitleFiles(currentTorrent.files, targetFile.name)
     debug(`Found ${subfiles?.length} subtitle files`)
     for (const file of subfiles) {
       const data = await file.arrayBuffer()
@@ -492,7 +490,8 @@ export default class TorrentClient extends WebTorrent {
       } case 'current': {
         if (data.data) {
           if (data.data.current.debrid) {
-            // debrid streams play over HTTP and never join the client, just detach the previous torrent file
+            // debrid files stream straight from the service over HTTPS and never join the
+            // torrent client, so there is nothing to attach, only the previous playback to release
             if (this.playerProcess) {
               this.playerProcess.kill()
               this.playerProcess = null
@@ -505,6 +504,13 @@ export default class TorrentClient extends WebTorrent {
             }
             this.metadata?.destroy?.()
             this.metadata = null
+            // nothing is playing from the client anymore, so stop reporting the old torrent
+            // as current or its peers and speeds keep flowing to the player and torrent manager
+            const lastTorrent = this.torrents.find(_torrent => _torrent.current)
+            if (lastTorrent) {
+              lastTorrent.current = false
+              this.bumpTorrent(lastTorrent)
+            }
             if (data.data.external && (SUPPORTS.isAndroid || this.player)) this.dispatch('externalReady')
             break
           }

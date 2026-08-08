@@ -3,7 +3,7 @@
   import { toast } from 'svelte-sonner'
   import { Eye, EyeOff } from 'lucide-svelte'
   import SettingCard from '@/routes/settings/components/SettingCard.svelte'
-  import { debridServices, testDebrid } from '@/modules/debrid/debrid.js'
+  import { debridOptions, testDebrid } from '@/modules/debrid/debrid.js'
   export let settings
 
   let showKey = false
@@ -23,7 +23,7 @@
 <SettingCard title='Debrid Service' description='Streams releases over HTTPS from a debrid service instead of peer-to-peer whenever they are available in its cache. The torrent client keeps working as usual, uncached releases simply play as torrents.'>
   <select class='form-control bg-dark w-300 mw-full' bind:value={settings.debridService}>
     <option value='none' selected>None</option>
-    {#each Object.values(debridServices) as service (service.id)}
+    {#each debridOptions as service (service.id)}
       <option value={service.id}>{service.title}</option>
     {/each}
   </select>
