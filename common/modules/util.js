@@ -699,6 +699,8 @@ export const defaults = {
   debridService: 'none',
   debridApiKey: '',
   debridMode: 'prefer',
+  debridCachedOnly: false,
+  debridCacheCheck: true,
   donate: true,
   w2g: false,
   font: undefined,

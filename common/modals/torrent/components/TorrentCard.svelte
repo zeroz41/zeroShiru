@@ -449,9 +449,8 @@
         </div>
         <div class='secondary-metadata d-flex flex-wrap ml-auto justify-content-end gap-5'>
           {#if $debridEnabled && $debridCachedHashes.has(result.hash?.toLowerCase())}
-            <div class='rounded px-15 py-5 border text-nowrap font-weight-bold d-flex align-items-center' style='background: hsla(var(--primary-color-dim-hsl), .15); border-color: var(--primary-color-light) !important; color: var(--primary-color-light)' title={`Cached on ${$debridTransport?.title ?? 'your debrid service'}, streams instantly instead of downloading`}>
-              <Cloud size='1.4rem' class='mr-5' />
-              Debrid
+            <div class='rounded px-10 py-5 border text-nowrap d-flex align-items-center' style='background: hsla(var(--primary-color-dim-hsl), .15); border-color: var(--primary-color-light) !important; color: var(--primary-color-light)' title={`Cached on ${$debridTransport?.title ?? 'your debrid service'}, streams instantly instead of downloading`}>
+              <Cloud size='1.6rem' />
             </div>
           {/if}
           {#if result.type === 'best'}

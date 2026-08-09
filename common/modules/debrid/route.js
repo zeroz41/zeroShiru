@@ -1,6 +1,6 @@
-// Pure playback routing policy, free of UI imports so it can be tested under
-// plain Node. This is the single decision point for debrid vs torrent playback:
-// debrid only mode must never route to the torrent client, whatever the input.
+// Pure debrid policy, free of UI imports so it can be tested under plain Node.
+// Two decisions live here: how a play request is routed (debrid only mode must never
+// reach the torrent client, whatever the input), and which search results are listed.
 
 const magnetRx = /^magnet:.*urn:btih:[a-f\d]{40}/i
 const hexRx = /^[a-f\d]{40}$/i
@@ -32,4 +32,18 @@ export function routeDebrid ({ torrentID, hash, serviceSelected, serviceReady, o
   const id = usable(torrentID) || usable(hash)
   if (!id) return only ? { action: 'block', reason: 'source', only } : { action: 'torrent', only }
   return { action: 'resolve', id, only }
+}
+
+/**
+ * Whether a search result belongs in the listed results rather than the hidden ones.
+ * With the cached filter off this is upstream's rule, widened only by the fact that a
+ * cached release streams without seeders. With it on, only known-cached releases list.
+ * @param {{ seeders?: number, source?: { managed?: boolean } }} result
+ * @param {boolean} cached - The service is known to hold this release.
+ * @param {boolean} [cachedOnly] - The user asked to see cached releases only.
+ * @returns {boolean}
+ */
+export function listResult (result, cached, cachedOnly) {
+  if (cachedOnly) return cached
+  return result?.seeders > 0 || Boolean(result?.source?.managed) || cached
 }

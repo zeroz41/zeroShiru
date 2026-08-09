@@ -6,8 +6,8 @@ import DebridService from './service.js'
  *
  * Implementation template: the base class already provides authentication, rate
  * limiting, typed errors and clear not-implemented reporting, so adding support
- * means writing `validate`, `listCachedHashes` and `resolve` here and flipping
- * `available` to true. Nothing outside this file has to change. TorBox uses a
+ * means writing `validate`, `listCachedHashes`, `resolve` and `checkCachedBatch` here
+ * and flipping `available` to true. Nothing outside this file has to change. TorBox uses a
  * Bearer token like Real-Debrid, so the inherited `auth` default already fits.
  * Useful endpoints:
  * - GET  /user/me                -> account and plan for validate()
@@ -19,4 +19,6 @@ import DebridService from './service.js'
 export default class TorBox extends DebridService {
   static id = 'torbox'
   static title = 'TorBox'
+  // /torrents/checkcached answers for many hashes at once, so badges cost one request
+  static cacheCheck = 'batch'
 }

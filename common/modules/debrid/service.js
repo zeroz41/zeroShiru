@@ -119,16 +119,37 @@ export default class DebridService {
     request: 30_000, // hard limit on a single HTTP request
     select: 12_000, // waiting for the service to accept a magnet and expose its file list
     ready: 5_000, // waiting for a cached torrent to report ready, anything slower is a fresh download
-    poll: 1_000 // gap between status polls
+    poll: 1_000, // gap between status polls
+    probe: 8_000 // budget for one cache probe, past this the release is not instantly playable
   }
 
   /** @type {number} Most files one resolve turns into stream links, guards against huge season packs. */
   static maxFiles = 60
 
+  /**
+   * @type {'none' | 'batch' | 'probe'} How the service can be asked whether it holds a release.
+   * 'batch' services answer for many hashes in one cheap call, which is by far the best case.
+   * 'probe' is for services with no such endpoint, where the only way to find out is to add
+   * the magnet and read the status back, costing several requests per hash.
+   */
+  static cacheCheck = 'none'
+  /** @type {number} Most hashes one checkCached call probes, since probing is the expensive path. */
+  static maxProbes = 10
+  /**
+   * How long a cache answer stays trusted, in milliseconds. A miss expires far sooner than a
+   * hit: anyone can pull a release into the service's cache at any moment, but a release it
+   * already holds rarely disappears.
+   */
+  static cacheTTL = { hit: 6 * 60 * 60_000, miss: 20 * 60_000 }
+
   /** @param {string} apiKey */
   constructor (apiKey) {
     this.apiKey = apiKey
     this.rateLimitPromise = null
+    /** @type {Map<string, { cached: boolean, at: number }>} What the service has already said about a hash. */
+    this.cacheState = new Map()
+    /** @type {Map<string, Promise<boolean>>} Probes in flight, so the same hash is never asked about twice at once. */
+    this.probes = new Map()
     this.limiter = new Bottleneck(this.config.limits)
     this.limiter.on('failed', (error, jobInfo) => {
       if (error instanceof DebridNetworkError) return // offline, retrying just delays the error
@@ -268,6 +289,133 @@ export default class DebridService {
   }
 
   /**
+   * Records what is known about a release so later checks are free. Playback feeds this
+   * too: a resolve that succeeded proves the service holds it, a not-cached error proves
+   * it does not, and neither costs a request to find out again.
+   * @param {string} magnetOrHash
+   * @param {boolean} cached
+   */
+  remember (magnetOrHash, cached) {
+    const hash = DebridService.parseHash(magnetOrHash)
+    if (hash) this.cacheState.set(hash, { cached, at: Date.now() })
+  }
+
+  /**
+   * A remembered answer that has not expired, or undefined when the hash needs asking about.
+   * @param {string} hash
+   * @returns {boolean | undefined}
+   */
+  #recall (hash) {
+    const known = this.cacheState.get(hash)
+    if (!known) return undefined
+    if (Date.now() - known.at < (known.cached ? this.config.cacheTTL.hit : this.config.cacheTTL.miss)) return known.cached
+    this.cacheState.delete(hash) // stale, ask again
+    return undefined
+  }
+
+  /**
+   * The given hashes that nothing is known about yet, in the order supplied. Callers use
+   * this to skip work entirely rather than to decide what to ask about, which checkCached
+   * does itself.
+   * @param {string[]} magnetsOrHashes
+   * @returns {string[]}
+   */
+  unknownHashes (magnetsOrHashes) {
+    return DebridService.#normalize(magnetsOrHashes).filter(hash => this.#recall(hash) === undefined && !this.probes.has(hash))
+  }
+
+  /** Lowercase, deduplicated hashes, order preserved. */
+  static #normalize (magnetsOrHashes) {
+    return [...new Set((magnetsOrHashes || []).map(entry => DebridService.parseHash(entry)).filter(Boolean))]
+  }
+
+  /**
+   * Reports which of the given releases the service can stream instantly.
+   *
+   * Remembered answers come back for free. Whatever is left is asked about in the cheapest
+   * way the service supports: one batch call where the API offers a cache endpoint, or a
+   * capped number of probes where it does not, because a probe costs several requests.
+   * Hashes that stay unanswered are simply absent from `checked`, which callers must treat
+   * as "unknown" rather than "not cached".
+   * @param {string[]} magnetsOrHashes - Candidates, most relevant first, since the cap bites from the end.
+   * @param {{ probe?: boolean, limit?: number }} [opts]
+   * @returns {Promise<{ cached: Set<string>, checked: Set<string> }>}
+   */
+  async checkCached (magnetsOrHashes, { probe = true, limit = this.config.maxProbes } = {}) {
+    const cached = new Set()
+    const checked = new Set()
+    const unknown = []
+    for (const hash of DebridService.#normalize(magnetsOrHashes)) {
+      const known = this.#recall(hash)
+      if (known === undefined) unknown.push(hash)
+      else {
+        checked.add(hash)
+        if (known) cached.add(hash)
+      }
+    }
+    if (!unknown.length || this.config.cacheCheck === 'none') return { cached, checked }
+
+    if (this.config.cacheCheck === 'batch') {
+      const hits = await this.checkCachedBatch(unknown)
+      for (const hash of unknown) {
+        const hit = hits.has(hash)
+        this.remember(hash, hit)
+        checked.add(hash)
+        if (hit) cached.add(hash)
+      }
+      return { cached, checked }
+    }
+
+    if (!probe) return { cached, checked }
+    const targets = unknown.slice(0, Math.max(0, limit))
+    if (targets.length < unknown.length) debug(`Probing ${targets.length} of ${unknown.length} unknown hashes, the rest stay unknown`)
+    await Promise.all(targets.map(async hash => {
+      try {
+        if (await this.#probe(hash)) cached.add(hash)
+        checked.add(hash)
+      } catch (error) {
+        if (error instanceof DebridAuthError) throw error // the key is wrong, every other probe would fail too
+        debug(`Cache probe failed for ${hash}: ${error.message}`)
+      }
+    }))
+    return { cached, checked }
+  }
+
+  /** Runs one probe, sharing a single request with any caller already waiting on that hash. */
+  #probe (hash) {
+    let pending = this.probes.get(hash)
+    if (!pending) {
+      pending = this.probeCached(hash)
+        .then(result => {
+          this.remember(hash, result)
+          return result
+        })
+        .finally(() => this.probes.delete(hash))
+      this.probes.set(hash, pending)
+    }
+    return pending
+  }
+
+  /**
+   * Asks the service about many releases at once. Implement this for any API that exposes a
+   * cache endpoint, and set `cacheCheck` to 'batch': it is one request instead of dozens.
+   * @abstract
+   * @param {string[]} hashes - Lowercase info hashes.
+   * @returns {Promise<Set<string>>} The subset the service can stream instantly.
+   */
+  async checkCachedBatch (hashes) { throw new DebridNotImplementedError(this.config.title) }
+
+  /**
+   * Determines whether one release is cached, for services with no cache endpoint.
+   * Implementations must leave the account exactly as they found it, and must resolve
+   * false rather than throwing when the answer is simply "no".
+   * @abstract
+   * @param {string} hash - Lowercase info hash.
+   * @returns {Promise<boolean>}
+   */
+  async probeCached (hash) { throw new DebridNotImplementedError(this.config.title) }
+
+  /**
    * Verifies the API key and that the account can stream torrents.
    * @abstract
    * @returns {Promise<{ username: string, expires?: string }>}
@@ -295,6 +443,8 @@ export default class DebridService {
 
   /** Cancels queued requests, the instance must not be used afterwards. */
   destroy () {
+    this.cacheState.clear()
+    this.probes.clear()
     this.limiter.stop({ dropWaitingJobs: true }).catch(() => {})
   }
 }

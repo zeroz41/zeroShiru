@@ -11,6 +11,20 @@ const deadStatuses = ['magnet_error', 'error', 'virus', 'dead']
 // statuses that mean the torrent is being fetched fresh, so it was never cached
 const downloadingStatuses = ['queued', 'downloading', 'uploading', 'compressing']
 
+// https://api.real-debrid.com/ error_code values worth explaining, anything else
+// falls back to the message the API sends
+const errorMessages = {
+  8: 'Invalid Real-Debrid API key',
+  9: 'Real-Debrid denied the request, check the account permissions',
+  21: 'Too many active Real-Debrid downloads, wait for one to finish',
+  23: 'This Real-Debrid account has exhausted its traffic',
+  34: 'Real-Debrid is rate limiting this account, try again shortly',
+  35: 'Real-Debrid has blocked this release for copyright reasons, pick a different one',
+  36: 'Real-Debrid fair usage limit reached'
+}
+// only these mean the key or account is the problem, the rest are per-request
+const authCodes = [8, 9]
+
 /**
  * Real-Debrid implementation, see https://api.real-debrid.com/
  *
@@ -28,11 +42,16 @@ export default class RealDebrid extends DebridService {
   static available = true
   // documented allowance is 250 requests per minute, keep some headroom
   static limits = { reservoir: 200, reservoirRefreshAmount: 200, reservoirRefreshInterval: 60_000, maxConcurrent: 4, minTime: 150 }
+  // no cache endpoint exists any more, so cache state has to be probed a hash at a time
+  static cacheCheck = 'probe'
 
   mapError (status, json) {
-    // https://api.real-debrid.com/ error_code 8 = bad_token, 9 = permission_denied
-    if (json?.error_code === 8 || json?.error_code === 9 || status === 401 || status === 403) return new DebridAuthError(json?.error === 'bad_token' ? 'Invalid Real-Debrid API key' : (json?.error || 'Real-Debrid denied the request'), { status, code: json?.error_code })
-    return super.mapError(status, json)
+    const code = json?.error_code
+    const message = errorMessages[code] || json?.error || `Request failed with status ${status}`
+    // a blocked or unavailable file also answers 403, and must stay a plain error: an auth
+    // error aborts the whole resolve, where one bad file in a pack should only be skipped
+    if (authCodes.includes(code) || ((status === 401 || status === 403) && code == null)) return new DebridAuthError(message, { status, code })
+    return new DebridError(message, { status, code })
   }
 
   async validate () {
@@ -44,6 +63,34 @@ export default class RealDebrid extends DebridService {
   /** The account's recent torrents, the one list both cache badges and torrent reuse read from. */
   async #accountTorrents () {
     return (await this.request(`${API}/torrents?limit=${LIST_LIMIT}`)) || []
+  }
+
+  /**
+   * Finds out whether Real-Debrid can stream a release right now. Since
+   * `/torrents/instantAvailability` was disabled the only way to ask is to add the magnet
+   * and read the status it settles on: a cached torrent reports 'downloaded' within about a
+   * second of file selection, anything else is being fetched fresh. Costs roughly five
+   * requests, which is why the base class caps how many of these run per search.
+   *
+   * The torrent is always removed again. Adding a hash the account already holds creates a
+   * separate entry with its own id, so this can never delete the user's own download.
+   * @param {string} hash
+   * @returns {Promise<boolean>}
+   */
+  async probeCached (hash) {
+    const magnetURI = RealDebrid.toMagnet(hash)
+    if (!magnetURI) return false
+    const timeout = this.config.timeouts.probe
+    let torrentId = null
+    try {
+      torrentId = await this.#addAndSelect(magnetURI, () => true, undefined, timeout)
+      return (await this.#awaitStatus(torrentId, 'downloaded', timeout)).status === 'downloaded'
+    } catch (error) {
+      if (error instanceof DebridAuthError) throw error // the key is the problem, not this release
+      return false // not cached, unrecognized, or too slow to settle: not instantly playable
+    } finally {
+      if (torrentId) this.request(`${API}/torrents/delete/${torrentId}`, { method: 'DELETE' }).catch(() => {})
+    }
   }
 
   async listCachedHashes () {
@@ -104,12 +151,13 @@ export default class RealDebrid extends DebridService {
    * @param {string} magnetURI
    * @param {((name: string) => boolean) | null} fileFilter
    * @param {number} [fileId]
+   * @param {number} [timeout] - Budget for the service to accept the magnet, shortened for cache probes.
    * @returns {Promise<string>} The new torrent id.
    */
-  async #addAndSelect (magnetURI, fileFilter, fileId) {
+  async #addAndSelect (magnetURI, fileFilter, fileId, timeout = this.config.timeouts.select) {
     const torrentId = (await this.request(`${API}/torrents/addMagnet`, { method: 'POST', body: { magnet: magnetURI } }))?.id
     try {
-      const info = await this.#awaitStatus(torrentId, 'waiting_files_selection', this.config.timeouts.select)
+      const info = await this.#awaitStatus(torrentId, 'waiting_files_selection', timeout)
       if (info.status === 'waiting_files_selection') {
         const ids = fileId ? [fileId] : info.files.filter(file => fileFilter(file.path)).map(file => file.id)
         await this.request(`${API}/torrents/selectFiles/${torrentId}`, { method: 'POST', body: { files: ids.length ? ids.join(',') : 'all' } })

@@ -11,7 +11,7 @@ import RealDebrid from '@/modules/debrid/realdebrid.js'
 import AllDebrid from '@/modules/debrid/alldebrid.js'
 import TorBox from '@/modules/debrid/torbox.js'
 import Premiumize from '@/modules/debrid/premiumize.js'
-import { DebridNotCachedError, secureFiles } from '@/modules/debrid/service.js'
+import DebridService, { DebridNotCachedError, secureFiles } from '@/modules/debrid/service.js'
 import { routeDebrid } from '@/modules/debrid/route.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
@@ -63,6 +63,9 @@ export const debridTransport = derived(settings, value => {
 
 /** Lowercase info hashes known to play instantly on the configured service. */
 export const debridCachedHashes = writable(new Set())
+
+/** Cache checks in flight, so the UI can show that badges are still filling in. */
+export const debridChecking = writable(0)
 
 /**
  * Whether debrid owns what the player is showing. Set the moment playback is routed to a
@@ -134,6 +137,7 @@ export async function streamDebrid (torrentID, hash, search) {
   } catch (error) {
     if (error instanceof DebridNotCachedError) {
       debug(`Torrent not cached: ${error.message}`)
+      forgetHash(route.id) // the badge was wrong, or it aged out of the cache
       if (!debridOnly) {
         toast('Debrid', { description: 'Not cached on ' + serviceTitle() + ', streaming via torrent instead.' })
         return handOver(false)
@@ -174,7 +178,9 @@ export async function resolveDebridFiles (torrentID, search) {
   })
   const files = secureFiles(resolved.files, serviceTitle())
   if (files.length !== resolved.files.length) debug(`Discarded ${resolved.files.length - files.length} non-HTTPS links from ${serviceTitle()}`)
-  rememberHash(resolved.hash)
+  // playing it is the most authoritative cache answer there is, so no probe repeats it
+  service.remember(resolved.hash, true)
+  rememberHashes([resolved.hash])
   return Promise.all(files.map(async file => ({
     infoHash: resolved.hash,
     fileHash: await sha1hex(`${resolved.hash}:${file.name}:${file.size}`), // same key the torrent client uses, so watch progress is shared
@@ -196,15 +202,41 @@ export function refreshDebridCache () {
   const service = getService()
   if (!service) return
   const remembered = Object.keys(cache.getEntry(caches.GENERAL, 'debridResolvedHashes')?.[serviceId()] || {})
-  if (remembered.length) debridCachedHashes.update(set => new Set([...set, ...remembered]))
+  if (remembered.length) {
+    debridCachedHashes.update(set => new Set([...set, ...remembered]))
+    for (const hash of remembered) service.remember(hash, true) // never pay to re-check these
+  }
   if (Date.now() - lastRefresh < REFRESH_INTERVAL || status.value === 'offline') return
   lastRefresh = Date.now()
   service.listCachedHashes().then(hashes => {
     debridCachedHashes.update(set => new Set([...set, ...hashes]))
+    for (const hash of hashes) service.remember(hash, true)
   }).catch(error => {
     lastRefresh = 0
     debug('Failed to list debrid torrents:', error)
   })
+}
+
+/**
+ * Fills in cache state for the releases the user is looking at, so badges reflect what the
+ * service can actually stream rather than only what this account has touched before. The
+ * service decides how: one batch call where its API offers a cache endpoint, capped probing
+ * where it does not. Answers are remembered, so browsing the same show again is free.
+ * @param {string[]} hashes - Candidate info hashes, most relevant first, the cap bites from the end.
+ */
+export async function probeDebridCache (hashes) {
+  const service = getService()
+  if (!service || !settings.value.debridCacheCheck || status.value === 'offline') return
+  if (!service.unknownHashes(hashes).length) return // everything here already has an answer
+  debridChecking.update(count => count + 1)
+  try {
+    const { cached } = await service.checkCached(hashes)
+    if (cached.size) rememberHashes([...cached])
+  } catch (error) {
+    debug('Cache check failed:', error)
+  } finally {
+    debridChecking.update(count => count - 1)
+  }
 }
 
 /**
@@ -234,12 +266,35 @@ function serviceTitle () {
   return debridServices[serviceId()]?.title || 'debrid'
 }
 
-/** Remembers a successfully resolved hash per service so results can be badged instantly. */
-function rememberHash (hash) {
-  debridCachedHashes.update(set => new Set([...set, hash]))
+/**
+ * Drops a hash the service turned out not to hold, from the badge store, the persisted
+ * list and the service's own memory. Without all three the next search would badge it
+ * again from persistence, and playback would fail the same way a second time.
+ * @param {string} magnetOrHash
+ */
+function forgetHash (magnetOrHash) {
+  const hash = DebridService.parseHash(magnetOrHash)
+  if (!hash) return
+  service?.remember(hash, false)
+  debridCachedHashes.update(set => {
+    const next = new Set(set)
+    next.delete(hash)
+    return next
+  })
   cache.setEntry(caches.GENERAL, 'debridResolvedHashes', (current = {}) => {
-    const hashes = { ...(current[serviceId()] || {}), [hash]: Date.now() }
-    const pruned = Object.fromEntries(Object.entries(hashes).sort(([, a], [, b]) => b - a).slice(0, MAX_REMEMBERED))
+    const kept = { ...(current[serviceId()] || {}) }
+    delete kept[hash]
+    return { ...current, [serviceId()]: kept }
+  })
+}
+
+/** Remembers hashes the service is known to hold, so results can be badged instantly. */
+function rememberHashes (hashes) {
+  debridCachedHashes.update(set => new Set([...set, ...hashes]))
+  cache.setEntry(caches.GENERAL, 'debridResolvedHashes', (current = {}) => {
+    const now = Date.now()
+    const merged = { ...(current[serviceId()] || {}), ...Object.fromEntries(hashes.map(hash => [hash, now])) }
+    const pruned = Object.fromEntries(Object.entries(merged).sort(([, a], [, b]) => b - a).slice(0, MAX_REMEMBERED))
     return { ...current, [serviceId()]: pruned }
   })
 }
