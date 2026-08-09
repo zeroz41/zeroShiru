@@ -2,6 +2,7 @@ const { join, resolve } = require('path')
 
 const mode = process.env.NODE_ENV?.trim() || 'development'
 const isDev = mode === 'development'
+const webpack = require('webpack')
 const HtmlWebpackPlugin = require('html-webpack-plugin')
 const MiniCssExtractPlugin = require('mini-css-extract-plugin')
 const CopyWebpackPlugin = require('copy-webpack-plugin')
@@ -87,6 +88,8 @@ module.exports = (parentDir, alias = {}, aliasFields = 'browser', filename = 'ap
     extensions: ['.mjs', '.js', '.svelte']
   },
   plugins: [
+    // matroska-metadata (debrid subtitle parsing) expects Node's Buffer global, which target 'web' lacks
+    new webpack.ProvidePlugin({ Buffer: ['buffer', 'Buffer'] }),
     new MiniCssExtractPlugin({
       filename: '[name].css'
     }),

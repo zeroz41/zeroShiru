@@ -210,6 +210,9 @@ importers:
       bottleneck:
         specifier: ^2.19.5
         version: 2.19.5
+      buffer:
+        specifier: ^6.0.3
+        version: 6.0.3
       comlink:
         specifier: ^4.4.2
         version: 4.4.2

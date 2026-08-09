@@ -5,6 +5,7 @@
     "@fontsource-variable/nunito": "^5.3.0",
     "anitomyscript": "github:ThaUnknown/anitomyscript#42290c4b3f256893be08a4e89051f448ff5e9d00",
     "bottleneck": "^2.19.5",
+    "buffer": "^6.0.3",
     "comlink": "^4.4.2",
     "css-loader": "^7.1.4",
     "dompurify": "^3.4.13",

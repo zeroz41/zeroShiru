@@ -7,6 +7,8 @@ const debug = Debug('ui:debrid')
 
 // stay this many seconds of video ahead of playback when streaming subtitles
 const AHEAD_SECONDS = 120
+// land this many seconds of video before a seek, so a rough byte estimate still covers it
+const JUMP_BACK_SECONDS = 15
 const RETRIES = 3
 
 /**
@@ -97,6 +99,9 @@ export default class DebridMetadata {
     }
     this.remote = new RemoteFile(file.url, file.size, file.name)
     this.metadata = new Metadata(this.remote)
+    // the parser starts several reads in its constructor, settle the ones nothing may
+    // ever await (duration when no tracks stream) so they cannot reject unhandled
+    for (const pending of [this.metadata.segment, this.metadata.seekHead, this.metadata.duration]) Promise.resolve(pending).catch(() => {})
 
     this.metadata.getTracks().then(tracks => {
       if (this.destroyed) return
@@ -133,22 +138,51 @@ export default class DebridMetadata {
   async #streamSubtitles () {
     const durationMs = await this.metadata.duration
     const byteRate = durationMs > 0 ? this.file.size / (durationMs / 1_000) : 0
-    for (let attempt = 0, offset = 0; attempt < RETRIES && !this.destroyed; ++attempt) {
+    // the window of bytes fed to the parser so far, seeks outside it restart the stream
+    let start = 0
+    let offset = 0
+    for (let attempt = 0; attempt < RETRIES && !this.destroyed; ++attempt) {
       try {
         const stream = this.remote.slice(offset).stream()
+        let jumped = false
         for await (const chunk of this.metadata.parseStream(stream, offset === 0)) {
           if (this.destroyed) return
           offset += chunk.length
-          // wait for playback to catch up before buffering further, seeks resume instantly
-          while (!this.destroyed && byteRate && offset > (this.getTime() + AHEAD_SECONDS) * byteRate) await sleep(1_000)
+          const next = await this.#pace(byteRate, start, offset)
+          if (next !== offset) {
+            debug(`Seek left the parsed subtitle window, restarting stream at ${next}`)
+            start = offset = next
+            jumped = true
+            break
+          }
         }
-        return
+        if (!jumped) return // parsed to the end of the file
+        attempt = -1 // following a seek is progress, not a failed attempt
       } catch (error) {
         if (this.destroyed) return
         debug(`Subtitle stream interrupted at ${offset}, retrying:`, error)
         await sleep(1_000 * (attempt + 1))
       }
     }
+  }
+
+  /**
+   * Waits until the parser should read further and reports where from: the current
+   * offset while playback approaches it, or a fresh one when a seek left the parsed
+   * window, where reading on sequentially would download everything in between for
+   * nothing. The player renderer deduplicates events, so overlapping parses are safe.
+   */
+  async #pace (byteRate, start, offset) {
+    while (!this.destroyed && byteRate) {
+      const position = this.getTime() * byteRate
+      const jump = Math.max(0, Math.floor(position - JUMP_BACK_SECONDS * byteRate))
+      // a target beyond the file means the estimate overshot, sequential reading covers it
+      if (jump < this.file.size && (position < start || jump > offset)) return jump
+      // wait for playback to catch up before buffering further ahead
+      if (offset <= position + AHEAD_SECONDS * byteRate) return offset
+      await sleep(1_000)
+    }
+    return offset
   }
 
   /** Releases the container parser and its range requests, leaving external subtitles alone. */

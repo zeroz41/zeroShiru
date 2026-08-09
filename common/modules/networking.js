@@ -73,7 +73,9 @@ window.fetch = async (...args) => {
   if (status.value === 'offline') return { message: 'failed to fetch: client is offline' }
 
   try {
-    const res = await fetch(url, { ...options, signal: offlineController.signal })
+    // keep the caller's own signal working, timeouts and teardown aborts depend on it
+    const signal = options.signal ? AbortSignal.any([options.signal, offlineController.signal]) : offlineController.signal
+    const res = await fetch(url, { ...options, signal })
     if (!res?.ok && res?.status !== 404 && res?.status !== 429 && res?.status !== 451) fetchError({ response: res?.response, status: res?.status, message: res?.message })
     return res
   } catch (error) {
