@@ -203,7 +203,7 @@ export default class TorBox extends DebridService {
       // deliberately unshared and uncached: this is polling a change made a moment ago
       const torrent = id != null ? (await this.#accountTorrents({ id, fresh: true }))[0] : (await this.#accountTorrents({ fresh: true })).find(entry => String(entry?.hash || '').toLowerCase() === hash)
       if (torrent && torrentAvailability(torrent) !== Availability.AVAILABLE) return torrent
-      if (Date.now() - started > this.config.timeouts.ready) {
+      if (Date.now() - started > this.budget('ready')) {
         if (torrent) return torrent
         throw new DebridError('TorBox did not report the torrent back after adding it')
       }

@@ -37,11 +37,14 @@ const errorMessages = {
   21: 'Too many active Real-Debrid downloads, wait for one to finish',
   23: 'This Real-Debrid account has exhausted its traffic',
   34: 'Real-Debrid is rate limiting this account, try again shortly',
-  35: 'Real-Debrid would not accept this release, try again shortly or pick a different one',
+  35: 'Real-Debrid will not serve this file, pick a different release',
   36: 'Real-Debrid fair usage limit reached'
 }
 // only these mean the key or account is the problem, the rest are per-request
 const authCodes = [8, 9]
+// codes that mean the account cannot take on more work right now rather than that this release
+// is a problem: rate limiting, and the cap on how many torrents may be active at once
+const throttleCodes = [21, 34]
 
 /**
  * Real-Debrid implementation, see https://api.real-debrid.com/
@@ -61,6 +64,27 @@ export default class RealDebrid extends DebridService {
   static limits = { reservoir: 200, reservoirRefreshAmount: 200, reservoirRefreshInterval: 60_000, maxConcurrent: 4, minTime: 150 }
   // no cache endpoint any more, so availability has to be probed a hash at a time
   static availabilityCheck = 'probe'
+
+  /**
+   * @type {number} How many times a probe reads back a torrent that is still converting its
+   * magnet before it gives up on it.
+   *
+   * Real-Debrid already holds the metadata for everything in its cache, so a cached release
+   * reaches file selection on the first read or two; one still converting after that is telling
+   * us it is not cached. Counted in reads rather than seconds deliberately — the point is how
+   * many chances the torrent has had, which does not change because the connection is slow, and
+   * on a slow connection waiting out a full timeout is what costs the sweep the rest of its
+   * list. Giving up leaves the release unknown, so the next sweep asks again.
+   */
+  static probeConversionReads = 2
+
+  /**
+   * Cannot take on more work: rate limited, or already at the account's active torrent cap.
+   * @param {any} error
+   */
+  throttled (error) {
+    return super.throttled(error) || throttleCodes.includes(error?.code)
+  }
 
   mapError (status, json) {
     const code = json?.error_code
@@ -113,11 +137,10 @@ export default class RealDebrid extends DebridService {
   async probeAvailability (hash) {
     const magnetURI = RealDebrid.toMagnet(hash)
     if (!magnetURI) throw new DebridError('Not a usable info hash') // no answer, rather than a made up one
-    const timeout = this.config.timeouts.probe
     let torrentId = null
     try {
-      torrentId = await this.#addAndSelect(magnetURI, () => true, undefined, timeout)
-      await this.#awaitStatus(torrentId, 'downloaded', timeout)
+      torrentId = await this.#addAndSelect(magnetURI, () => true, undefined, RealDebrid.probeConversionReads)
+      await this.#awaitStatus(torrentId, 'downloaded', this.budget('probe'))
       return Availability.CACHED
     } finally {
       // awaited, so the probe has genuinely left the account as it found it by the time it
@@ -153,7 +176,7 @@ export default class RealDebrid extends DebridService {
         torrentId = await this.#addAndSelect(magnetURI, fileFilter)
         added = true
       }
-      info ??= await this.#awaitStatus(torrentId, 'downloaded', this.config.timeouts.ready)
+      info ??= await this.#awaitStatus(torrentId, 'downloaded', this.budget('ready'))
 
       // work out which single file playback is really after before unrestricting, so a
       // capped pack never drops the wanted episode, and so archives and reused torrents
@@ -169,7 +192,7 @@ export default class RealDebrid extends DebridService {
         if (added) this.release(`${API}/torrents/delete/${torrentId}`)
         torrentId = retryId
         added = true
-        info = await this.#awaitStatus(torrentId, 'downloaded', this.config.timeouts.ready)
+        info = await this.#awaitStatus(torrentId, 'downloaded', this.budget('ready'))
         files = await this.#unrestrictLinks(info, fileFilter, 1, null)
         if (!files.length) throw new DebridError('Real-Debrid only serves this torrent as an archive')
       }
@@ -213,14 +236,14 @@ export default class RealDebrid extends DebridService {
    * @param {string} magnetURI
    * @param {((name: string) => boolean) | null} fileFilter
    * @param {number} [fileId]
-   * @param {number} [timeout] - Budget for the service to accept the magnet, shortened for probes.
+   * @param {number} [reads] - How many status reads the magnet gets to convert, capped for probes.
    * @returns {Promise<string>} The new torrent id.
    */
-  async #addAndSelect (magnetURI, fileFilter, fileId, timeout = this.config.timeouts.select) {
+  async #addAndSelect (magnetURI, fileFilter, fileId, reads = Infinity) {
     const torrentId = (await this.request(`${API}/torrents/addMagnet`, { method: 'POST', body: { magnet: magnetURI } }))?.id
     this.forgetListing() // the account has a torrent the remembered listing does not
     try {
-      const info = await this.#awaitStatus(torrentId, 'waiting_files_selection', timeout)
+      const info = await this.#awaitStatus(torrentId, 'waiting_files_selection', this.budget('select'), reads)
       if (info.status === 'waiting_files_selection') {
         const ids = fileId ? [fileId] : info.files.filter(file => fileFilter(file.path)).map(file => file.id)
         await this.request(`${API}/torrents/selectFiles/${torrentId}`, { method: 'POST', body: { files: ids.length ? ids.join(',') : 'all' } })
@@ -266,11 +289,12 @@ export default class RealDebrid extends DebridService {
    * fresh, or cannot process at all, is not something playback can stream now.
    * @param {string} id
    * @param {string} wanted
-   * @param {number} timeout
+   * @param {number} timeout - Deadline in milliseconds.
+   * @param {number} [reads] - Status reads allowed, for callers that want a fixed number of chances.
    */
-  async #awaitStatus (id, wanted, timeout) {
+  async #awaitStatus (id, wanted, timeout, reads = Infinity) {
     const started = Date.now()
-    while (true) {
+    for (let read = 1; ; read++) {
       const info = await this.request(`${API}/torrents/info/${id}`)
       if (info.status === wanted || (wanted === 'waiting_files_selection' && info.status === 'downloaded')) return info
       const settled = unstreamable(info.status)
@@ -278,7 +302,7 @@ export default class RealDebrid extends DebridService {
       // deliberately not an answer at all: a rare or old release can sit in magnet_conversion
       // for a while, and calling that a miss is what empties the badges on exactly those
       // titles. No answer means the release stays unknown and re-checkable.
-      if (Date.now() - started > timeout) throw new DebridError(`Timed out waiting for Real-Debrid (${info.status})`)
+      if (read >= reads || Date.now() - started > timeout) throw new DebridError(`Timed out waiting for Real-Debrid (${info.status})`)
       await new Promise(resolve => setTimeout(resolve, this.config.timeouts.poll).unref?.())
     }
   }

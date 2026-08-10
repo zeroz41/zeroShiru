@@ -16,16 +16,23 @@ import { routeDebrid, debridKey } from '@/modules/debrid/route.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
 
-// register new services here, implementation templates stay hidden from the settings
-// menu until their `available` flag is flipped after being implemented and tested.
-// This registry is the only place that touches service classes, everything else in
-// the app goes through the stores and functions exported below.
-const debridServices = Object.fromEntries([RealDebrid, AllDebrid, TorBox, Premiumize].filter(Service => Service.available).map(Service => [Service.id, Service]))
+// register new services here, in the order the settings menu should offer them. A service that
+// is still being written stays hidden until its `available` flag is flipped. This registry is
+// the only place that touches service classes, everything else in the app goes through the
+// stores and functions exported below.
+const debridServices = Object.fromEntries([AllDebrid, Premiumize, RealDebrid, TorBox].filter(Service => Service.available).map(Service => [Service.id, Service]))
 
 /** Selectable services for the settings menu, as plain data. */
 export const debridOptions = Object.values(debridServices).map(Service => ({ id: Service.id, title: Service.title }))
 
 const REFRESH_INTERVAL = 60_000
+
+// How long to wait before asking a service about the releases it did not manage to answer, and
+// how far that wait backs off while it keeps not answering them. A probing service stops its
+// sweep whenever the account or the connection is in no state to continue, which on a slow link
+// is often, so without this a results list keeps whichever handful of badges it happened to get.
+const RETRY_DELAY = 10_000
+const MAX_RETRY_DELAY = 4 * 60_000
 
 // user facing messages for the routing policy's blocked outcomes
 const blockedMessages = {
@@ -87,6 +94,7 @@ settings.subscribe(value => {
     service?.destroy()
     service = null
     lastRefresh = 0
+    cancelDebridAvailability()
     debridAvailability.set(new Map())
   }
   serviceKey = key
@@ -233,17 +241,30 @@ function current (instance) {
   return instance === service
 }
 
+/** @type {ReturnType<typeof setTimeout> | null} A retry waiting to ask about what went unanswered. */
+let retry = null
+let retryDelay = RETRY_DELAY
+
 /**
  * Asks the service about the releases the user is looking at, so the badges say what it can
  * actually do with them rather than only what this account has touched before. The service
  * decides how: one batch call where its API offers a cache endpoint, a capped number of probes
  * where it does not. Answers are remembered, so browsing the same show again is free.
+ *
+ * A service is allowed to come back having answered only part of the list — a probing one stops
+ * the moment the account or the link says it should — so whatever is still unanswered is asked
+ * about again on a backing off timer until the list is done or the user moves on.
  * @param {string[]} hashes - Candidate info hashes, most relevant first, since probing bites from the front.
  */
 export async function checkDebridAvailability (hashes) {
+  cancelDebridAvailability() // this list supersedes whatever the last one was still waiting to retry
   const active = getService()
   if (!active || !settings.value.debridCacheCheck || status.value === 'offline') return
-  if (!active.unknownHashes(hashes).length) return // everything here already has an answer
+  const pending = active.unknownHashes(hashes)
+  if (!pending.length) return // everything here already has an answer
+  // a sweep already running owns the service, so this call only reads back what is remembered
+  // and must not read its own lack of progress as the service refusing to answer
+  const busy = active.sweeping
   debridChecking.update(count => count + 1)
   try {
     // badge each release as its answer lands rather than when the sweep ends, so a probing
@@ -254,6 +275,25 @@ export async function checkDebridAvailability (hashes) {
   } finally {
     debridChecking.update(count => count - 1)
   }
+  if (!current(active)) return
+  const left = active.unknownHashes(hashes)
+  if (!left.length) {
+    retryDelay = RETRY_DELAY
+    return
+  }
+  // answering something means the service is willing to talk, so the next attempt starts over at
+  // the short wait. Only a round that got nowhere backs off, which is what keeps a service that
+  // is genuinely refusing from being asked every ten seconds for as long as the modal is open
+  if (busy || left.length < pending.length) retryDelay = RETRY_DELAY
+  else retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY)
+  debug(`${left.length} of ${pending.length} releases unanswered, asking again in ${retryDelay}ms`)
+  retry = setTimeout(() => checkDebridAvailability(hashes), retryDelay)
+}
+
+/** Drops a pending retry, for when the results it described are no longer on screen. */
+export function cancelDebridAvailability () {
+  if (retry) clearTimeout(retry)
+  retry = null
 }
 
 /**

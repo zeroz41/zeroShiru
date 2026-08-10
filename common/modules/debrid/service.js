@@ -128,6 +128,8 @@ const RATE_LIMIT_FALLBACK = 5 // seconds to wait when a 429 carries no retry-aft
 const NETWORK_RETRY_DELAY = 3_000
 // consecutive unanswered probes before a sweep gives up on the rest of its list
 const MAX_PROBE_FAILURES = 3
+// how far a poll budget may stretch on a slow link, as a multiple of what it was written for
+const MAX_STRETCH = 3
 
 /**
  * Base class for debrid services, providing rate limited requests and typed errors.
@@ -153,7 +155,13 @@ export default class DebridService {
   static authParam = 'apikey'
   /** @type {'form' | 'json' | 'multipart'} How request bodies are encoded, overridable per request. */
   static encoding = 'form'
-  /** Tunable time limits in milliseconds, override only what differs for the service. */
+  /**
+   * Tunable time limits in milliseconds, override only what differs for the service.
+   *
+   * Everything except `request` is a budget for a poll loop, so it is read through `budget()`
+   * and stretches to fit a slow connection. `request` is an absolute ceiling on one round trip
+   * and deliberately does not.
+   */
   static timeouts = {
     request: 30_000, // hard limit on a single HTTP request
     select: 12_000, // waiting for the service to accept a magnet and expose its file list
@@ -163,6 +171,21 @@ export default class DebridService {
     // on spends requests the account needs for playback, and no answer is worth that
     probe: 10_000
   }
+
+  /**
+   * @type {number} Round trip time in milliseconds the limits above are written for. Measured
+   * latency is compared against this to work out how far a budget has to stretch.
+   */
+  static nominalLatency = 300
+
+  /**
+   * @type {number} Probes running at once during a sweep.
+   *
+   * A probe is mostly spent waiting on the service, so running a few at a time cuts what a
+   * results list costs in wall clock without asking the API to do any more work. Kept small
+   * because each one briefly owns a torrent on the user's account.
+   */
+  static maxProbeConcurrency = 3
 
   /** @type {number} Most files one resolve turns into stream links, guards against huge season packs. */
   static maxFiles = 60
@@ -180,12 +203,43 @@ export default class DebridService {
   static maxBatch = 100
 
   /**
+   * Whether asking about a release means putting a magnet on the user's account and taking it
+   * away again, rather than reading a cache index the service already keeps.
+   *
+   * Two things follow, and they are the same fact twice. Only one such check may be in flight,
+   * because adding is what services rate limit hardest. And a hash the answer leaves out has not
+   * thereby been called "not cached" — a check that adds magnets answers about the ones it
+   * managed to take, so silence there means unasked, where silence from a real cache endpoint
+   * means a miss.
+   *
+   * Probing is always this. Override it where a service batches its check but still adds a magnet
+   * per hash to run it.
+   * @returns {boolean}
+   */
+  static get checkAddsMagnets () {
+    return this.availabilityCheck === 'probe'
+  }
+
+  /**
    * @type {number} How far down the results a probing service looks, and so the most probes
    * one results list can ever cost. Probing is expensive — several requests and a few seconds
    * each — so this buys confirmed answers for the releases most likely to be played rather
    * than trying to answer the whole list. Everything past it stays unknown.
    */
   static maxProbes = 10
+
+  /**
+   * How far down a results list this service is willing to look at all.
+   *
+   * A cache endpoint answers the whole list for one request, so there is no reason to stop.
+   * Anything that has to add a magnet to find out costs the account something per hash, so it
+   * only asks about the releases most likely to be played. Override where a service batches its
+   * check but still pays per hash.
+   * @returns {number}
+   */
+  static get maxAsk () {
+    return this.availabilityCheck === 'probe' ? this.maxProbes : Infinity
+  }
 
   /** @type {Record<string, number>} How long each answer stays trusted, overridable per service. */
   static availabilityTTL = AVAILABILITY_TTL
@@ -204,6 +258,8 @@ export default class DebridService {
   constructor (apiKey) {
     this.apiKey = apiKey
     this.rateLimitPromise = null
+    /** @type {number} Rolling estimate of one round trip to this service, 0 until the first answer. */
+    this.latency = 0
     /** @type {Map<string, { state: string, at: number }>} What the service has already said about a hash. */
     this.availabilityState = new Map()
     /** @type {Map<string, Promise<string>>} Probes in flight, so a hash is never asked about twice at once. */
@@ -320,18 +376,26 @@ export default class DebridService {
 
   /**
    * Encodes a request body the way the endpoint expects it.
+   *
+   * An array value is sent as the same key repeated once per item, which is how the APIs that
+   * take many things at once — a list of hashes to check, a list of magnets to add — read their
+   * `name[]` parameters. Joining them into one value instead is silently accepted and then
+   * understood as a single nonsense item, so it has to be done here rather than by each caller.
    * @param {Record<string, any>} body
    * @param {'form' | 'json' | 'multipart'} encoding
    * @returns {{ body: any, headers: Record<string, string> }}
    */
   static encodeBody (body, encoding) {
     if (encoding === 'json') return { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }
+    const fields = Object.entries(body).flatMap(([key, value]) => Array.isArray(value) ? value.map(item => [key, item]) : [[key, value]])
     if (encoding === 'multipart') {
       const form = new FormData()
-      for (const [key, value] of Object.entries(body)) form.append(key, String(value))
+      for (const [key, value] of fields) form.append(key, String(value))
       return { body: form, headers: {} } // fetch sets the content type, boundary included
     }
-    return { body: new URLSearchParams(body).toString(), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    const params = new URLSearchParams()
+    for (const [key, value] of fields) params.append(key, String(value))
+    return { body: params.toString(), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
   }
 
   /**
@@ -344,12 +408,16 @@ export default class DebridService {
     const authorized = this.authorize(url, { auth, authParam })
     const encoded = body ? DebridService.encodeBody(body, encoding) : null
     debug(`${method} ${url}`) // logged before authorization so query-parameter keys never reach the log
+    const sent = Date.now()
     const res = await fetch(authorized.url, {
       method,
       headers: { ...authorized.headers, ...encoded?.headers },
       body: encoded?.body,
       signal: AbortSignal.timeout(timeout)
     })
+    // only round trips that came back are measured, so a request that timed out or was
+    // abandoned cannot inflate the estimate the time limits are derived from
+    this.observeLatency(Date.now() - sent)
     // the app short-circuits external requests while it considers itself offline,
     // handing back a plain object instead of a Response
     if (typeof res?.json !== 'function') throw new DebridNetworkError(res?.message?.replace(/^failed to fetch: /i, '') || 'Network request failed')
@@ -362,6 +430,42 @@ export default class DebridService {
     }
     if (res.status === 204) return null
     return this.unwrap(await res.json().catch(() => null)) // some endpoints return an empty body on success
+  }
+
+  /**
+   * Folds one round trip into the latency estimate, weighted towards recent requests so a link
+   * that degrades part way through a session is noticed within a few calls.
+   * @param {number} ms
+   */
+  observeLatency (ms) {
+    this.latency = this.latency ? Math.round(this.latency * 0.7 + ms * 0.3) : ms
+  }
+
+  /**
+   * A time limit from `timeouts`, stretched to fit the connection actually in use.
+   *
+   * The defaults describe how many round trips a step is worth, written for a healthy link where
+   * a request is a few hundred milliseconds. On a slow one the same budget buys a single request,
+   * so every poll loop times out and reports no answer — precisely where an answer is worth the
+   * most. Scaling the limits by measured latency keeps each one worth the same number of turns,
+   * up to a ceiling, since a link slow enough to need more than that is not one to wait on.
+   * @param {string} kind - A key of the service's `timeouts`.
+   * @returns {number}
+   */
+  budget (kind) {
+    const base = this.config.timeouts[kind]
+    return Math.round(base * Math.min(Math.max(1, this.latency / this.config.nominalLatency), MAX_STRETCH))
+  }
+
+  /**
+   * Whether an error means the service wants fewer requests rather than that this release is
+   * a problem. A sweep stops on one of these: the next probe would be refused too.
+   * Override for the service specific codes that mean the same thing.
+   * @param {any} error
+   * @returns {boolean}
+   */
+  throttled (error) {
+    return error?.status === 429
   }
 
   /**
@@ -474,7 +578,7 @@ export default class DebridService {
 
   /** How far down a results list this service is willing to look. Probing bites, batching does not. */
   #askLimit () {
-    return this.config.availabilityCheck === 'probe' ? this.config.maxProbes : Infinity
+    return this.config.maxAsk
   }
 
   /**
@@ -523,43 +627,75 @@ export default class DebridService {
       onAnswer?.(hash, state)
     }
 
-    if (mode === 'batch') {
-      for (let index = 0; index < unknown.length; index += this.config.maxBatch) {
-        const chunk = unknown.slice(index, index + this.config.maxBatch)
-        const states = await this.checkAvailabilityBatch(chunk)
-        for (const hash of chunk) {
-          // a cache endpoint that answered but did not mention a hash has said it does not
-          // hold it, not that it cannot fetch it
-          const state = normalizeAvailability(states?.get(hash) ?? Availability.AVAILABLE)
-          this.remember(hash, state)
-          answer(hash, state)
-        }
-      }
-      return answers
+    // One check at a time where asking means putting magnets on the account: services rate limit
+    // adding far harder than reading, so overlapping checks do not answer faster, they get
+    // refused. A free cache lookup has nothing to protect and runs whenever it is asked.
+    if (this.config.checkAddsMagnets) {
+      if (this.sweeping) return answers
+      this.sweeping = true
     }
-
-    // One sweep at a time. Probing is an add/read/delete cycle and services rate limit adding
-    // far harder than reading, so overlapping sweeps do not answer faster, they get refused.
-    if (this.sweeping) return answers
-    this.sweeping = true
     try {
-      let failures = 0
-      for (const hash of unknown) {
-        try {
-          answer(hash, await this.#probe(hash))
-          failures = 0
-        } catch (error) {
-          if (error instanceof DebridAuthError) throw error // every other probe would fail too
-          debug(`Availability probe failed for ${hash}: ${error.message}`)
-          // being told to slow down, or a run of failures, ends the sweep. The rest stay
-          // unknown and are asked about again later rather than being called uncached
-          if (error?.status === 429 || ++failures >= MAX_PROBE_FAILURES) break
-        }
-      }
+      if (mode === 'batch') await this.#batch(unknown, answer)
+      else await this.#sweep(unknown, answer)
     } finally {
       this.sweeping = false
     }
     return answers
+  }
+
+  /**
+   * Asks about the hashes in as few requests as the service allows.
+   * @param {string[]} hashes
+   * @param {(hash: string, state: string) => void} answer
+   */
+  async #batch (hashes, answer) {
+    for (let index = 0; index < hashes.length; index += this.config.maxBatch) {
+      const chunk = hashes.slice(index, index + this.config.maxBatch)
+      const states = await this.checkAvailabilityBatch(chunk)
+      for (const hash of chunk) {
+        // a cache endpoint that answered but did not mention a hash has said it does not hold it,
+        // not that it cannot fetch it. A check that works by adding magnets gets no such reading:
+        // it answers about the magnets it managed to take, so unmentioned means unasked
+        const state = normalizeAvailability(states?.get(hash) ?? (this.config.checkAddsMagnets ? Availability.UNKNOWN : Availability.AVAILABLE))
+        this.remember(hash, state)
+        if (state !== Availability.UNKNOWN) answer(hash, state)
+      }
+    }
+  }
+
+  /**
+   * Probes a list of hashes a few at a time, stopping early once the service is clearly in no
+   * state to answer any more of them.
+   *
+   * Stopping is not the same as finishing: whatever is left stays unknown and re-checkable, and
+   * the caller is expected to come back to it. That matters most on a link where probes time out
+   * — giving up on the list permanently is what leaves a results list with two badges on it.
+   * @param {string[]} hashes
+   * @param {(hash: string, state: string) => void} answer
+   */
+  async #sweep (hashes, answer) {
+    const queue = [...hashes]
+    let failures = 0
+    /** @type {any} Why the sweep stopped, or null while it is still going. */
+    let stopped = null
+    const worker = async () => {
+      while (queue.length && !stopped) {
+        const hash = queue.shift()
+        try {
+          answer(hash, await this.#probe(hash))
+          failures = 0
+        } catch (error) {
+          if (error instanceof DebridAuthError) { stopped = error; return } // every other probe would fail too
+          debug(`Availability probe failed for ${hash}: ${error.message}`)
+          // being told to slow down, or a run of failures, ends the sweep. The rest stay
+          // unknown and are asked about again later rather than being called uncached
+          if (this.throttled(error) || ++failures >= MAX_PROBE_FAILURES) stopped = error
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(this.config.maxProbeConcurrency, queue.length) }, worker))
+    if (stopped) debug(`Probe sweep stopped with ${queue.length} hashes left to ask about: ${stopped.message}`)
+    if (stopped instanceof DebridAuthError) throw stopped
   }
 
   /**

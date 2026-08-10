@@ -10,7 +10,7 @@
   import { anitomyscript, getMediaMaxEp, getKitsuMappings, getEpisodeMetadataForMedia } from '@/modules/anime/anime.js'
   import { loadedTorrent, completedTorrents, seedingTorrents, stagingTorrents } from '@/modules/torrent.js'
   import { dedupe, getTorrentResults, updatePeerCounts } from '@/modules/extensions/handler.js'
-  import { debridEnabled, debridAvailability, debridTransport, debridChecking, refreshDebridAvailability, checkDebridAvailability } from '@/modules/debrid/debrid.js'
+  import { debridEnabled, debridAvailability, debridTransport, debridChecking, refreshDebridAvailability, checkDebridAvailability, cancelDebridAvailability } from '@/modules/debrid/debrid.js'
   import { Availability, AVAILABILITY_ORDER, availabilityOf, describeAvailability } from '@/modules/debrid/availability.js'
   import { listResult } from '@/modules/debrid/route.js'
   import { getId, getHash } from '@/modules/anime/animehash.js'
@@ -434,6 +434,7 @@
 
   onDestroy(() => {
     clearTimeout(timeoutHandle)
+    cancelDebridAvailability() // nobody is looking at these results any more
     viewHidden = false
     $results = {}
     search = null
