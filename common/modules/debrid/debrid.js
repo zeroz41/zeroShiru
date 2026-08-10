@@ -1,6 +1,5 @@
 import { files } from '@/components/MediaHandler.svelte'
 import { settings } from '@/modules/settings.js'
-import { cache, caches } from '@/modules/cache.js'
 import { status } from '@/modules/networking.js'
 import { videoRx, subRx } from '@/modules/util.js'
 import { anitomyscript } from '@/modules/anime/anime.js'
@@ -25,7 +24,6 @@ const debridServices = Object.fromEntries([RealDebrid, AllDebrid, TorBox, Premiu
 /** Selectable services for the settings menu, as plain data. */
 export const debridOptions = Object.values(debridServices).map(Service => ({ id: Service.id, title: Service.title }))
 
-const MAX_REMEMBERED = 300
 const REFRESH_INTERVAL = 60_000
 
 // user facing messages for the routing policy's blocked outcomes
@@ -178,9 +176,9 @@ export async function resolveDebridFiles (torrentID, search) {
   })
   const files = secureFiles(resolved.files, serviceTitle())
   if (files.length !== resolved.files.length) debug(`Discarded ${resolved.files.length - files.length} non-HTTPS links from ${serviceTitle()}`)
-  // playing it is the most authoritative cache answer there is, so no probe repeats it
+  // playing it proves the service holds it, which is the best cache answer there is
   service.remember(resolved.hash, true)
-  rememberHashes([resolved.hash])
+  debridCachedHashes.update(set => new Set(set).add(resolved.hash))
   return Promise.all(files.map(async file => ({
     infoHash: resolved.hash,
     fileHash: await sha1hex(`${resolved.hash}:${file.name}:${file.size}`), // same key the torrent client uses, so watch progress is shared
@@ -195,17 +193,12 @@ export async function resolveDebridFiles (torrentID, search) {
 }
 
 /**
- * Updates the cached hash set from remembered resolves and, at most once a
- * minute, the list of torrents already downloaded on the account.
+ * Refreshes the badge data every service can supply for free: the torrents already on the
+ * account, which stream instantly. One request a minute at most.
  */
 export function refreshDebridCache () {
   const service = getService()
   if (!service) return
-  const remembered = Object.keys(cache.getEntry(caches.GENERAL, 'debridResolvedHashes')?.[serviceId()] || {})
-  if (remembered.length) {
-    debridCachedHashes.update(set => new Set([...set, ...remembered]))
-    for (const hash of remembered) service.remember(hash, true) // never pay to re-check these
-  }
   if (Date.now() - lastRefresh < REFRESH_INTERVAL || status.value === 'offline') return
   lastRefresh = Date.now()
   service.listCachedHashes().then(hashes => {
@@ -218,20 +211,23 @@ export function refreshDebridCache () {
 }
 
 /**
- * Fills in cache state for the releases the user is looking at, so badges reflect what the
+ * Confirms cache state for the releases the user is looking at, so the badges say what the
  * service can actually stream rather than only what this account has touched before. The
- * service decides how: one batch call where its API offers a cache endpoint, capped probing
- * where it does not. Answers are remembered, so browsing the same show again is free.
- * @param {string[]} hashes - Candidate info hashes, most relevant first, the cap bites from the end.
+ * service decides how: one batch call where its API offers a cache endpoint, a capped number
+ * of probes where it does not. Answers are remembered, so browsing the same show again is free.
+ * @param {string[]} hashes - Candidate info hashes, most relevant first, since probing bites from the front.
  */
-export async function probeDebridCache (hashes) {
+export async function checkDebridCache (hashes) {
   const service = getService()
   if (!service || !settings.value.debridCacheCheck || status.value === 'offline') return
   if (!service.unknownHashes(hashes).length) return // everything here already has an answer
   debridChecking.update(count => count + 1)
   try {
-    const { cached } = await service.checkCached(hashes)
-    if (cached.size) rememberHashes([...cached])
+    // badge each release as its answer lands rather than when the sweep ends, so a probing
+    // service marks the list up as it goes instead of all at once a minute later
+    await service.checkCached(hashes, {
+      onAnswer: (hash, hit) => { if (hit) debridCachedHashes.update(set => new Set(set).add(hash)) }
+    })
   } catch (error) {
     debug('Cache check failed:', error)
   } finally {
@@ -258,18 +254,13 @@ async function pickEpisodeFile (files, episode) {
   return videoFiles.sort((a, b) => b.size - a.size)[0]
 }
 
-function serviceId () {
-  return settings.value.debridService
-}
-
 function serviceTitle () {
-  return debridServices[serviceId()]?.title || 'debrid'
+  return debridServices[settings.value.debridService]?.title || 'debrid'
 }
 
 /**
- * Drops a hash the service turned out not to hold, from the badge store, the persisted
- * list and the service's own memory. Without all three the next search would badge it
- * again from persistence, and playback would fail the same way a second time.
+ * Drops a hash the service turned out not to hold, so the next search does not badge it
+ * again and fail playback the same way a second time.
  * @param {string} magnetOrHash
  */
 function forgetHash (magnetOrHash) {
@@ -280,22 +271,6 @@ function forgetHash (magnetOrHash) {
     const next = new Set(set)
     next.delete(hash)
     return next
-  })
-  cache.setEntry(caches.GENERAL, 'debridResolvedHashes', (current = {}) => {
-    const kept = { ...(current[serviceId()] || {}) }
-    delete kept[hash]
-    return { ...current, [serviceId()]: kept }
-  })
-}
-
-/** Remembers hashes the service is known to hold, so results can be badged instantly. */
-function rememberHashes (hashes) {
-  debridCachedHashes.update(set => new Set([...set, ...hashes]))
-  cache.setEntry(caches.GENERAL, 'debridResolvedHashes', (current = {}) => {
-    const now = Date.now()
-    const merged = { ...(current[serviceId()] || {}), ...Object.fromEntries(hashes.map(hash => [hash, now])) }
-    const pruned = Object.fromEntries(Object.entries(merged).sort(([, a], [, b]) => b - a).slice(0, MAX_REMEMBERED))
-    return { ...current, [serviceId()]: pruned }
   })
 }
 

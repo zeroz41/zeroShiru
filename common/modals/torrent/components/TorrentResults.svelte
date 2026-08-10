@@ -10,7 +10,7 @@
   import { anitomyscript, getMediaMaxEp, getKitsuMappings, getEpisodeMetadataForMedia } from '@/modules/anime/anime.js'
   import { loadedTorrent, completedTorrents, seedingTorrents, stagingTorrents } from '@/modules/torrent.js'
   import { dedupe, getTorrentResults, updatePeerCounts } from '@/modules/extensions/handler.js'
-  import { debridEnabled, debridCachedHashes, debridTransport, debridChecking, refreshDebridCache, probeDebridCache } from '@/modules/debrid/debrid.js'
+  import { debridEnabled, debridCachedHashes, debridTransport, debridChecking, refreshDebridCache, checkDebridCache } from '@/modules/debrid/debrid.js'
   import { listResult } from '@/modules/debrid/route.js'
   import { getId, getHash } from '@/modules/anime/animehash.js'
   import AnimeResolver from '@/modules/anime/animeresolver.js'
@@ -21,10 +21,6 @@
   import { X, Search, EllipsisVertical, Timer, Clapperboard, MonitorCog, ArrowDownWideNarrow, Paintbrush, ListMusic, ChevronUp, ChevronDown, Radio, RefreshCw, Cloud } from 'lucide-svelte'
   import Debug from 'debug'
   const debug = Debug('ui:torrents')
-
-  // how far down the results the debrid cache check reaches, the service caps the cost
-  // of answering within that (one batch request, or a handful of probes)
-  const CACHE_CHECK_RESULTS = 20
 
   /** @typedef {import('@/modules/providers/anilist/al.d.ts').Media} Media */
   /** @typedef {import('anitomyscript').AnitomyResult} AnitomyResult */
@@ -92,22 +88,14 @@
    * @param {Result[]} results
    * @param {string} sort
    * @param {boolean} batch
-   * @param {Set<string>} [debridHashes] - Hashes that play instantly via debrid, listed even without seeders.
-   * @param {boolean} [cachedOnly] - Show only debrid-cached releases, hiding the rest rather than dropping them.
    */
-  function sortResults(results, sort, batch, debridHashes, cachedOnly) {
-    if (!results) return { results: [], hiddenResults: [], sorted: [], cachedCount: 0 }
+  function sortResults(results, sort, batch) {
+    if (!results) return []
     const deduped = Array.from(dedupe(results)).map(result => {
       if (!(result.parseObject?.release_group && result.parseObject.release_group.length < 20)) result.parseObject = { ...result.parseObject, release_group: 'No Group' }
       return result
     })
-    const cached = entry => Boolean(debridHashes?.has(entry.hash?.toLowerCase()))
-    // filtering narrows what the rest of the modal sees, so the best pick and autoplay
-    // follow it too, which is the whole point in debrid only mode
-    const available = entry => listResult(entry, cached(entry), cachedOnly)
-    // sorted before partitioning, so the hidden half keeps display order and the cache
-    // check can walk the same priority the user sees, filtered or not
-    const sorted = deduped.sort((a, b) => {
+    return deduped.sort((a, b) => {
       switch (sort) {
         case 'smallest': return a.size - b.size
         case 'best': return ((b.type === 'best') - (a.type === 'best') || (b.type === 'alt') - (a.type === 'alt')) || b.seeders - a.seeders
@@ -121,11 +109,38 @@
         default: return b.seeders - a.seeders
       }
     })
-    return {
-      sorted,
-      cachedCount: debridHashes ? sorted.filter(cached).length : 0,
-      results: sorted.filter(available),
-      hiddenResults: sorted.filter(entry => !available(entry))
+  }
+
+  const sameOrder = (a, b) => a.length === b.length && a.every((entry, index) => entry === b[index])
+
+  /**
+   * Builds the function that splits sorted results into what is listed and what is hidden.
+   * Kept apart from the sorting above so a debrid cache answer only redoes these passes, not
+   * the dedupe and sort of every result. The previous split is remembered in a closure rather
+   * than a component variable, so it stays out of the reactive graph.
+   * @returns {(sorted: Result[], debridHashes?: Set<string>, cachedOnly?: boolean) => any}
+   */
+  function createListResults() {
+    let previous = null
+    return function listResults(sorted, debridHashes, cachedOnly) {
+      const results = []
+      const hiddenResults = []
+      let cachedCount = 0
+      for (const entry of sorted) {
+        const cached = Boolean(debridHashes?.has(entry.hash?.toLowerCase()))
+        if (cached) cachedCount++
+        // this narrows what the rest of the modal sees, so the best pick and autoplay follow
+        // it too, which is the whole point in debrid only mode
+        if (listResult(entry, cached, cachedOnly)) results.push(entry)
+        else hiddenResults.push(entry)
+      }
+      // most cache answers only move the count, since a release with seeders was listed either
+      // way. Handing back the same arrays then keeps the best-release pick from being redone,
+      // which reparses every result and is what made answers landing feel like a freeze.
+      if (previous && sameOrder(previous.results, results) && sameOrder(previous.hiddenResults, hiddenResults)) {
+        return { ...previous, cachedCount }
+      }
+      return (previous = { sorted, cachedCount, results, hiddenResults })
     }
   }
 
@@ -181,6 +196,7 @@
   export let search
   export let close
 
+  const listResults = createListResults()
   let container
   let containerEl
   let countdown = 5
@@ -348,12 +364,12 @@
   $: queries = queryExtensions({...search}, resolution)
   $: errors = getErrors({...search}, queries)
   $: cachedOnly = $debridEnabled && $settings.debridCachedOnly
-  // ask the service about the releases nearest the top, which are the ones most likely to be
-  // played. Answers land in the store the badges read, so the list marks itself up as they
-  // arrive. The unfiltered order is used deliberately: filtering to cached results and then
-  // only ever checking those would leave everything else permanently unknown.
-  $: if ($debridEnabled && $results?.resolved) probeDebridCache((queryResults?.sorted || []).slice(0, CACHE_CHECK_RESULTS).map(result => result.hash))
-  $: queryResults = sortResults($results?.torrents, $settings.torrentSort, batch, $debridEnabled ? $debridCachedHashes : undefined, cachedOnly)
+  $: sortedResults = sortResults($results?.torrents, $settings.torrentSort, batch)
+  // confirm cache state from the top of the list down, which is where the releases worth
+  // playing are. How far it reaches is the service's call: one request for a service with a
+  // cache endpoint, a handful of probes for one without.
+  $: if ($debridEnabled && $results?.resolved) checkDebridCache(sortedResults.map(result => result.hash))
+  $: queryResults = listResults(sortedResults, $debridEnabled ? $debridCachedHashes : undefined, cachedOnly)
   $: lookup = queryResults?.results
   $: (episodeSearch || resolution || $settings.torrentSort || $settings.audioLanguage) && scrollTop()
 
@@ -508,7 +524,7 @@
         {/if}
         {#if $debridEnabled}
           <button type='button' class='btn d-flex align-items-center px-10 py-5 ml-5 rounded text-nowrap font-weight-bold flex-shrink-0' class:bg-dark-very-light={!cachedOnly} class:bg-primary={cachedOnly} use:click={() => $settings.debridCachedOnly = !$settings.debridCachedOnly}
-               title={`Show only releases known to be cached on ${$debridTransport?.title ?? 'your debrid service'}, which play instantly.\nThe list is what the service can be asked about: your own downloads and releases you played before, so uncached releases may still stream.`}>
+               title={`Show only releases known to be cached on ${$debridTransport?.title ?? 'your debrid service'}, which play instantly.\nAnything not marked cached may still stream, it just is not known ahead of time.`}>
             <Cloud size='1.8rem' class='mr-5' />
             Cached {queryResults?.cachedCount ?? 0}{#if $debridChecking}<RefreshCw size='1.4rem' class='ml-5 spinning' />{/if}
           </button>

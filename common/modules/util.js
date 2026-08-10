@@ -747,7 +747,6 @@ export const defaults = {
  * @property {any} [stagingTorrents]
  * @property {any} [seedingTorrents]
  * @property {any} [completedTorrents]
- * @property {Record<string, Record<string, number>>} [debridResolvedHashes]
  * @property {string} posMiniplayer
  * @property {string} widthMiniplayer
  */
@@ -760,7 +759,6 @@ export const generalDefaults = {
   stagingTorrents: [],
   seedingTorrents: [],
   completedTorrents: [],
-  debridResolvedHashes: {},
   posMiniplayer: 'bottom right',
   widthMiniplayer: '0px'
 }

@@ -55,7 +55,7 @@
       <option value='only'>Debrid Only</option>
     </select>
   </SettingCard>
-  <SettingCard title='Check Cache Status' description='Marks which search results the service can stream instantly. Services offering a cache endpoint answer for every result in one request. Real-Debrid no longer has one, so a limited number of results per search are checked by briefly adding and removing the magnet, which is undone immediately and never touches your own downloads. Turn this off to only mark releases already on your account.'>
+  <SettingCard title='Confirm Cache Status' description='Checks whether the top search results can be streamed instantly, so the Cached badge is a fact rather than a guess. Services with a cache endpoint answer for every result in one request. Real-Debrid has none, so a small number of top results are confirmed by briefly adding and removing the magnet, which never touches your own downloads. Turn this off to badge only the releases already on your account.'>
     <input type='checkbox' id='debrid-cache-check' bind:checked={settings.debridCacheCheck} />
   </SettingCard>
 {/if}
