@@ -73,7 +73,7 @@
       <option value='only'>Debrid Only</option>
     </select>
   </SettingCard>
-  <SettingCard title='Check Availability' description='Asks the service what it can do with each search result, so the badges are facts rather than guesses: cached streams instantly, available means it would have to fetch the release first, unavailable means it cannot serve it at all. TorBox and Premiumize have a cache endpoint and answer for every result in one request. Real-Debrid and AllDebrid do not, so only a few of the top results are checked, by briefly adding and removing the magnet, which never touches your own downloads. Turn this off to badge only the releases already on your account.'>
-    <input type='checkbox' id='debrid-cache-check' bind:checked={settings.debridCacheCheck} />
-  </SettingCard>
+  <!-- availability checking is always on: `debridCacheCheck` defaults true and nothing unsets it.
+       To offer it again, add a SettingCard bound to it, ideally only when
+       `debridTransport.checksAddMagnets` — elsewhere the check is free and nobody would decline. -->
 {/if}

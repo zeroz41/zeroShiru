@@ -16,10 +16,8 @@ import { routeDebrid, debridKey } from '@/modules/debrid/route.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
 
-// register new services here, in the order the settings menu should offer them. A service that
-// is still being written stays hidden until its `available` flag is flipped. This registry is
-// the only place that touches service classes, everything else in the app goes through the
-// stores and functions exported below.
+// register new services here, in the order the settings menu offers them. The only place that
+// touches service classes; everything else goes through the stores and functions below.
 const debridServices = Object.fromEntries([AllDebrid, Premiumize, RealDebrid, TorBox].filter(Service => Service.available).map(Service => [Service.id, Service]))
 
 /** Selectable services for the settings menu, as plain data. */
@@ -27,10 +25,8 @@ export const debridOptions = Object.values(debridServices).map(Service => ({ id:
 
 const REFRESH_INTERVAL = 60_000
 
-// How long to wait before asking a service about the releases it did not manage to answer, and
-// how far that wait backs off while it keeps not answering them. A probing service stops its
-// sweep whenever the account or the connection is in no state to continue, which on a slow link
-// is often, so without this a results list keeps whichever handful of badges it happened to get.
+// how long before re-asking about releases a check could not answer, and how far that backs off
+// while it keeps not answering. Without it a bad minute leaves a results list half badged
 const RETRY_DELAY = 10_000
 const MAX_RETRY_DELAY = 4 * 60_000
 
@@ -60,6 +56,7 @@ export const debridTransport = derived(settings, value => {
   return {
     title: Service.title,
     only,
+    checksAddMagnets: Service.checkAddsMagnets, // the only thing worth offering an opt out for
     label: only ? 'Debrid Only' : 'Debrid First',
     description: only
       ? `Debrid Only: playback always uses ${Service.title}, torrents never start.`
@@ -78,16 +75,13 @@ export const debridAvailability = writable(new Map())
 export const debridChecking = writable(0)
 
 /**
- * Whether debrid owns what the player is showing. Set the moment playback is routed to a
- * service, before the resolve that takes a few seconds, because the player opens straight
- * away and must not look like a torrent while it waits. Cleared whenever playback goes to
- * the torrent client instead.
+ * Whether debrid owns what the player is showing. Set the moment playback is routed, before the
+ * resolve, since the player opens straight away and must not look like a torrent while it waits.
  */
 export const debridPlayback = writable(false)
 
-// Switching service, or editing the key of the one in use, takes effect immediately: the old
-// instance is torn down and the badges are dropped, since they described a different account.
-// The next call builds the new one.
+// switching service or key takes effect immediately: the old instance is torn down and the
+// badges dropped, since they described a different account
 settings.subscribe(value => {
   const key = `${value.debridService}:${debridKey(value)}`
   if (serviceKey !== null && serviceKey !== key) {
@@ -119,10 +113,8 @@ export async function testDebrid () {
 }
 
 /**
- * Attempts to stream a torrent through the configured debrid service.
- * Returns true when playback was handled, either with resolved files or a
- * final error in debrid only mode. Returns false to fall back to torrents.
- * The routing policy lives in route.js, debrid only never reaches the torrent client.
+ * Streams a torrent through the configured debrid service. Returns true when playback was
+ * handled, false to fall back to torrents. Routing policy lives in route.js.
  * @param {string} torrentID - Magnet URI, info hash, or .torrent link.
  * @param {string} [hash] - Info hash when known.
  * @param {{ episode?: number }} [search] - Playback context for picking the right file in packs.
@@ -150,8 +142,7 @@ export async function streamDebrid (torrentID, hash, search) {
     files.set(await resolveDebridFiles(route.id, search))
     return true
   } catch (error) {
-    // playback is the most authoritative answer there is, so whatever it just proved about
-    // the release is worth more than the badge that sent the user here
+    // playback is the most authoritative answer there is, worth more than the badge
     const proven = availabilityFromError(error)
     if (proven) {
       debug(`${serviceTitle()} cannot stream this release: ${error.message}`)
@@ -212,11 +203,7 @@ export async function resolveDebridFiles (torrentID, search) {
   })))
 }
 
-/**
- * Refreshes what the account itself says, which every service can answer for free: what it
- * holds streams instantly, what it is still fetching does not, what failed on it never will.
- * One request a minute at most.
- */
+/** Refreshes what the account itself says, which is free. One request a minute at most. */
 export function refreshDebridAvailability () {
   const active = getService()
   if (!active) return
@@ -233,8 +220,8 @@ export function refreshDebridAvailability () {
 
 /**
  * Whether answers from this instance still describe the configured account. A request in flight
- * outlives a settings change — a probe sweep by seconds, a slow list by longer — and badging a
- * new account with the previous one's answers is worse than having no badges at all.
+ * outlives a settings change, and badging a new account with the old one's answers is worse
+ * than no badges at all.
  * @param {import('@/modules/debrid/service.js').default} instance
  */
 function current (instance) {
@@ -246,15 +233,11 @@ let retry = null
 let retryDelay = RETRY_DELAY
 
 /**
- * Asks the service about the releases the user is looking at, so the badges say what it can
- * actually do with them rather than only what this account has touched before. The service
- * decides how: one batch call where its API offers a cache endpoint, a capped number of probes
- * where it does not. Answers are remembered, so browsing the same show again is free.
- *
- * A service is allowed to come back having answered only part of the list — a probing one stops
- * the moment the account or the link says it should — so whatever is still unanswered is asked
- * about again on a backing off timer until the list is done or the user moves on.
- * @param {string[]} hashes - Candidate info hashes, most relevant first, since probing bites from the front.
+ * Asks the service about the releases on screen, so badges say what it can actually do with them
+ * rather than only what the account has touched. Answers are remembered, so browsing the same
+ * show again is free. A service may answer only part of the list, so whatever is left is asked
+ * about again on a backing off timer until it is done or the user moves on.
+ * @param {string[]} hashes - Candidates, most relevant first, since probing bites from the front.
  */
 export async function checkDebridAvailability (hashes) {
   cancelDebridAvailability() // this list supersedes whatever the last one was still waiting to retry
@@ -262,8 +245,7 @@ export async function checkDebridAvailability (hashes) {
   if (!active || !settings.value.debridCacheCheck || status.value === 'offline') return
   const pending = active.unknownHashes(hashes)
   if (!pending.length) return // everything here already has an answer
-  // a sweep already running owns the service, so this call only reads back what is remembered
-  // and must not read its own lack of progress as the service refusing to answer
+  // a check already running owns the service, so this call only reads back what is remembered
   const busy = active.sweeping
   debridChecking.update(count => count + 1)
   try {
@@ -281,9 +263,8 @@ export async function checkDebridAvailability (hashes) {
     retryDelay = RETRY_DELAY
     return
   }
-  // answering something means the service is willing to talk, so the next attempt starts over at
-  // the short wait. Only a round that got nowhere backs off, which is what keeps a service that
-  // is genuinely refusing from being asked every ten seconds for as long as the modal is open
+  // any progress means the service is willing to talk, so start over at the short wait. Only a
+  // round that got nowhere backs off
   if (busy || left.length < pending.length) retryDelay = RETRY_DELAY
   else retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY)
   debug(`${left.length} of ${pending.length} releases unanswered, asking again in ${retryDelay}ms`)
@@ -297,8 +278,8 @@ export function cancelDebridAvailability () {
 }
 
 /**
- * Picks the file for the requested episode out of a pack using the same
- * anitomy parsing the rest of the app relies on, largest file as fallback.
+ * Picks the requested episode out of a pack with the same anitomy parsing the rest of the app
+ * uses, largest file as fallback.
  * @param {{ id: number, path: string, size: number }[]} files
  * @param {number} episode
  */
@@ -320,8 +301,7 @@ function serviceTitle () {
 }
 
 /**
- * Records one answer in both the service's memory and the badges, so the next search does not
- * repeat a check playback has already settled.
+ * Records one answer in both the service's memory and the badges.
  * @param {string} magnetOrHash
  * @param {string} state - An `Availability` value.
  */
@@ -336,9 +316,8 @@ function recordAvailability (magnetOrHash, state) {
 let queued = null
 
 /**
- * Collects answers arriving in one go into a single store write. A batch service answers a
- * whole results list inside one loop, and writing per hash would re-render the list as many
- * times; a probing service answers once every few seconds, so each still lands on its own.
+ * Collects answers arriving together into one store write, so a batch answer does not re-render
+ * the list once per hash. A probing service answers slowly enough that each still lands alone.
  * @param {string} hash
  * @param {string} state
  */

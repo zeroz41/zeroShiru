@@ -2,12 +2,9 @@
 // functions, free of UI and network imports, so it runs under plain Node for tests.
 
 /**
- * What a debrid service can do with a release right now.
- *
- * Services differ wildly in how well they can answer this: some expose a cache endpoint that
- * answers hundreds of hashes in one request, some have to be probed a hash at a time, some
- * cannot be asked at all. They all describe themselves with these four values, so the rest of
- * the app never has to care which kind it is talking to.
+ * What a debrid service can do with a release right now. Services differ wildly in how well they
+ * can answer, but all describe themselves with these four values, so the rest of the app never
+ * has to care which kind it is talking to.
  */
 export const Availability = Object.freeze({
   /** The service holds it and streams it immediately. */
@@ -24,11 +21,8 @@ export const Availability = Object.freeze({
 export const AVAILABILITY_ORDER = Object.freeze([Availability.CACHED, Availability.AVAILABLE, Availability.UNKNOWN, Availability.UNAVAILABLE])
 
 /**
- * How long an answer stays trusted, in milliseconds.
- *
- * A hit lasts far longer than a miss: anyone can pull a release into a service's cache at any
- * moment, but a release it already holds rarely disappears. Unknown is not an answer, so it is
- * never stored and never expires.
+ * How long an answer stays trusted. A hit lasts far longer than a miss: anyone can pull a release
+ * into a cache at any moment, but one already held rarely disappears.
  */
 export const AVAILABILITY_TTL = Object.freeze({
   [Availability.CACHED]: 6 * 60 * 60_000,
@@ -48,8 +42,8 @@ export function isAvailability (value) {
 }
 
 /**
- * Anything that is not one of the four states reads as unknown, so a service returning
- * something unexpected degrades to "no answer" rather than poisoning the badges.
+ * Anything unrecognised reads as unknown, so a service returning something unexpected degrades
+ * to "no answer" rather than poisoning the badges.
  * @param {any} value
  * @returns {string}
  */
@@ -66,8 +60,8 @@ export function streamsInstantly (state) {
 }
 
 /**
- * Reads a hash's state out of an availability map, defaulting to unknown.
- * Callers hold magnets and mixed-case hashes, the map is keyed by lowercase info hash.
+ * A hash's state out of an availability map, defaulting to unknown. The map is keyed by
+ * lowercase info hash.
  * @param {Map<string, string> | undefined} availability
  * @param {string | undefined} hash
  * @returns {string}
@@ -77,8 +71,7 @@ export function availabilityOf (availability, hash) {
 }
 
 /**
- * How a state is worded for the user. Kept here rather than in the components so the four
- * states read consistently wherever they appear, and so the wording is testable.
+ * How a state is worded for the user, kept here so it reads the same wherever it appears.
  * @param {string} state
  * @param {string} [title] - The service's display name.
  * @returns {{ label: string, description: string }}

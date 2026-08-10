@@ -5,15 +5,10 @@ import Debug from 'debug'
 const debug = Debug('ui:debrid')
 
 const API = 'https://api.torbox.app/v1/api'
-// the account's torrent list comes back in one request; the API pages at 1000
-const LIST_LIMIT = 1_000
-// seed: 1 auto, 2 always, 3 never. Shiru only streams, so the account is never asked to seed
-const SEED_NEVER = 3
+const LIST_LIMIT = 1_000 // the whole account in one request; the API pages at 1000
+const SEED_NEVER = 3 // 1 auto, 2 always, 3 never. Shiru only streams, so never seed
 
-/**
- * TorBox error codes worth explaining, anything else falls back to the API's own detail line.
- * https://api-docs.torbox.app/
- */
+// error codes worth explaining, anything else falls back to the API's own detail line
 const errorMessages = {
   BAD_TOKEN: 'Invalid TorBox API key',
   AUTH_ERROR: 'TorBox rejected the API key',
@@ -34,30 +29,24 @@ const deadStates = /(stalled|error|failed|missing)/i
 /**
  * TorBox implementation, see https://api-docs.torbox.app/
  *
- * The API differs from Real-Debrid's in three ways this client has to account for:
- * - `/torrents/checkcached` answers many hashes in one request, so every result in a search can
- *   carry a real badge instead of the handful a probing service can afford.
- * - Every response is wrapped in a `{ success, data }` envelope and failures can arrive with a
- *   200, so `unwrap` unpacks and throws rather than each method checking.
- * - `/torrents/requestdl` authenticates with a `token` query parameter while everything else
- *   uses a bearer header.
+ * Three differences from Real-Debrid shape this client: `/torrents/checkcached` answers many
+ * hashes in one request, every response is wrapped in `{ success, data }` with failures arriving
+ * inside a 200, and `/torrents/requestdl` authenticates with a `token` query parameter while
+ * everything else uses a bearer header.
  */
 export default class TorBox extends DebridService {
   static id = 'torbox'
   static title = 'TorBox'
   static available = true
-  // documented allowance is 300 requests a minute per endpoint; spending it as if it were the
-  // budget for all of them keeps a season pack's worth of link requests well inside it
+  // documented allowance is 300 a minute per endpoint; spending it as if it covered all of them
+  // keeps a season pack's worth of link requests well inside it
   static limits = { reservoir: 300, reservoirRefreshAmount: 300, reservoirRefreshInterval: 60_000, maxConcurrent: 3, minTime: 200 }
   // a real cache endpoint, so badges cost one request for the whole results list
   static availabilityCheck = 'batch'
   // hashes travel as repeated query parameters, so the chunk size keeps the URL sane
   static maxBatch = 75
 
-  /**
-   * TorBox wraps every response in `{ success, data, error, detail }` and reports plenty of
-   * failures with a 200, so success is decided here rather than by the status code alone.
-   */
+  /** Failures arrive inside a 200, so success is decided here rather than by the status code. */
   unwrap (json) {
     if (!json || typeof json !== 'object' || !('success' in json)) return json
     if (!json.success) throw this.mapError(200, json)
@@ -67,7 +56,7 @@ export default class TorBox extends DebridService {
   mapError (status, json) {
     const code = json?.error
     // `detail` is usually a sentence, but a rejected request answers with a list of field
-    // problems instead, which is for the log rather than for the user
+    // problems instead, which is for the log rather than the user
     const detail = typeof json?.detail === 'string' ? json.detail : ''
     const message = errorMessages[code] || detail || (typeof code === 'string' && code) || `Request failed with status ${status}`
     if (authCodes.includes(code) || ((status === 401 || status === 403) && !code)) return new DebridAuthError(message, { status, code })
@@ -81,8 +70,8 @@ export default class TorBox extends DebridService {
   }
 
   /**
-   * The account's torrents. TorBox caches this itself, which is fine and faster for the badge
-   * listing; `bypass_cache` is only worth its latency when polling a change we just made.
+   * The account's torrents. TorBox caches this itself, which is faster for the badge listing;
+   * `bypass_cache` is only worth its latency when polling a change just made.
    * @param {{ id?: string | number, fresh?: boolean }} [opts]
    * @returns {Promise<any[]>}
    */
@@ -107,8 +96,8 @@ export default class TorBox extends DebridService {
   }
 
   /**
-   * The reason TorBox is pleasant to badge: one request answers the whole results list.
-   * Hashes the endpoint leaves out are not cached, which the base class records as available.
+   * One request answers the whole results list. Hashes left out are not cached, which the base
+   * class records as available.
    * @param {string[]} hashes
    */
   async checkAvailabilityBatch (hashes) {
@@ -133,9 +122,8 @@ export default class TorBox extends DebridService {
     let added = false
     try {
       if (!torrent) {
-        // ask before adding: unlike Real-Debrid, TorBox answers for free, and an uncached
-        // release must not be queued onto the account just to find that out — adding one spends
-        // from a much tighter allowance (60 an hour) than a cached add does
+        // ask before adding: the answer is free, and adding an uncached torrent spends from a
+        // much tighter allowance (60 an hour) than a cached add does
         if ((await this.checkAvailabilityBatch([hash])).get(hash) !== Availability.CACHED) throw new DebridNotCachedError()
         ;({ torrent, added } = await this.#add(magnetURI, hash))
       }
@@ -158,18 +146,14 @@ export default class TorBox extends DebridService {
   }
 
   /**
-   * Adds a magnet and reads back the account entry for it.
-   *
-   * `added` reports whether this call is the one that put the torrent there, and only that
-   * makes it ours to remove again: the account can already hold a release the listing missed a
-   * moment earlier, and deleting one of the user's own downloads is not a recoverable mistake.
+   * Adds a magnet and reads back the account entry for it. `added` reports whether this call is
+   * what put it there, which is the only thing that makes it ours to remove again.
    * @param {string} magnetURI
    * @param {string} hash
    * @returns {Promise<{ torrent: any, added: boolean }>}
    */
   async #add (magnetURI, hash) {
-    // multipart is what the endpoint documents, and allow_zip off keeps a pack as individual
-    // files rather than one archive the player cannot seek in
+    // allow_zip off keeps a pack as individual files rather than one archive the player cannot seek
     const created = await this.request(`${API}/torrents/createtorrent`, {
       method: 'POST',
       encoding: 'multipart',
@@ -191,9 +175,8 @@ export default class TorBox extends DebridService {
   }
 
   /**
-   * Waits for a freshly added torrent to show up on the account and settle. A cached release is
-   * complete the moment TorBox accepts it, so this waits only `timeouts.ready` before handing
-   * back whatever it has, which the caller reads as a fresh download rather than a cache hit.
+   * Waits for a freshly added torrent to show up and settle. A cached release is complete the
+   * moment TorBox accepts it, so anything slower reads as a fresh download.
    * @param {string | number | undefined} id
    * @param {string} hash
    */
@@ -212,12 +195,9 @@ export default class TorBox extends DebridService {
   }
 
   /**
-   * The account's current entry for an info hash, which is how a release already on the account
-   * is reused instead of added twice.
-   *
-   * The listing behind this can be up to a minute old, so the entry it names is read back by id
-   * before playback acts on it: a torrent deleted from another device in the meantime has to
-   * read as "not on the account" and be added again, not fail the resolve with a dead id.
+   * The account's entry for an info hash, which is how a release already there is reused rather
+   * than added twice. Read back by id because the listing can be a minute stale, so one deleted
+   * elsewhere must read as absent rather than fail the resolve.
    * @param {string} hash
    * @param {{ listed?: boolean }} [opts] - `listed` false skips the listing, for a hash known to be absent from it.
    * @returns {Promise<any | null>}
@@ -226,8 +206,8 @@ export default class TorBox extends DebridService {
     if (!hash) return null
     const known = listed ? (await this.listing()).find(torrent => String(torrent?.hash || '').toLowerCase() === hash) : null
     if (!known) return null
-    // a failed read is treated as "gone" rather than raised: the caller's next move is to check
-    // the cache and add the magnet, which fails loudly enough if the API is really unreachable
+    // a failed read reads as "gone": the caller then checks the cache and adds the magnet, which
+    // fails loudly enough if the API is really unreachable
     const [confirmed] = await this.#accountTorrents({ id: known.id, fresh: true }).catch(() => [])
     if (!confirmed) {
       debug(`Account listing named a torrent that is gone (${known.id}), adding the magnet instead`)
@@ -237,8 +217,7 @@ export default class TorBox extends DebridService {
   }
 
   /**
-   * Turns the wanted files into direct stream links. A dead file inside a pack is skipped
-   * rather than failing the whole resolve, the same rule every service follows.
+   * Turns the wanted files into direct stream links, skipping dead ones.
    * @param {any} torrent
    * @param {{ id: number, path: string, size: number, type?: string }[]} wanted
    */
@@ -258,9 +237,8 @@ export default class TorBox extends DebridService {
 }
 
 /**
- * What the account says about one of its torrents. `download_present` is the field that means
- * the data is actually sitting on TorBox's servers, which is the only thing that makes a
- * release streamable now.
+ * What the account says about one of its torrents. `download_present` means the data really is on
+ * TorBox's servers, which is the only thing that makes a release streamable now.
  * @param {any} torrent
  * @returns {string}
  */
@@ -271,8 +249,7 @@ function torrentAvailability (torrent) {
 }
 
 /**
- * TorBox reports a file's full path in `name` and its bare filename in `short_name`, both
- * without a leading slash. Shiru's file objects use a rooted path, like the torrent client's.
+ * Full path is in `name`, bare filename in `short_name`, neither rooted. Shiru's file objects are.
  * @param {any} file
  */
 function filePath (file) {

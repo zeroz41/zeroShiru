@@ -9,10 +9,7 @@ const API = 'https://api.alldebrid.com'
 const V4 = `${API}/v4`
 const V41 = `${API}/v4.1`
 
-/**
- * AllDebrid error codes worth explaining, anything else falls back to the API's own message.
- * https://docs.alldebrid.com/
- */
+// error codes worth explaining, anything else falls back to the API's own message
 const errorMessages = {
   AUTH_BAD_APIKEY: 'Invalid AllDebrid API key',
   AUTH_MISSING_APIKEY: 'AllDebrid requires an API key for this request',
@@ -44,34 +41,23 @@ const READY = 4
 /**
  * AllDebrid implementation, see https://docs.alldebrid.com/
  *
- * Two things about the API decide the shape of this client:
- * - `/magnet/instant` is gone — the endpoint 404s exactly like one that never existed, and it is
- *   absent from the current docs — so, as on Real-Debrid, the only way to ask about a release is
- *   to put the magnet on the account and read what comes back. AllDebrid answers that in the
- *   upload response itself, and takes many magnets per request, so a whole page of results costs
- *   one upload and one delete each rather than Real-Debrid's five requests per hash. What it
- *   still costs is the account: every magnet checked lands there for a moment, so the base class
- *   cap on how far down a list to look applies here too.
- * - `/magnet/status` describes a magnet by name and progress but never says which info hash it
- *   came from, so an entry cannot be matched back to a release. That rules out reading badges off
- *   the account, and it is why this client reads the account only to know which magnet ids were
- *   already there before it uploaded anything — the ids it did not create are the user's, and
- *   deleting one of those is not a recoverable mistake.
+ * Two API quirks shape this client:
+ * - `/magnet/instant` is gone, so availability is read off the upload response instead, which
+ *   answers `ready` per magnet and takes many at once. Cheap in requests, but every hash checked
+ *   lands on the account for a moment, hence the small caps below.
+ * - `/magnet/status` never says which info hash a magnet came from, so the account cannot be
+ *   read for badges, only for which ids were already there before we uploaded anything.
  */
 export default class AllDebrid extends DebridService {
   static id = 'alldebrid'
   static title = 'AllDebrid'
   static available = true
-  // one upload answers many hashes, so the check batches even though it is not free
+  // one upload answers many hashes, but each one lands on the account, so the caps stay small
   static availabilityCheck = 'batch'
-  // ...and what makes it not free: every hash checked lands on the account for a moment
   static checkAddsMagnets = true
-  // every hash in a batch briefly owns a magnet on the account, so both the chunk size and how
-  // far down a results list this looks stay small. Real-Debrid's probe cap, for the same reason
   static maxBatch = 10
   static maxAsk = 10
-  // no documented allowance; modest limits, since uploading is the expensive half of this API
-  static limits = { maxConcurrent: 3, minTime: 250 }
+  static limits = { maxConcurrent: 3, minTime: 250 } // no documented allowance, so be modest
 
   /** AllDebrid wraps every response in `{ status, data, error }` and reports failures with a 200. */
   unwrap (json) {
@@ -99,26 +85,20 @@ export default class AllDebrid extends DebridService {
     return { username: user.username || user.email || 'AllDebrid user', expires: user.premiumUntil ? new Date(user.premiumUntil * 1_000).toISOString() : undefined }
   }
 
-  /**
-   * The account's magnets. Read only to tell this client's magnets from the user's own, never for
-   * badges: the entries carry no info hash, so there is no way to say which release one describes.
-   */
+  /** Read only to tell this client's magnets from the user's own, never for badges. */
   async fetchListing () {
     return this.#magnets()
   }
 
-  /** @see fetchListing - the account listing carries no info hashes, so nothing can be read off it. */
+  /** Nothing to read: account entries carry no info hash, so none can be matched to a release. */
   async listAvailability () {
     return new Map()
   }
 
   /**
-   * Uploads the hashes, reads the `ready` flag the upload answers with, and takes back off the
-   * account everything this call put there.
-   *
-   * The account is read first rather than afterwards, because that read is the only thing that
-   * says which magnet ids existed before: an upload of a magnet the account already holds answers
-   * with the existing entry, so without it a check would happily delete the user's own magnet.
+   * Uploads the hashes, reads the `ready` flag back, and removes everything this call added.
+   * The account is read first because an upload of a magnet it already holds answers with the
+   * existing entry, so without that read the cleanup would delete the user's own magnet.
    * @param {string[]} hashes
    */
   async checkAvailabilityBatch (hashes) {
@@ -130,8 +110,7 @@ export default class AllDebrid extends DebridService {
       if (entry?.id != null && !existing.has(String(entry.id))) ours.push(entry.id)
       const hash = AllDebrid.parseHash(entry?.hash || entry?.magnet)
       if (!hash) continue
-      // a rejected magnet is an answer when the rejection is about the release itself, and no
-      // answer at all when it is about the account being busy
+      // a rejection about the release is an answer, one about the account being busy is not
       if (entry.error) {
         if (deadCodes.includes(entry.error.code)) answers.set(hash, Availability.UNAVAILABLE)
         else debug(`AllDebrid did not answer for ${hash}: ${entry.error.code}`)
@@ -147,8 +126,7 @@ export default class AllDebrid extends DebridService {
     const hash = AllDebrid.parseHash(magnet)
     const magnetURI = AllDebrid.toMagnet(magnet)
     if (!magnetURI) throw new DebridError('AllDebrid needs a magnet link or info hash to resolve')
-    // same reason as the availability check: only the ids that were not here a moment ago are
-    // ours to remove again if this resolve cannot go through
+    // as in the check: only ids that were not here a moment ago are ours to remove again
     const existing = await this.#accountIds({ fresh: true })
     const [uploaded] = await this.#upload([magnetURI])
     if (uploaded?.error) throw uploadError(uploaded.error)
@@ -158,8 +136,7 @@ export default class AllDebrid extends DebridService {
     try {
       if (!uploaded.ready) throw new DebridNotCachedError()
       const magnetInfo = (await this.#magnets(id))[0]
-      // the upload already said this one is ready, so an empty read is the request failing rather
-      // than an answer about the release, and must not be reported as one
+      // the upload already said ready, so an empty read is the request failing, not an answer
       if (!magnetInfo) throw new DebridError('AllDebrid did not report the magnet back after adding it')
       const state = magnetAvailability(magnetInfo)
       if (state === Availability.UNAVAILABLE) throw new DebridUnavailableError(`AllDebrid could not process this torrent (${magnetInfo.status || 'failed'})`)
@@ -180,8 +157,7 @@ export default class AllDebrid extends DebridService {
   }
 
   /**
-   * Adds magnets, which is also how AllDebrid is asked whether it holds them: the response says
-   * `ready` per magnet. Takes many at once, and answers about each one separately.
+   * Adds magnets, which is also how AllDebrid is asked whether it holds them.
    * @param {string[]} magnetsOrHashes
    * @returns {Promise<any[]>}
    */
@@ -204,9 +180,7 @@ export default class AllDebrid extends DebridService {
   }
 
   /**
-   * A magnet's file tree. Asking about one magnet by id is documented to answer with its files
-   * inline, and the dedicated endpoint is the fallback for when it does not — the two carry the
-   * same tree, so nothing downstream has to know which one it came from.
+   * A magnet's file tree. Status answers with it inline; the files endpoint is the fallback.
    * @param {any} magnetInfo
    * @returns {Promise<any[]>}
    */
@@ -217,8 +191,7 @@ export default class AllDebrid extends DebridService {
   }
 
   /**
-   * The magnet ids currently on the account, as strings so they compare cleanly whichever way
-   * the API types them.
+   * The magnet ids on the account, as strings so they compare however the API types them.
    * @param {{ fresh?: boolean }} [opts]
    * @returns {Promise<Set<string>>}
    */
@@ -227,8 +200,7 @@ export default class AllDebrid extends DebridService {
   }
 
   /**
-   * Turns the wanted files into direct stream links. A dead file inside a pack is skipped rather
-   * than failing the whole resolve, the same rule every service follows.
+   * Turns the wanted files into direct stream links, skipping dead ones.
    * @param {{ path: string, size: number, link: string }[]} wanted
    */
   async #unlockLinks (wanted) {
@@ -251,8 +223,7 @@ export default class AllDebrid extends DebridService {
 }
 
 /**
- * The typed answer a rejected upload stands for. A release AllDebrid will never take is an
- * answer; anything else is the account or the moment, which proves nothing about the release.
+ * The typed answer a rejected upload stands for. Only a release it will never take is an answer.
  * @param {{ code?: string, message?: string }} error
  */
 function uploadError (error) {
@@ -262,9 +233,7 @@ function uploadError (error) {
 }
 
 /**
- * What the account says about one of its magnets, read from the status code table in the API
- * docs: one value means finished, everything below it is still in progress, everything above it
- * is a way of having failed.
+ * What the account says about one magnet, per the status code table in the API docs.
  * @param {any} magnet
  * @returns {string}
  */
@@ -276,9 +245,7 @@ function magnetAvailability (magnet) {
 }
 
 /**
- * Flattens AllDebrid's file tree into rooted paths, like the torrent client's file objects.
- * An entry is a folder when it carries children in `e`, and a file when it carries a link in
- * `l`; names are in `n` and sizes in `s`.
+ * Flattens the file tree into rooted paths. `n` name, `s` size, `l` link, `e` folder children.
  * @param {any[]} entries
  * @param {string} [prefix]
  * @returns {{ path: string, size: number, link: string }[]}

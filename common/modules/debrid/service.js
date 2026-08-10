@@ -3,7 +3,7 @@ import { Availability, AVAILABILITY_TTL, normalizeAvailability } from './availab
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
 
-// This module is intentionally free of UI imports so it can also run under plain Node for testing.
+// No UI imports here, so this module also runs under plain Node for testing.
 
 export class DebridError extends Error {
   /**
@@ -18,7 +18,7 @@ export class DebridError extends Error {
   }
 }
 
-/** Thrown when the API key is missing, invalid or the account lacks the required plan. */
+/** The API key is missing, invalid, or the account lacks the required plan. */
 export class DebridAuthError extends DebridError {
   constructor (message, opts) {
     super(message, opts)
@@ -26,7 +26,7 @@ export class DebridAuthError extends DebridError {
   }
 }
 
-/** Thrown when the service could not be reached at all, usually because the client is offline. */
+/** The service could not be reached at all, usually because the client is offline. */
 export class DebridNetworkError extends DebridError {
   constructor (message, opts) {
     super(message, opts)
@@ -35,10 +35,8 @@ export class DebridNetworkError extends DebridError {
 }
 
 /**
- * A definite answer that playback cannot use this release now, carrying the availability it
- * proves. Everything that asks a service a question — playback and cache checks alike — reads
- * `availability` off the error rather than matching on error types, so a service only has to
- * throw the right one and both callers behave correctly.
+ * Playback cannot use this release now, carrying the availability it proves. Callers read
+ * `availability` off the error rather than matching on error types.
  * @abstract
  */
 export class DebridUnstreamableError extends DebridError {
@@ -64,7 +62,7 @@ export class DebridUnavailableError extends DebridUnstreamableError {
   }
 }
 
-/** Thrown by the base class for any method a service template has not filled in yet. */
+/** Thrown by the base class for any method a service has not filled in yet. */
 export class DebridNotImplementedError extends DebridError {
   /** @param {string} title - The service's display name. */
   constructor (title) {
@@ -74,11 +72,8 @@ export class DebridNotImplementedError extends DebridError {
 }
 
 /**
- * What an error proves about a release, or null when it proves nothing.
- *
- * A timeout, a rate limit or a dropped connection says something about the moment rather than
- * the release, so it must leave the release unknown and re-checkable. Only the two definite
- * answers count.
+ * What an error proves about a release, or null when it proves nothing. A timeout or a rate
+ * limit describes the moment, not the release, so it leaves it unknown and re-checkable.
  * @param {any} error
  * @returns {string | null}
  */
@@ -103,12 +98,11 @@ export function availabilityFromError (error) {
  */
 
 /**
- * Holds services to the HTTPS half of the DebridFile contract. Debrid links are account
- * bound, so a cleartext link would put the user's traffic and their link on the wire in
- * the clear. Dropped rather than downgraded.
+ * Drops any link that is not HTTPS. Debrid links are account bound, so a cleartext one would put
+ * the user's traffic and their link on the wire in the clear.
  * @param {DebridFile[]} files
  * @param {string} title - Service name, for the message the user sees.
- * @returns {DebridFile[]} The files safe to stream.
+ * @returns {DebridFile[]}
  */
 export function secureFiles (files, title) {
   const secure = (files || []).filter(file => /^https:\/\//i.test(file?.url))
@@ -122,22 +116,20 @@ export const archiveRx = /\.(rar|zip|7z)$/i
 const magnetHashRx = /urn:btih:([a-f\d]{40})/i
 const bareHashRx = /^[a-f\d]{40}$/i
 
-// retry policy for the shared limiter, applies to every service
 const RATE_LIMIT_RETRIES = 2
 const RATE_LIMIT_FALLBACK = 5 // seconds to wait when a 429 carries no retry-after header
 const NETWORK_RETRY_DELAY = 3_000
-// consecutive unanswered probes before a sweep gives up on the rest of its list
-const MAX_PROBE_FAILURES = 3
-// how far a poll budget may stretch on a slow link, as a multiple of what it was written for
-const MAX_STRETCH = 3
+const MAX_PROBE_FAILURES = 3 // consecutive unanswered probes before a sweep gives up
+const MAX_STRETCH = 3 // how far a poll budget may stretch on a slow link
+const MAX_CLEANUP_ATTEMPTS = 3
 
 /**
- * Base class for debrid services, providing rate limited requests and typed errors.
+ * Base class for debrid services: rate limited requests, typed errors, availability bookkeeping.
  * Implementations only talk HTTP, state is per-instance so services stay swappable.
  *
  * Adding a service means subclassing this, setting the statics below, and implementing the
- * abstract methods. Nothing outside the new file needs to change apart from one entry in the
- * registry in `debrid.js`. Anything left unimplemented reports itself clearly.
+ * abstract methods. Nothing outside the new file changes apart from one registry entry in
+ * `debrid.js`.
  * @abstract
  */
 export default class DebridService {
@@ -155,88 +147,49 @@ export default class DebridService {
   static authParam = 'apikey'
   /** @type {'form' | 'json' | 'multipart'} How request bodies are encoded, overridable per request. */
   static encoding = 'form'
-  /**
-   * Tunable time limits in milliseconds, override only what differs for the service.
-   *
-   * Everything except `request` is a budget for a poll loop, so it is read through `budget()`
-   * and stretches to fit a slow connection. `request` is an absolute ceiling on one round trip
-   * and deliberately does not.
-   */
+
+  /** Time limits in milliseconds. All but `request` are poll budgets, read through `budget()`. */
   static timeouts = {
-    request: 30_000, // hard limit on a single HTTP request
+    request: 30_000, // hard ceiling on one round trip, deliberately does not stretch
     select: 12_000, // waiting for the service to accept a magnet and expose its file list
     ready: 5_000, // waiting for a cached torrent to report ready, anything slower is a fresh download
     poll: 1_000, // gap between status polls
-    // budget for one availability probe. Deliberately tighter than `select`: a probe that drags
-    // on spends requests the account needs for playback, and no answer is worth that
-    probe: 10_000
+    probe: 10_000 // tighter than `select`: a probe that drags on spends requests playback needs
   }
 
-  /**
-   * @type {number} Round trip time in milliseconds the limits above are written for. Measured
-   * latency is compared against this to work out how far a budget has to stretch.
-   */
+  /** @type {number} Round trip time the limits above are written for, in milliseconds. */
   static nominalLatency = 300
 
-  /**
-   * @type {number} Probes running at once during a sweep.
-   *
-   * A probe is mostly spent waiting on the service, so running a few at a time cuts what a
-   * results list costs in wall clock without asking the API to do any more work. Kept small
-   * because each one briefly owns a torrent on the user's account.
-   */
+  /** @type {number} Probes running at once. Small, since each briefly owns a torrent on the account. */
   static maxProbeConcurrency = 3
 
   /** @type {number} Most files one resolve turns into stream links, guards against huge season packs. */
   static maxFiles = 60
 
   /**
-   * @type {'batch' | 'probe' | 'none'} How the service can be asked about a release it has not seen.
-   * 'batch' services answer many hashes in one cheap request, which is by far the best case.
-   * 'probe' is for services with no cache endpoint, where the only way to find out is to add
-   * the magnet and read the status back, costing several requests per hash.
-   * 'none' leaves badges to `listAvailability` and lets playback discover the rest.
+   * @type {'batch' | 'probe' | 'none'} How the service can be asked about a release it has not
+   * seen. 'batch' answers many hashes per request, 'probe' adds the magnet and reads the status
+   * back, 'none' leaves badges to `listAvailability`.
    */
   static availabilityCheck = 'none'
 
-  /** @type {number} Hashes per batch request, so one long results list becomes a few calls. */
+  /** @type {number} Hashes per batch request. */
   static maxBatch = 100
 
   /**
-   * Whether asking about a release means putting a magnet on the user's account and taking it
-   * away again, rather than reading a cache index the service already keeps.
-   *
-   * Two things follow, and they are the same fact twice. Only one such check may be in flight,
-   * because adding is what services rate limit hardest. And a hash the answer leaves out has not
-   * thereby been called "not cached" — a check that adds magnets answers about the ones it
-   * managed to take, so silence there means unasked, where silence from a real cache endpoint
-   * means a miss.
-   *
-   * Probing is always this. Override it where a service batches its check but still adds a magnet
-   * per hash to run it.
+   * Whether asking about a release puts a magnet on the account rather than reading a cache
+   * index. Two things follow: only one such check may be in flight, and a hash the answer leaves
+   * out is unasked rather than "not cached".
    * @returns {boolean}
    */
   static get checkAddsMagnets () {
     return this.availabilityCheck === 'probe'
   }
 
-  /**
-   * @type {number} How far down the results a probing service looks, and so the most probes
-   * one results list can ever cost. Probing is expensive — several requests and a few seconds
-   * each — so this buys confirmed answers for the releases most likely to be played rather
-   * than trying to answer the whole list. Everything past it stays unknown.
-   */
+  /** @type {number} Most probes one results list may cost, since each is several requests. */
   static maxProbes = 10
 
-  /**
-   * How far down a results list this service is willing to look at all.
-   *
-   * A cache endpoint answers the whole list for one request, so there is no reason to stop.
-   * Anything that has to add a magnet to find out costs the account something per hash, so it
-   * only asks about the releases most likely to be played. Override where a service batches its
-   * check but still pays per hash.
-   * @returns {number}
-   */
+  /** How far down a results list this service looks. Override where a batch still pays per hash. */
   static get maxAsk () {
     return this.availabilityCheck === 'probe' ? this.maxProbes : Infinity
   }
@@ -244,27 +197,26 @@ export default class DebridService {
   /** @type {Record<string, number>} How long each answer stays trusted, overridable per service. */
   static availabilityTTL = AVAILABILITY_TTL
 
-  /**
-   * @type {number} How long the account's own torrent listing is reused before it is read again.
-   * Matched to how often the badges refresh, so browsing and then playing costs one read rather
-   * than two.
-   */
+  /** @type {number} How long the account listing is reused. Matched to the badge refresh. */
   static listingTTL = 60_000
 
   /** @type {{ at: number, promise: Promise<any[]> } | null} The listing read, shared by everyone waiting on it. */
   #listing = null
 
+  /** @type {Map<string, { url: string, opts: any, attempts: number }>} Removals that failed, to try again. */
+  #orphans = new Map()
+
   /** @param {string} apiKey */
   constructor (apiKey) {
     this.apiKey = apiKey
     this.rateLimitPromise = null
-    /** @type {number} Rolling estimate of one round trip to this service, 0 until the first answer. */
+    /** @type {number} Rolling estimate of one round trip, 0 until the first answer. */
     this.latency = 0
     /** @type {Map<string, { state: string, at: number }>} What the service has already said about a hash. */
     this.availabilityState = new Map()
     /** @type {Map<string, Promise<string>>} Probes in flight, so a hash is never asked about twice at once. */
     this.probes = new Map()
-    /** @type {boolean} Whether a probe sweep is running, since only one may be. */
+    /** @type {boolean} Whether a check that adds magnets is running, since only one may be. */
     this.sweeping = false
     this.limiter = new Bottleneck(this.config.limits)
     this.limiter.on('failed', (error, jobInfo) => {
@@ -282,52 +234,67 @@ export default class DebridService {
 
   /**
    * Undoes something this client created on the account. Never throws: it runs from `finally`,
-   * where it would mask the real failure. Services whose delete is not a plain DELETE pass the
-   * request options they need.
+   * where it would mask the real failure. A removal that fails is remembered and retried, since
+   * the limiter does not retry the offline case that most often causes one.
    * @param {string} url
    * @param {Parameters<DebridService['request']>[1]} [opts]
    */
   async release (url, opts) {
     try {
       await this.request(url, { method: 'DELETE', ...opts })
+      this.#orphans.delete(url)
     } catch (error) {
-      debug(`Cleanup failed for ${url}: ${error.message}`)
+      if (error?.status === 404) return this.#orphans.delete(url) // already gone is what we wanted
+      const attempts = (this.#orphans.get(url)?.attempts ?? 0) + 1
+      debug(`Cleanup failed for ${url} (attempt ${attempts}): ${error.message}`)
+      if (attempts < MAX_CLEANUP_ATTEMPTS) this.#orphans.set(url, { url, opts, attempts })
+      else this.#orphans.delete(url)
     } finally {
       this.forgetListing() // the account just changed, whether or not the removal worked
     }
   }
 
   /**
+   * Retries removals that failed earlier. Only ever replays a removal `release()` was already
+   * asked to make, so it can no more reach a torrent the user wanted than the original call
+   * could. Never persisted: a stale id would eventually name something else.
+   */
+  async retryCleanup () {
+    const pending = [...this.#orphans.values()]
+    if (!pending.length) return
+    debug(`Retrying ${pending.length} removal(s) that failed earlier`)
+    await Promise.all(pending.map(entry => this.release(entry.url, entry.opts)))
+  }
+
+  /** How many removals are still outstanding. */
+  get orphaned () {
+    return this.#orphans.size
+  }
+
+  /**
    * The account's own torrent listing, read at most once per `listingTTL` and shared by every
-   * caller waiting on it.
-   *
-   * Two things want this same list: the badge refresh, once a minute, and every resolve, which
-   * checks whether the account already holds the release before adding it again. Reading it per
-   * play put a full listing on the play path — measured at 4.6s on a 312 torrent Real-Debrid
-   * account — for a list the badge refresh had usually just fetched. Sharing it makes the
-   * common case free, and the price is that an entry can be up to a minute stale, so callers
-   * confirm an entry before acting on its id.
-   * @param {{ fresh?: boolean }} [opts] - `fresh` forces a read, for polling a change this client just made.
+   * caller. Both the badge refresh and every resolve want it, and reading it per play put a full
+   * listing on the play path. An entry can be a minute stale, so callers confirm it before
+   * acting on its id.
+   * @param {{ fresh?: boolean }} [opts] - `fresh` forces a read, for polling a change just made.
    * @returns {Promise<any[]>}
    */
   listing ({ fresh = false } = {}) {
     const known = this.#listing
     if (!fresh && known && Date.now() - known.at < this.config.listingTTL) return known.promise
     const entry = { at: Date.now(), promise: this.fetchListing() }
-    // a failed read must not be remembered as the state of the account
-    entry.promise.catch(() => { if (this.#listing === entry) this.#listing = null })
+    entry.promise.catch(() => { if (this.#listing === entry) this.#listing = null }) // never remember a failed read
     this.#listing = entry
     return entry.promise
   }
 
-  /** Drops the remembered listing, because this client just changed the account or found it wrong. */
+  /** Drops the remembered listing, because the account just changed. */
   forgetListing () {
     this.#listing = null
   }
 
   /**
-   * Reads the account's torrents. Called at most once per `listingTTL`; everything else goes
-   * through `listing()`.
+   * Reads the account's torrents. Everything else goes through `listing()`.
    * @abstract
    * @returns {Promise<any[]>}
    */
@@ -340,7 +307,6 @@ export default class DebridService {
 
   /**
    * The lowercase info hash of a magnet URI or bare hash, empty when there is none.
-   * Every service takes the same input shape, so the parsing lives here once.
    * @param {any} magnetOrHash
    * @returns {string}
    */
@@ -350,7 +316,7 @@ export default class DebridService {
   }
 
   /**
-   * Normalizes a magnet URI or bare info hash into a magnet URI to hand to the API.
+   * A magnet URI to hand to the API, from a magnet URI or bare info hash.
    * @param {any} magnetOrHash
    * @returns {string} Empty when the input holds no usable hash.
    */
@@ -361,8 +327,8 @@ export default class DebridService {
   }
 
   /**
-   * Applies the service's authentication scheme to an outgoing request. Some APIs
-   * authenticate one odd endpoint differently, hence the per-request override.
+   * Applies the service's authentication scheme. Some APIs authenticate one odd endpoint
+   * differently, hence the per-request override.
    * @param {string} url
    * @param {{ auth?: 'bearer' | 'query', authParam?: string }} [override]
    * @returns {{ url: string, headers: Record<string, string> }}
@@ -375,12 +341,8 @@ export default class DebridService {
   }
 
   /**
-   * Encodes a request body the way the endpoint expects it.
-   *
-   * An array value is sent as the same key repeated once per item, which is how the APIs that
-   * take many things at once — a list of hashes to check, a list of magnets to add — read their
-   * `name[]` parameters. Joining them into one value instead is silently accepted and then
-   * understood as a single nonsense item, so it has to be done here rather than by each caller.
+   * Encodes a request body. An array value becomes the same key repeated per item, which is how
+   * `name[]` parameters are read; joining them into one value is silently taken as one item.
    * @param {Record<string, any>} body
    * @param {'form' | 'json' | 'multipart'} encoding
    * @returns {{ body: any, headers: Record<string, string> }}
@@ -415,9 +377,7 @@ export default class DebridService {
       body: encoded?.body,
       signal: AbortSignal.timeout(timeout)
     })
-    // only round trips that came back are measured, so a request that timed out or was
-    // abandoned cannot inflate the estimate the time limits are derived from
-    this.observeLatency(Date.now() - sent)
+    this.observeLatency(Date.now() - sent) // only round trips that came back, so a timeout cannot inflate it
     // the app short-circuits external requests while it considers itself offline,
     // handing back a plain object instead of a Response
     if (typeof res?.json !== 'function') throw new DebridNetworkError(res?.message?.replace(/^failed to fetch: /i, '') || 'Network request failed')
@@ -433,8 +393,7 @@ export default class DebridService {
   }
 
   /**
-   * Folds one round trip into the latency estimate, weighted towards recent requests so a link
-   * that degrades part way through a session is noticed within a few calls.
+   * Folds one round trip into the latency estimate, weighted towards recent requests.
    * @param {number} ms
    */
   observeLatency (ms) {
@@ -442,13 +401,9 @@ export default class DebridService {
   }
 
   /**
-   * A time limit from `timeouts`, stretched to fit the connection actually in use.
-   *
-   * The defaults describe how many round trips a step is worth, written for a healthy link where
-   * a request is a few hundred milliseconds. On a slow one the same budget buys a single request,
-   * so every poll loop times out and reports no answer — precisely where an answer is worth the
-   * most. Scaling the limits by measured latency keeps each one worth the same number of turns,
-   * up to a ceiling, since a link slow enough to need more than that is not one to wait on.
+   * A poll budget stretched to fit the connection in use, up to `MAX_STRETCH`. The defaults are
+   * written for a healthy link; on a slow one the same budget buys a single request, so every
+   * poll loop times out and reports no answer.
    * @param {string} kind - A key of the service's `timeouts`.
    * @returns {number}
    */
@@ -458,9 +413,8 @@ export default class DebridService {
   }
 
   /**
-   * Whether an error means the service wants fewer requests rather than that this release is
-   * a problem. A sweep stops on one of these: the next probe would be refused too.
-   * Override for the service specific codes that mean the same thing.
+   * Whether an error means the service wants fewer requests rather than that this release is a
+   * problem. A sweep stops on one. Override for service specific codes.
    * @param {any} error
    * @returns {boolean}
    */
@@ -469,9 +423,8 @@ export default class DebridService {
   }
 
   /**
-   * Unpacks a successful response body into the payload the service's own methods work with.
-   * Override for APIs that wrap everything in an envelope, and that report failures inside a
-   * 200 response — throwing from here routes those through the same typed errors as any other.
+   * Unpacks a successful response body. Override for APIs that wrap everything in an envelope and
+   * report failures inside a 200 — throwing from here routes those through the same typed errors.
    * @param {any} json
    * @returns {any}
    */
@@ -492,10 +445,9 @@ export default class DebridService {
   }
 
   /**
-   * Caps a pack's file list, keeping a window centred on the file playback wants rather
-   * than its first N entries. Every service hits this: a season pack can hold hundreds of
-   * files, the wanted episode is often a late one, and dropping it forces an expensive
-   * re-add. Torrent order is preserved so in-player next/previous still works.
+   * Caps a pack's file list around the file playback wants rather than taking the first N. The
+   * wanted episode is often a late one, and dropping it forces an expensive re-add. Torrent order
+   * is preserved so in-player next/previous still works.
    * @template T
    * @param {T[]} files - Candidate files, in torrent order.
    * @param {T | null} target - The file playback asked for, or null when there is none.
@@ -512,10 +464,9 @@ export default class DebridService {
   }
 
   /**
-   * Turns candidate files into stream links concurrently, skipping the individual ones the
-   * service cannot serve. Packs really do contain dead files (Real-Debrid answers
-   * `hoster_unavailable`), and one of those must not fail the whole resolve. Authentication
-   * failures still abort, since every other link would fail for the same reason.
+   * Turns candidates into stream links concurrently, skipping ones the service cannot serve —
+   * packs do contain dead files, and one must not fail the whole resolve. Auth failures still
+   * abort, since every other link would fail the same way.
    * @template T
    * @param {T[]} candidates
    * @param {(candidate: T) => Promise<DebridFile | null>} toFile - Unrestricts one file, may return null to drop it.
@@ -536,11 +487,8 @@ export default class DebridService {
   }
 
   /**
-   * Records what is known about a release so later checks are free. Playback feeds this too:
-   * a resolve that succeeded proves the service holds it, and the answer it failed with proves
-   * whichever state that error stands for.
-   *
-   * Unknown is not an answer, so recording it forgets what was there instead of storing it.
+   * Records what is known about a release so later checks are free. Playback feeds this too.
+   * Unknown is not an answer, so recording it forgets what was there.
    * @param {string} magnetOrHash
    * @param {string} state - An `Availability` value.
    */
@@ -566,25 +514,19 @@ export default class DebridService {
   }
 
   /**
-   * The given hashes that nothing is known about yet, in the order supplied. Callers use this
-   * to skip work entirely rather than to decide what to ask about, which checkAvailability
-   * does itself.
+   * The given hashes nothing is known about yet, in the order supplied. Callers use this to skip
+   * work entirely, not to decide what to ask about.
    * @param {string[]} magnetsOrHashes
    * @returns {string[]}
    */
   unknownHashes (magnetsOrHashes) {
-    return DebridService.#normalize(magnetsOrHashes, this.#askLimit()).filter(hash => this.#recall(hash) === undefined && !this.probes.has(hash))
-  }
-
-  /** How far down a results list this service is willing to look. Probing bites, batching does not. */
-  #askLimit () {
-    return this.config.maxAsk
+    return DebridService.#normalize(magnetsOrHashes, this.config.maxAsk).filter(hash => this.#recall(hash) === undefined && !this.probes.has(hash))
   }
 
   /**
    * Lowercase, deduplicated hashes, order preserved.
    * @param {string[]} magnetsOrHashes
-   * @param {number} [limit] - Stop after this many usable hashes, so a long list costs nothing to trim.
+   * @param {number} [limit] - Stop after this many, so a long list costs nothing to trim.
    */
   static #normalize (magnetsOrHashes, limit = Infinity) {
     const hashes = new Set()
@@ -597,23 +539,17 @@ export default class DebridService {
   }
 
   /**
-   * Reports what the service can do with each of the given releases.
-   *
-   * Remembered answers come back for free. Whatever is left is asked about in the cheapest way
-   * the service supports: one batch call where the API offers a cache endpoint, a capped number
-   * of probes where it does not. Hashes that stay unanswered are simply absent from the result,
-   * which callers must treat as unknown rather than as "not cached".
-   *
-   * `onAnswer` fires as each answer lands, so a slow probe sweep marks the list up as it goes.
+   * What the service can do with each of the given releases. Remembered answers come back free,
+   * the rest are asked about the cheapest way the service supports. Hashes that stay unanswered
+   * are absent from the result, which callers must read as unknown rather than "not cached".
    * @param {string[]} magnetsOrHashes - Candidates, most relevant first, since probing bites from the front.
-   * @param {{ onAnswer?: (hash: string, state: string) => void }} [opts]
+   * @param {{ onAnswer?: (hash: string, state: string) => void }} [opts] - Fires as each answer lands.
    * @returns {Promise<Map<string, string>>} Hash to `Availability`, answered hashes only.
    */
   async checkAvailability (magnetsOrHashes, { onAnswer } = {}) {
     const answers = new Map()
     const mode = this.config.availabilityCheck
-    // probing only ever looks at the top of the list, so normalize just that much of it
-    const candidates = DebridService.#normalize(magnetsOrHashes, this.#askLimit())
+    const candidates = DebridService.#normalize(magnetsOrHashes, this.config.maxAsk)
     const unknown = []
     for (const hash of candidates) {
       const known = this.#recall(hash)
@@ -627,14 +563,14 @@ export default class DebridService {
       onAnswer?.(hash, state)
     }
 
-    // One check at a time where asking means putting magnets on the account: services rate limit
-    // adding far harder than reading, so overlapping checks do not answer faster, they get
-    // refused. A free cache lookup has nothing to protect and runs whenever it is asked.
+    // one at a time where asking adds magnets: services rate limit adding far harder than
+    // reading, so overlapping checks do not answer faster, they get refused
     if (this.config.checkAddsMagnets) {
       if (this.sweeping) return answers
       this.sweeping = true
     }
     try {
+      if (this.orphaned) await this.retryCleanup() // clear our own leftovers before adding more
       if (mode === 'batch') await this.#batch(unknown, answer)
       else await this.#sweep(unknown, answer)
     } finally {
@@ -653,9 +589,8 @@ export default class DebridService {
       const chunk = hashes.slice(index, index + this.config.maxBatch)
       const states = await this.checkAvailabilityBatch(chunk)
       for (const hash of chunk) {
-        // a cache endpoint that answered but did not mention a hash has said it does not hold it,
-        // not that it cannot fetch it. A check that works by adding magnets gets no such reading:
-        // it answers about the magnets it managed to take, so unmentioned means unasked
+        // a cache endpoint that answered without mentioning a hash has said it does not hold it.
+        // A check that adds magnets has only said it never got to it
         const state = normalizeAvailability(states?.get(hash) ?? (this.config.checkAddsMagnets ? Availability.UNKNOWN : Availability.AVAILABLE))
         this.remember(hash, state)
         if (state !== Availability.UNKNOWN) answer(hash, state)
@@ -664,19 +599,14 @@ export default class DebridService {
   }
 
   /**
-   * Probes a list of hashes a few at a time, stopping early once the service is clearly in no
-   * state to answer any more of them.
-   *
-   * Stopping is not the same as finishing: whatever is left stays unknown and re-checkable, and
-   * the caller is expected to come back to it. That matters most on a link where probes time out
-   * — giving up on the list permanently is what leaves a results list with two badges on it.
+   * Probes hashes a few at a time, stopping early once the service is in no state to answer more.
+   * Stopping is not finishing: what is left stays unknown and the caller comes back to it.
    * @param {string[]} hashes
    * @param {(hash: string, state: string) => void} answer
    */
   async #sweep (hashes, answer) {
     const queue = [...hashes]
     let failures = 0
-    /** @type {any} Why the sweep stopped, or null while it is still going. */
     let stopped = null
     const worker = async () => {
       while (queue.length && !stopped) {
@@ -687,8 +617,6 @@ export default class DebridService {
         } catch (error) {
           if (error instanceof DebridAuthError) { stopped = error; return } // every other probe would fail too
           debug(`Availability probe failed for ${hash}: ${error.message}`)
-          // being told to slow down, or a run of failures, ends the sweep. The rest stay
-          // unknown and are asked about again later rather than being called uncached
           if (this.throttled(error) || ++failures >= MAX_PROBE_FAILURES) stopped = error
         }
       }
@@ -699,10 +627,8 @@ export default class DebridService {
   }
 
   /**
-   * Runs one probe, sharing it with any caller already waiting on that hash, and applies the
-   * rule for what counts as an answer: a state the service reported, or one a definite error
-   * proves. Anything else is no answer at all — it throws, so the sweep counts it as a failure
-   * and the release is left unremembered and re-checkable rather than badged as nothing.
+   * Runs one probe, shared with any caller already waiting on that hash. Only a reported state or
+   * a definite error counts as an answer; anything else throws, so the release stays re-checkable.
    * @param {string} hash
    * @returns {Promise<string>} Never resolves to `unknown`.
    */
@@ -727,13 +653,10 @@ export default class DebridService {
   }
 
   /**
-   * Determines what the service can do with one release, for services with no cache endpoint.
-   * Implementations must leave the account exactly as they found it.
-   *
-   * Return an `Availability`, or throw `DebridNotCachedError` / `DebridUnavailableError` for
-   * the two definite negatives. Let everything else throw untyped: the base class reads any
-   * other error as "no answer", which is what stops a bad minute on the wire from blanking
-   * out a whole results list.
+   * What the service can do with one release, for APIs with no cache endpoint. Must leave the
+   * account exactly as it found it. Return an `Availability`, or throw `DebridNotCachedError` /
+   * `DebridUnavailableError`. Let everything else throw untyped: the base class reads any other
+   * error as "no answer".
    * @abstract
    * @param {string} hash - Lowercase info hash.
    * @returns {Promise<string>}
@@ -741,10 +664,8 @@ export default class DebridService {
   async probeAvailability (hash) { throw new DebridNotImplementedError(this.config.title) }
 
   /**
-   * Asks the service about many releases at once. Implement this for any API that exposes a
-   * cache endpoint, and set `availabilityCheck` to 'batch'. Chunking to `maxBatch` is already
-   * done. Hashes left out of the answer are recorded as available, since a cache endpoint
-   * saying no means the service would have to fetch it rather than that it cannot.
+   * Asks about many releases at once, for APIs with a cache endpoint. Chunking to `maxBatch` is
+   * already done. Hashes left out are recorded as available unless `checkAddsMagnets`.
    * @abstract
    * @param {string[]} hashes - Lowercase info hashes.
    * @returns {Promise<Map<string, string>>} Hash to `Availability`.
@@ -759,19 +680,16 @@ export default class DebridService {
   async validate () { throw new DebridNotImplementedError(this.config.title) }
 
   /**
-   * What the account itself already says about releases, which costs one request and is never
-   * wrong: everything it holds is cached, everything it is still fetching is available, and
-   * everything that failed on it is unavailable. This is the badge source every service has,
-   * whether or not it can be asked about releases the account has never seen.
+   * What the account itself says: what it holds is cached, what it is fetching is available, what
+   * failed on it is unavailable. The free badge source, where the API exposes info hashes.
    * @abstract
    * @returns {Promise<Map<string, string>>} Lowercase info hash to `Availability`.
    */
   async listAvailability () { throw new DebridNotImplementedError(this.config.title) }
 
   /**
-   * Resolves a magnet to direct stream URLs. Throws `DebridNotCachedError` when the service
-   * would have to download the torrent first, `DebridUnavailableError` when it cannot serve it
-   * at all. Returned URLs must be HTTPS.
+   * Resolves a magnet to direct stream URLs. Throws `DebridNotCachedError` when the service would
+   * have to download it first, `DebridUnavailableError` when it cannot serve it. URLs must be HTTPS.
    * @abstract
    * @param {string} magnet - Magnet URI or bare info hash.
    * @param {{ fileFilter?: (name: string) => boolean, pickFile?: (files: { id: number, path: string, size: number }[]) => Promise<any>, maxFiles?: number }} [opts]
@@ -783,10 +701,13 @@ export default class DebridService {
   destroy () {
     this.availabilityState.clear()
     this.sweeping = false
-    // probes already running own a torrent on the user's account until they tear it down, so
-    // the limiter has to outlive them. Dropping its queue first is what strands one there.
+    // running probes own a torrent until they tear it down, so the limiter has to outlive them,
+    // and anything left unremoved gets a last attempt — nothing else holds those ids
     const pending = [...this.probes.values()]
     this.probes.clear()
-    Promise.allSettled(pending).finally(() => this.limiter.stop({ dropWaitingJobs: true }).catch(() => {}))
+    Promise.allSettled(pending)
+      .then(() => this.retryCleanup())
+      .catch(() => {})
+      .finally(() => this.limiter.stop({ dropWaitingJobs: true }).catch(() => {}))
   }
 }
