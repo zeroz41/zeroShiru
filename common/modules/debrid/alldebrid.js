@@ -6,10 +6,10 @@ import DebridService from './service.js'
  *
  * Implementation template: the base class already provides authentication, rate
  * limiting, typed errors and clear not-implemented reporting, so adding support
- * means writing `validate`, `listCachedHashes`, `resolve` and `checkCachedBatch` here
+ * means writing `validate`, `listAvailability`, `resolve` and `checkAvailabilityBatch` here
  * and flipping `available` to true. Nothing outside this file has to change. Useful endpoints:
  * - GET /user          -> account and premium status for validate()
- * - GET /magnet/status -> account magnets for listCachedHashes()
+ * - GET /magnet/status -> account magnets for listAvailability()
  * - GET /magnet/upload -> add a magnet (`magnets[]=`), the `instant` flag reports cache state
  * - GET /link/unlock   -> direct stream URL per file (`link=`)
  */
@@ -18,5 +18,5 @@ export default class AllDebrid extends DebridService {
   static title = 'AllDebrid'
   static auth = 'query'
   // the upload response carries an `instant` flag per magnet, so a batch check is possible
-  static cacheCheck = 'batch'
+  static availabilityCheck = 'batch'
 }

@@ -697,7 +697,7 @@ export const defaults = {
   expandingSidebar: false,
   torrentPathNew: undefined,
   debridService: 'none',
-  debridApiKey: '',
+  debridApiKeys: {}, // one key per service, so switching between them keeps both
   debridMode: 'prefer',
   debridCachedOnly: false,
   debridCacheCheck: true,

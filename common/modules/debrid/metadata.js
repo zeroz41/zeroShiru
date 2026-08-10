@@ -173,7 +173,8 @@ export default class DebridMetadata {
    * nothing. The player renderer deduplicates events, so overlapping parses are safe.
    */
   async #pace (byteRate, start, offset) {
-    while (!this.destroyed && byteRate) {
+    if (!byteRate) return offset // no duration to estimate from, so read straight through
+    while (!this.destroyed) {
       const position = this.getTime() * byteRate
       const jump = Math.max(0, Math.floor(position - JUMP_BACK_SECONDS * byteRate))
       // a target beyond the file means the estimate overshot, sequential reading covers it

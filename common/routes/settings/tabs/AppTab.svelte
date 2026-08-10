@@ -182,7 +182,7 @@
 <SettingCard title='Settings Management' description='Import saved settings from your clipboard, export your current configuration to back it up or share with others, and restore everything back to default values if needed. This is especially useful for syncing preferences across devices, sharing settings with friends, or starting fresh with recommended defaults.'>
   <div class='d-inline-flex flex-column'>
     <button use:click={importSettings} class='btn btn-primary d-flex align-items-center justify-content-center' type='button'><span class='text-truncate'>Import from Clipboard</span></button>
-    <button use:click={() => copyToClipboard(JSON.stringify({ ...cache.getEntry(caches.GENERAL, 'settings'), debridApiKey: '' }), 'settings')} class='btn btn-primary mt-5 d-flex align-items-center justify-content-center' type='button'><span class='text-truncate'>Export to Clipboard</span></button>
+    <button use:click={() => copyToClipboard(JSON.stringify({ ...cache.getEntry(caches.GENERAL, 'settings'), debridApiKeys: {} }), 'settings')} class='btn btn-primary mt-5 d-flex align-items-center justify-content-center' type='button'><span class='text-truncate'>Export to Clipboard</span></button>
     <ConfirmButton click={() => resetSettings()} class='btn btn-danger mt-5 d-flex align-items-center justify-content-center' confirmText='Confirm Reset' confirmClass='btn-danger-dim long-button' cancelClass='btn-secondary long-button' actionClass='d-inline-flex d-md-block' dataToggle='tooltip' dataPlacement='top' dataTitle='Restores All Settings Back To Their Recommended Defaults'>
       <span class='text-truncate'>Reset to Defaults</span>
     </ConfirmButton>

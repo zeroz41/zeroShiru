@@ -1,6 +1,7 @@
 // Pure debrid policy, free of UI imports so it can be tested under plain Node.
 // Two decisions live here: how a play request is routed (debrid only mode must never
 // reach the torrent client, whatever the input), and which search results are listed.
+import { Availability, streamsInstantly } from './availability.js'
 
 const magnetRx = /^magnet:.*urn:btih:[a-f\d]{40}/i
 const hexRx = /^[a-f\d]{40}$/i
@@ -35,15 +36,39 @@ export function routeDebrid ({ torrentID, hash, serviceSelected, serviceReady, o
 }
 
 /**
+ * The API key stored for a debrid service.
+ *
+ * Every service keeps its own, so switching between them in settings swaps the key rather than
+ * losing it, and an account on one service can never be addressed with another's key. The
+ * settings tab and the playback module both read through here so they cannot disagree about
+ * which key is in play.
+ * @param {{ debridApiKeys?: Record<string, string> }} settings
+ * @param {string} [service] - Service id, defaulting to the selected one.
+ * @returns {string} Empty when that service has no key yet.
+ */
+export function debridKey (settings, service = settings?.debridService) {
+  return (service && settings?.debridApiKeys?.[service]) || ''
+}
+
+/**
  * Whether a search result belongs in the listed results rather than the hidden ones.
- * With the cached filter off this is upstream's rule, widened only by the fact that a
- * cached release streams without seeders. With it on, only known-cached releases list.
+ *
+ * With no filters on this is upstream's rule, widened only by the fact that a cached release
+ * streams without seeders. The two debrid cases that narrow it:
+ * - the cached filter shows nothing but confirmed cached releases;
+ * - debrid only mode hides releases the service has said it cannot serve, since with no
+ *   torrent client to fall back on those cannot play at all.
+ *
+ * An *available* release is deliberately not widened in: the service would still have to pull
+ * it from the swarm, so a seederless one is no more playable than it was without debrid.
  * @param {{ seeders?: number, source?: { managed?: boolean } }} result
- * @param {boolean} cached - The service is known to hold this release.
- * @param {boolean} [cachedOnly] - The user asked to see cached releases only.
+ * @param {string} [availability] - What the service said about this release.
+ * @param {{ cachedOnly?: boolean, only?: boolean }} [options] - The debrid filters in force.
  * @returns {boolean}
  */
-export function listResult (result, cached, cachedOnly) {
+export function listResult (result, availability, { cachedOnly, only } = {}) {
+  const cached = streamsInstantly(availability)
   if (cachedOnly) return cached
+  if (only && availability === Availability.UNAVAILABLE) return false
   return result?.seeders > 0 || Boolean(result?.source?.managed) || cached
 }

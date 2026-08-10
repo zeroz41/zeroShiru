@@ -4,10 +4,28 @@
   import { Eye, EyeOff } from 'lucide-svelte'
   import SettingCard from '@/routes/settings/components/SettingCard.svelte'
   import { debridOptions, testDebrid } from '@/modules/debrid/debrid.js'
+  import { debridKey } from '@/modules/debrid/route.js'
   export let settings
 
   let showKey = false
   let testing = false
+
+  // each service keeps its own key, so switching between them in this dropdown swaps the field
+  // rather than making the user retype
+  $: apiKey = debridKey(settings)
+
+  // a revealed key is hidden again when the service changes, but not while one is being typed,
+  // which is what watching `settings` as a whole would do
+  let shownFor = settings.debridService
+  $: if (settings.debridService !== shownFor) {
+    shownFor = settings.debridService
+    showKey = false
+  }
+
+  /** @param {string} key */
+  function setApiKey (key) {
+    settings.debridApiKeys = { ...settings.debridApiKeys, [settings.debridService]: key }
+  }
   function testConnection () {
     if (testing) return
     testing = true
@@ -29,7 +47,7 @@
   </select>
 </SettingCard>
 {#if settings.debridService !== 'none'}
-  <SettingCard title='API Key' description='The private API key for your debrid account. Stored locally and excluded from settings exports.'>
+  <SettingCard title='API Key' description='The private API key for this debrid account. Each service keeps its own, so switching between them does not mean retyping. Stored locally and excluded from settings exports.'>
     <div class='input-group mw-100 w-400 flex-nowrap'>
       <input
           type={showKey ? 'text' : 'password'}
@@ -37,15 +55,15 @@
           placeholder='API key'
           autocomplete='off'
           spellcheck='false'
-          value={settings.debridApiKey}
-          on:input={event => { settings.debridApiKey = event.target.value.trim() }}
+          value={apiKey}
+          on:input={event => setApiKey(event.target.value.trim())}
           on:keydown|stopPropagation
       />
       <div class='input-group-append d-flex'>
         <button type='button' class='btn btn-secondary d-flex align-items-center justify-content-center' title={showKey ? 'Hide API key' : 'Show API key'} use:click={() => { showKey = !showKey }}>
           <svelte:component this={showKey ? EyeOff : Eye} size='1.8rem' />
         </button>
-        <button type='button' class='btn btn-primary d-flex align-items-center justify-content-center' disabled={!settings.debridApiKey || testing} use:click={testConnection}><span class='text-truncate'>Test</span></button>
+        <button type='button' class='btn btn-primary d-flex align-items-center justify-content-center' disabled={!apiKey || testing} use:click={testConnection}><span class='text-truncate'>Test</span></button>
       </div>
     </div>
   </SettingCard>
@@ -55,7 +73,7 @@
       <option value='only'>Debrid Only</option>
     </select>
   </SettingCard>
-  <SettingCard title='Confirm Cache Status' description='Checks whether the top search results can be streamed instantly, so the Cached badge is a fact rather than a guess. Services with a cache endpoint answer for every result in one request. Real-Debrid has none, so a small number of top results are confirmed by briefly adding and removing the magnet, which never touches your own downloads. Turn this off to badge only the releases already on your account.'>
+  <SettingCard title='Check Availability' description='Asks the service what it can do with each search result, so the badges are facts rather than guesses: cached streams instantly, available means it would have to fetch the release first, unavailable means it cannot serve it at all. Services with a cache endpoint answer for every result in one request. Real-Debrid has none, so a small number of top results are checked by briefly adding and removing the magnet, which never touches your own downloads. Turn this off to badge only the releases already on your account.'>
     <input type='checkbox' id='debrid-cache-check' bind:checked={settings.debridCacheCheck} />
   </SettingCard>
 {/if}

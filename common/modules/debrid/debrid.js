@@ -10,8 +10,9 @@ import RealDebrid from '@/modules/debrid/realdebrid.js'
 import AllDebrid from '@/modules/debrid/alldebrid.js'
 import TorBox from '@/modules/debrid/torbox.js'
 import Premiumize from '@/modules/debrid/premiumize.js'
-import DebridService, { DebridNotCachedError, secureFiles } from '@/modules/debrid/service.js'
-import { routeDebrid } from '@/modules/debrid/route.js'
+import DebridService, { availabilityFromError, secureFiles } from '@/modules/debrid/service.js'
+import { Availability, describeAvailability } from '@/modules/debrid/availability.js'
+import { routeDebrid, debridKey } from '@/modules/debrid/route.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
 
@@ -39,7 +40,7 @@ let serviceKey = null
 let lastRefresh = 0
 
 /** Whether a debrid service is selected and has an API key. */
-export const debridEnabled = derived(settings, value => Boolean(debridServices[value.debridService] && value.debridApiKey))
+export const debridEnabled = derived(settings, value => Boolean(debridServices[value.debridService] && debridKey(value)))
 
 /**
  * How playback is routed right now, or null when no debrid service is selected.
@@ -59,10 +60,14 @@ export const debridTransport = derived(settings, value => {
   }
 })
 
-/** Lowercase info hashes known to play instantly on the configured service. */
-export const debridCachedHashes = writable(new Set())
+/**
+ * What the configured service can do with each release, keyed by lowercase info hash.
+ * The one place the UI reads cache state from; anything absent is simply unknown.
+ * @type {import('simple-store-svelte').Writable<Map<string, string>>}
+ */
+export const debridAvailability = writable(new Map())
 
-/** Cache checks in flight, so the UI can show that badges are still filling in. */
+/** Availability checks in flight, so the UI can show that badges are still filling in. */
 export const debridChecking = writable(0)
 
 /**
@@ -73,13 +78,16 @@ export const debridChecking = writable(0)
  */
 export const debridPlayback = writable(false)
 
+// Switching service, or editing the key of the one in use, takes effect immediately: the old
+// instance is torn down and the badges are dropped, since they described a different account.
+// The next call builds the new one.
 settings.subscribe(value => {
-  const key = `${value.debridService}:${value.debridApiKey}`
+  const key = `${value.debridService}:${debridKey(value)}`
   if (serviceKey !== null && serviceKey !== key) {
     service?.destroy()
     service = null
     lastRefresh = 0
-    debridCachedHashes.set(new Set())
+    debridAvailability.set(new Map())
   }
   serviceKey = key
 })
@@ -87,9 +95,10 @@ settings.subscribe(value => {
 function getService () {
   if (service) return service
   const Service = debridServices[settings.value.debridService]
-  if (!Service || !settings.value.debridApiKey) return null
+  const apiKey = debridKey(settings.value)
+  if (!Service || !apiKey) return null
   debug(`Initializing debrid service ${Service.title}`)
-  service = new Service(settings.value.debridApiKey)
+  service = new Service(apiKey)
   return service
 }
 
@@ -133,14 +142,18 @@ export async function streamDebrid (torrentID, hash, search) {
     files.set(await resolveDebridFiles(route.id, search))
     return true
   } catch (error) {
-    if (error instanceof DebridNotCachedError) {
-      debug(`Torrent not cached: ${error.message}`)
-      forgetHash(route.id) // the badge was wrong, or it aged out of the cache
+    // playback is the most authoritative answer there is, so whatever it just proved about
+    // the release is worth more than the badge that sent the user here
+    const proven = availabilityFromError(error)
+    if (proven) {
+      debug(`${serviceTitle()} cannot stream this release: ${error.message}`)
+      recordAvailability(route.id, proven)
+      const { description } = describeAvailability(proven, serviceTitle())
       if (!debridOnly) {
-        toast('Debrid', { description: 'Not cached on ' + serviceTitle() + ', streaming via torrent instead.' })
+        toast('Debrid', { description: `${description}\nStreaming via torrent instead.` })
         return handOver(false)
       }
-      toast.error('Debrid', { description: 'This torrent is not cached on ' + serviceTitle() + '. Pick a different release or disable debrid only mode.' })
+      toast.error('Debrid', { description: `${description}\nPick a different release or disable debrid only mode.` })
     } else {
       debug('Debrid resolve failed:', error)
       if (!debridOnly) {
@@ -176,9 +189,8 @@ export async function resolveDebridFiles (torrentID, search) {
   })
   const files = secureFiles(resolved.files, serviceTitle())
   if (files.length !== resolved.files.length) debug(`Discarded ${resolved.files.length - files.length} non-HTTPS links from ${serviceTitle()}`)
-  // playing it proves the service holds it, which is the best cache answer there is
-  service.remember(resolved.hash, true)
-  debridCachedHashes.update(set => new Set(set).add(resolved.hash))
+  // playing it proves the service holds it, which is the best answer there is
+  recordAvailability(resolved.hash, Availability.CACHED)
   return Promise.all(files.map(async file => ({
     infoHash: resolved.hash,
     fileHash: await sha1hex(`${resolved.hash}:${file.name}:${file.size}`), // same key the torrent client uses, so watch progress is shared
@@ -193,17 +205,18 @@ export async function resolveDebridFiles (torrentID, search) {
 }
 
 /**
- * Refreshes the badge data every service can supply for free: the torrents already on the
- * account, which stream instantly. One request a minute at most.
+ * Refreshes what the account itself says, which every service can answer for free: what it
+ * holds streams instantly, what it is still fetching does not, what failed on it never will.
+ * One request a minute at most.
  */
-export function refreshDebridCache () {
-  const service = getService()
-  if (!service) return
+export function refreshDebridAvailability () {
+  const active = getService()
+  if (!active) return
   if (Date.now() - lastRefresh < REFRESH_INTERVAL || status.value === 'offline') return
   lastRefresh = Date.now()
-  service.listCachedHashes().then(hashes => {
-    debridCachedHashes.update(set => new Set([...set, ...hashes]))
-    for (const hash of hashes) service.remember(hash, true)
+  active.listAvailability().then(known => {
+    for (const [hash, state] of known) active.remember(hash, state)
+    if (current(active)) publishAvailability(known)
   }).catch(error => {
     lastRefresh = 0
     debug('Failed to list debrid torrents:', error)
@@ -211,25 +224,33 @@ export function refreshDebridCache () {
 }
 
 /**
- * Confirms cache state for the releases the user is looking at, so the badges say what the
- * service can actually stream rather than only what this account has touched before. The
- * service decides how: one batch call where its API offers a cache endpoint, a capped number
- * of probes where it does not. Answers are remembered, so browsing the same show again is free.
+ * Whether answers from this instance still describe the configured account. A request in flight
+ * outlives a settings change — a probe sweep by seconds, a slow list by longer — and badging a
+ * new account with the previous one's answers is worse than having no badges at all.
+ * @param {import('@/modules/debrid/service.js').default} instance
+ */
+function current (instance) {
+  return instance === service
+}
+
+/**
+ * Asks the service about the releases the user is looking at, so the badges say what it can
+ * actually do with them rather than only what this account has touched before. The service
+ * decides how: one batch call where its API offers a cache endpoint, a capped number of probes
+ * where it does not. Answers are remembered, so browsing the same show again is free.
  * @param {string[]} hashes - Candidate info hashes, most relevant first, since probing bites from the front.
  */
-export async function checkDebridCache (hashes) {
-  const service = getService()
-  if (!service || !settings.value.debridCacheCheck || status.value === 'offline') return
-  if (!service.unknownHashes(hashes).length) return // everything here already has an answer
+export async function checkDebridAvailability (hashes) {
+  const active = getService()
+  if (!active || !settings.value.debridCacheCheck || status.value === 'offline') return
+  if (!active.unknownHashes(hashes).length) return // everything here already has an answer
   debridChecking.update(count => count + 1)
   try {
     // badge each release as its answer lands rather than when the sweep ends, so a probing
     // service marks the list up as it goes instead of all at once a minute later
-    await service.checkCached(hashes, {
-      onAnswer: (hash, hit) => { if (hit) debridCachedHashes.update(set => new Set(set).add(hash)) }
-    })
+    await active.checkAvailability(hashes, { onAnswer: (hash, state) => { if (current(active)) queueAvailability(hash, state) } })
   } catch (error) {
-    debug('Cache check failed:', error)
+    debug('Availability check failed:', error)
   } finally {
     debridChecking.update(count => count - 1)
   }
@@ -259,17 +280,53 @@ function serviceTitle () {
 }
 
 /**
- * Drops a hash the service turned out not to hold, so the next search does not badge it
- * again and fail playback the same way a second time.
+ * Records one answer in both the service's memory and the badges, so the next search does not
+ * repeat a check playback has already settled.
  * @param {string} magnetOrHash
+ * @param {string} state - An `Availability` value.
  */
-function forgetHash (magnetOrHash) {
+function recordAvailability (magnetOrHash, state) {
   const hash = DebridService.parseHash(magnetOrHash)
   if (!hash) return
-  service?.remember(hash, false)
-  debridCachedHashes.update(set => {
-    const next = new Set(set)
-    next.delete(hash)
+  service?.remember(hash, state)
+  publishAvailability([[hash, state]])
+}
+
+/** @type {Map<string, string> | null} Answers waiting to reach the store. */
+let queued = null
+
+/**
+ * Collects answers arriving in one go into a single store write. A batch service answers a
+ * whole results list inside one loop, and writing per hash would re-render the list as many
+ * times; a probing service answers once every few seconds, so each still lands on its own.
+ * @param {string} hash
+ * @param {string} state
+ */
+function queueAvailability (hash, state) {
+  if (!queued) {
+    queued = new Map()
+    queueMicrotask(() => {
+      const answers = queued
+      queued = null
+      publishAvailability(answers)
+    })
+  }
+  queued.set(hash, state)
+}
+
+/**
+ * Publishes answers to the UI in one write.
+ * @param {Iterable<[string, string]>} answers
+ */
+function publishAvailability (answers) {
+  const entries = [...answers]
+  if (!entries.length) return
+  debridAvailability.update(known => {
+    const next = new Map(known)
+    for (const [hash, state] of entries) {
+      if (state === Availability.UNKNOWN) next.delete(hash)
+      else next.set(hash, state)
+    }
     return next
   })
 }
