@@ -218,7 +218,8 @@ export default class TorrentClient extends WebTorrent {
     for (const file of Object.values(map)) {
       const data = await file.arrayBuffer()
       if (targetFile !== this.currentFile) return
-      this.dispatch('file', { data: new Uint8Array(data) }, [data])
+      // the renderer reads this as a binary string, same as embedded attachments send
+      this.dispatch('file', hex2bin(arr2hex(new Uint8Array(data))))
     }
   }
 
