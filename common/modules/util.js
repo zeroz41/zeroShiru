@@ -835,10 +835,9 @@ export const fontRx = new RegExp(`.(${fontExtensions.join('|')})$`, 'i')
 export const matroskaRx = /\.(mkv|webm)$/i
 
 /**
- * Picks the external subtitle files belonging to one video out of a release's file list.
- * Season packs ship a subtitle per episode, so subtitles are matched against the playing
- * file's name unless the release holds a single video, in which case they all belong to it.
- * Shared by the torrent client and debrid playback so both lanes stay in step.
+ * The subtitle files belonging to one video. Season packs ship a subtitle per episode, so they
+ * are matched against the playing file's name unless the release holds a single video, in which
+ * case they all belong to it. Shared by the torrent client and debrid playback.
  * @param {{ name: string }[]} files - Every file in the release.
  * @param {string} videoName - Name of the video being played, with extension.
  * @param {number} [videoCount] - Videos in the release, counted from `files` when omitted.
@@ -849,4 +848,20 @@ export function matchSubtitleFiles (files, videoName, videoCount) {
   const videos = videoCount ?? files.filter(file => videoRx.test(file.name)).length
   const stem = videoName.substring(0, videoName.lastIndexOf('.')) || videoName
   return files.filter(file => subRx.test(file.name) && (videos <= 1 || file.name.includes(stem)))
+}
+
+/**
+ * The font files a release ships alongside its subtitles, deduplicated by name. Some releases
+ * carry the same font once per language, and there is no way to tell whether they differ in
+ * coverage, so on really bad releases a few glyphs may still fail.
+ * Shared by the torrent client and debrid playback.
+ * @param {{ name: string }[]} files - Every file in the release.
+ * @returns {any[]}
+ */
+export function matchFontFiles (files) {
+  const fonts = new Map()
+  for (const file of files || []) {
+    if (fontRx.test(file.name)) fonts.set(file.name, file)
+  }
+  return [...fonts.values()]
 }

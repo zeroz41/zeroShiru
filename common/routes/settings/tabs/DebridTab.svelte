@@ -3,7 +3,7 @@
   import { toast } from 'svelte-sonner'
   import { Eye, EyeOff } from 'lucide-svelte'
   import SettingCard from '@/routes/settings/components/SettingCard.svelte'
-  import { debridOptions, testDebrid } from '@/modules/debrid/debrid.js'
+  import { debridOptions, debridTransport, testDebrid } from '@/modules/debrid/debrid.js'
   import { debridKey } from '@/modules/debrid/route.js'
   export let settings
 
@@ -21,6 +21,12 @@
     shownFor = settings.debridService
     showKey = false
   }
+
+  // worth spelling out the cost only for services that have to add a magnet to answer
+  $: cacheCheckDescription = 'Asks the service which releases it already holds, so the torrent list can badge them and offer a cached only filter. '
+    + ($debridTransport?.checksAddMagnets
+      ? `${$debridTransport.title} has no cache lookup, so each check briefly adds and removes a magnet on your account. Turn this off to leave badges to what the account already holds.`
+      : 'Costs one request per search and nothing on your account.')
 
   /** @param {string} key */
   function setApiKey (key) {
@@ -73,7 +79,10 @@
       <option value='only'>Debrid Only</option>
     </select>
   </SettingCard>
-  <!-- availability checking is always on: `debridCacheCheck` defaults true and nothing unsets it.
-       To offer it again, add a SettingCard bound to it, ideally only when
-       `debridTransport.checksAddMagnets` — elsewhere the check is free and nobody would decline. -->
+  <SettingCard title='Check Availability' description={cacheCheckDescription}>
+    <div class='custom-switch fit-content'>
+      <input type='checkbox' id='debrid-cache-check' bind:checked={settings.debridCacheCheck} />
+      <label for='debrid-cache-check'>{settings.debridCacheCheck ? 'On' : 'Off'}</label>
+    </div>
+  </SettingCard>
 {/if}

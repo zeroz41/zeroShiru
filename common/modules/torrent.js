@@ -80,10 +80,9 @@ TORRENT.portRequest(_settings).then(() => {
 
   TORRENT.onFiles(_files => {
     debug(`Got files request:`, _files?.length)
-    // the client announces the files of every torrent it loads, including the one restored
-    // at startup, whose metadata can arrive long after debrid playback began. Letting that
-    // through would swap out what is playing for a torrent the user never picked. Playing
-    // a torrent hands the player back first, so this never blocks a real request.
+    // the client announces the files of every torrent it loads, including the one restored at
+    // startup, which would swap out what debrid is playing. Playing a torrent hands the player
+    // back first, so this never blocks a real request
     if (debridPlayback.value) return debug('Ignoring torrent files, debrid owns playback')
     files.set(_files)
   })

@@ -115,11 +115,10 @@
   const sameOrder = (a, b) => a.length === b.length && a.every((entry, index) => entry === b[index])
 
   /**
-   * Builds the function that splits sorted results into what is listed and what is hidden, and
-   * tallies what the debrid service said about each. Kept apart from the sorting above so a
-   * debrid answer only redoes these passes, not the dedupe and sort of every result. The
-   * previous split is remembered in a closure rather than a component variable, so it stays out
-   * of the reactive graph.
+   * Splits sorted results into what is listed and what is hidden, and tallies what the debrid
+   * service said about each. Kept apart from the sorting above so an answer landing only redoes
+   * these passes, not the dedupe and sort. The previous split lives in the closure rather than a
+   * component variable to stay out of the reactive graph.
    * @returns {(sorted: Result[], availability?: Map<string, string>, filters?: { cachedOnly?: boolean, only?: boolean }) => any}
    */
   function createListResults() {
@@ -131,14 +130,13 @@
       for (const entry of sorted) {
         const state = availability ? availabilityOf(availability, entry.hash) : Availability.UNKNOWN
         counts[state]++
-        // this narrows what the rest of the modal sees, so the best pick and autoplay follow
-        // it too, which is the whole point in debrid only mode
+        // narrows what the rest of the modal sees, so the best pick and autoplay follow it too
         if (listResult(entry, state, filters)) results.push(entry)
         else hiddenResults.push(entry)
       }
-      // most answers only move the counts, since a release with seeders was listed either way.
-      // Handing back the same arrays then keeps the best-release pick from being redone, which
-      // reparses every result and is what made answers landing feel like a freeze.
+      // most answers only move the counts, since a seeded release was listed either way. Handing
+      // back the same arrays keeps the best-release pick from being redone, which reparses every
+      // result and is what made answers landing feel like a freeze
       if (previous && sameOrder(previous.results, results) && sameOrder(previous.hiddenResults, hiddenResults)) {
         return { ...previous, counts }
       }

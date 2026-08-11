@@ -29,10 +29,9 @@ const deadStates = /(stalled|error|failed|missing)/i
 /**
  * TorBox implementation, see https://api-docs.torbox.app/
  *
- * Three differences from Real-Debrid shape this client: `/torrents/checkcached` answers many
- * hashes in one request, every response is wrapped in `{ success, data }` with failures arriving
- * inside a 200, and `/torrents/requestdl` authenticates with a `token` query parameter while
- * everything else uses a bearer header.
+ * Three things shape this client: `/torrents/checkcached` answers many hashes in one request,
+ * every response is wrapped in `{ success, data }` with failures arriving inside a 200, and
+ * `/torrents/requestdl` authenticates with a `token` query parameter rather than a bearer header.
  */
 export default class TorBox extends DebridService {
   static id = 'torbox'
@@ -104,7 +103,7 @@ export default class TorBox extends DebridService {
     const query = hashes.map(hash => `hash=${hash}`).join('&')
     const data = await this.request(`${API}/torrents/checkcached?${query}&format=list`)
     // the endpoint has answered in both shapes over its life: a list of entries, or an object
-    // keyed by hash. Both carry the same thing, which is simply "TorBox holds this one".
+    // keyed by hash. Either way it only ever says "TorBox holds this one"
     const cached = Array.isArray(data) ? data.map(entry => entry?.hash) : Object.keys(data || {})
     const answers = new Map(hashes.map(hash => [hash, Availability.AVAILABLE]))
     for (const hash of cached) {
@@ -199,12 +198,11 @@ export default class TorBox extends DebridService {
    * than added twice. Read back by id because the listing can be a minute stale, so one deleted
    * elsewhere must read as absent rather than fail the resolve.
    * @param {string} hash
-   * @param {{ listed?: boolean }} [opts] - `listed` false skips the listing, for a hash known to be absent from it.
    * @returns {Promise<any | null>}
    */
-  async #existingTorrent (hash, { listed = true } = {}) {
+  async #existingTorrent (hash) {
     if (!hash) return null
-    const known = listed ? (await this.listing()).find(torrent => String(torrent?.hash || '').toLowerCase() === hash) : null
+    const known = (await this.listing()).find(torrent => String(torrent?.hash || '').toLowerCase() === hash)
     if (!known) return null
     // a failed read reads as "gone": the caller then checks the cache and adds the magnet, which
     // fails loudly enough if the API is really unreachable

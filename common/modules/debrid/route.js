@@ -49,7 +49,7 @@ export function debridKey (settings, service = settings?.debridService) {
  * filters this is upstream's rule, widened only because a cached release streams without seeders.
  * The cached filter narrows it to confirmed hits, and debrid only mode hides releases the service
  * cannot serve. An *available* release is deliberately not widened in: the service would still
- * have to pull it from the swarm.
+ * have to pull it from the swarm first.
  * @param {{ seeders?: number, source?: { managed?: boolean } }} result
  * @param {string} [availability] - What the service said about this release.
  * @param {{ cachedOnly?: boolean, only?: boolean }} [options] - The debrid filters in force.

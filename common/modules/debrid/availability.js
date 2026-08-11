@@ -1,10 +1,10 @@
-// The vocabulary the whole debrid layer uses to describe a release. Pure data and pure
-// functions, free of UI and network imports, so it runs under plain Node for tests.
+// The vocabulary the whole debrid layer uses to describe a release. Pure data and pure functions,
+// free of UI and network imports, so it runs under plain Node for tests.
 
 /**
  * What a debrid service can do with a release right now. Services differ wildly in how well they
- * can answer, but all describe themselves with these four values, so the rest of the app never
- * has to care which kind it is talking to.
+ * can answer, but all speak these four values, so the rest of the app never has to care which
+ * kind it is talking to.
  */
 export const Availability = Object.freeze({
   /** The service holds it and streams it immediately. */
@@ -42,8 +42,8 @@ export function isAvailability (value) {
 }
 
 /**
- * Anything unrecognised reads as unknown, so a service returning something unexpected degrades
- * to "no answer" rather than poisoning the badges.
+ * Anything unrecognised reads as unknown, so a service answering something unexpected degrades to
+ * "no answer" rather than poisoning the badges.
  * @param {any} value
  * @returns {string}
  */

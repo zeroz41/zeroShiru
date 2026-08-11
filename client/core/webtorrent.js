@@ -3,7 +3,7 @@ import HTTPTracker from 'http-tracker'
 import Client from 'bittorrent-tracker'
 import { hex2bin, arr2hex, text2arr } from 'uint8-util'
 import { makeHash, getInfoHash, hasIntegrity, getProgressAndSize, stringifyQuery, errorToString, TMP } from '@client/lib/util.js'
-import { fontRx, sleep, matchSubtitleFiles, isValidNumber } from '@/modules/util.js'
+import { sleep, matchFontFiles, matchSubtitleFiles, isValidNumber } from '@/modules/util.js'
 import { SUPPORTS } from '@/modules/support.js'
 import { spawn } from 'node:child_process'
 import Metadata from '@client/lib/metadata.js'
@@ -199,23 +199,37 @@ export default class TorrentClient extends WebTorrent {
   }
 
   /**
+   * Detaches whatever was playing: the external player, the streamed file and its metadata parser.
+   * Shared with debrid playback, which has the same to let go of and nothing to attach after.
+   * @param {number} [progress] - Progress of the file taking over, which decides whether the
+   *   outgoing one keeps downloading. Defaults to the outgoing file's own progress.
+   */
+  releaseCurrentFile(progress = this.currentFile?.progress) {
+    if (this.playerProcess) {
+      this.playerProcess.kill()
+      this.playerProcess = null
+    }
+    if (this.currentFile) {
+      this.currentFile.removeAllListeners('stream')
+      this.currentFile.removeAllListeners('iterator')
+      if (this.settings.torrentStreamedDownload && !this.currentFile._destroyed && progress < 1) this.currentFile.deselect()
+    }
+    this.metadata?.destroy?.()
+    this.metadata = null
+  }
+
+  /**
    * Searches the current torrent for embedded font files and sends them to the renderer for use.
    * @param {object} targetFile - File currently being processed.
    */
   async findFontFiles(targetFile) {
     const currentTorrent = this.torrents.find(torrent => torrent.current)
     if (!currentTorrent?.files) return
-    const fontFiles = currentTorrent.files.filter(file => fontRx.test(file.name))
-    const map = {}
+    // shared with debrid playback so both lanes deduplicate a release's fonts the same way
+    const fontFiles = matchFontFiles(currentTorrent.files)
+    debug(`Found ${fontFiles.length} font files`)
 
-    // deduplicate fonts
-    // some releases have duplicate fonts for diff languages
-    // if they have different chars, we can't find that out anyways
-    // so some chars might fail, on REALLY bad releases
-    for (const file of fontFiles) map[file.name] = file
-    debug(`Found ${Object.keys(map).length} font files`)
-
-    for (const file of Object.values(map)) {
+    for (const file of fontFiles) {
       const data = await file.arrayBuffer()
       if (targetFile !== this.currentFile) return
       this.dispatch('file', { data: new Uint8Array(data) }, [data])
@@ -490,22 +504,12 @@ export default class TorrentClient extends WebTorrent {
       } case 'current': {
         if (data.data) {
           if (data.data.current.debrid) {
-            // debrid files stream straight from the service over HTTPS and never join the
-            // torrent client, so there is nothing to attach, only the previous playback to release
-            if (this.playerProcess) {
-              this.playerProcess.kill()
-              this.playerProcess = null
-            }
-            if (this.currentFile) {
-              this.currentFile.removeAllListeners('stream')
-              this.currentFile.removeAllListeners('iterator')
-              if (this.settings.torrentStreamedDownload && !this.currentFile._destroyed && this.currentFile.progress < 1) this.currentFile.deselect()
-              this.currentFile = null
-            }
-            this.metadata?.destroy?.()
-            this.metadata = null
-            // nothing is playing from the client anymore, so stop reporting the old torrent
-            // as current or its peers and speeds keep flowing to the player and torrent manager
+            // debrid files stream straight from the service over HTTPS and never join the client,
+            // so there is nothing to attach, only the previous playback to release
+            this.releaseCurrentFile()
+            this.currentFile = null
+            // nothing is playing from the client anymore, so stop reporting the old torrent as
+            // current or its peers and speeds keep flowing to the player and torrent manager
             const lastTorrent = this.torrents.find(_torrent => _torrent.current)
             if (lastTorrent) {
               lastTorrent.current = false
@@ -518,15 +522,7 @@ export default class TorrentClient extends WebTorrent {
           if (!torrent || torrent.destroyed) return
           const found = torrent.files.find(file => file.path === data.data.current.path)
           if (!found || found._destroyed) return
-          if (this.playerProcess) {
-            this.playerProcess.kill()
-            this.playerProcess = null
-          }
-          if (this.currentFile) {
-            this.currentFile.removeAllListeners('stream')
-            this.currentFile.removeAllListeners('iterator')
-            if (this.settings.torrentStreamedDownload && !this.currentFile._destroyed && found.progress < 1) this.currentFile.deselect()
-          }
+          this.releaseCurrentFile(found.progress)
           if (this.settings.torrentStreamedDownload && found.progress < 1) {
             this.torrents.filter(_torrent => (_torrent.staging || _torrent.seeding) && Array.isArray(_torrent.files)).forEach(_torrent => {
               _torrent.files.forEach(file => {
@@ -534,8 +530,6 @@ export default class TorrentClient extends WebTorrent {
               })
             })
           }
-          this.metadata?.destroy?.()
-          this.metadata = null
           found.select()
           if (this.settings.torrentStreamedDownload && (found.length > await this.storageQuota(torrent.path))) this.dispatchError('File Too Big! This File Exceeds The Selected Drive\'s Available Space. Change Download Location In Torrent Settings To A Drive With More Space And Restart The App!')
 
@@ -585,8 +579,10 @@ export default class TorrentClient extends WebTorrent {
           this.playerProcess.kill()
           this.playerProcess = null
         }
+        // a debrid file carries its own HTTPS url, a torrent file streams from the local server
+        const url = current?.debrid ? found.url : `http://localhost:${this.server.address().port}${found.streamURL}`
         if (this.player) {
-          this.playerProcess = spawn(this.player, ['' + new URL(current?.debrid ? found.url : 'http://localhost:' + this.server.address().port + found.streamURL)])
+          this.playerProcess = spawn(this.player, ['' + new URL(url)])
           this.playerProcess.stdout.on('data', () => {})
           this.playerProcess.once('close', () => {
             if (this.destroyed) return
@@ -594,7 +590,7 @@ export default class TorrentClient extends WebTorrent {
             const seconds = (Date.now() - startTime) / 1000
             this.dispatch('externalWatched', seconds)
           })
-        } else if (SUPPORTS.isAndroid) this.dispatch('androidExternal', current?.debrid ? `intent://${found.url.replace(/^https?:\/\//, '')}#Intent;type=video/any;scheme=${found.url.startsWith('https') ? 'https' : 'http'};end;` : `intent://localhost:${this.server.address().port}${found.streamURL}#Intent;type=video/any;scheme=http;end;`)
+        } else if (SUPPORTS.isAndroid) this.dispatch('androidExternal', `intent://${url.replace(/^https?:\/\//, '')}#Intent;type=video/any;scheme=${url.startsWith('https:') ? 'https' : 'http'};end;`)
         break
       } case 'torrent': {
         const hash = data.data && data.data.hash

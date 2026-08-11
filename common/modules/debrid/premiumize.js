@@ -28,11 +28,11 @@ const deadCodes = ['service_unsupported', 'permanent_error']
  * Premiumize implementation, see https://www.premiumize.me/api
  *
  * The easiest service to support, having kept the endpoints the others dropped: `/cache/check`
- * answers a whole results list for free, and `/transfer/directdl` returns every stream link for
- * a magnet in one call without storing anything, so there is no add or cleanup path at all.
+ * answers a whole results list for free, and `/transfer/directdl` returns every stream link for a
+ * magnet in one call without storing anything, so there is no add or cleanup path at all.
  *
- * `/transfer/list` never says which info hash a transfer came from, so badges come from the
- * cache endpoint alone.
+ * `/transfer/list` never says which info hash a transfer came from, so badges come from the cache
+ * endpoint alone.
  */
 export default class Premiumize extends DebridService {
   static id = 'premiumize'

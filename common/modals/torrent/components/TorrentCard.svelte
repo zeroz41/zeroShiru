@@ -11,8 +11,8 @@
   import { settings } from '@/modules/settings.js'
   import { Database, BadgeCheck, HardDrive, FileQuestion, AlertCircle, TriangleAlert, Cloud, CloudDownload, CloudOff, CloudAlert } from 'lucide-svelte'
 
-  // one badge per availability state, so a glance at the list separates what streams instantly
-  // from what the service would have to fetch, from what it cannot serve at all
+  // one badge per availability state, so a glance separates what streams instantly from what the
+  // service would have to fetch, from what it cannot serve at all
   const availabilityBadges = {
     [Availability.CACHED]: { icon: Cloud, style: 'background: hsla(var(--primary-color-dim-hsl), .15); border-color: var(--primary-color-light) !important; color: var(--primary-color-light)' },
     [Availability.AVAILABLE]: { icon: CloudDownload, style: 'background: hsla(var(--warning-color-dim-hsl), .15); border-color: var(--warning-color-dim) !important; color: var(--warning-color-dim)' },

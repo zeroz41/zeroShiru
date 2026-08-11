@@ -1,6 +1,6 @@
 import Metadata from 'matroska-metadata'
 import { arr2hex, hex2bin } from 'uint8-util'
-import { fontRx, matroskaRx, matchSubtitleFiles, sleep } from '@/modules/util.js'
+import { fontRx, matroskaRx, matchFontFiles, matchSubtitleFiles, sleep } from '@/modules/util.js'
 import { SUPPORTS } from '@/modules/support.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
@@ -10,10 +10,11 @@ const AHEAD_SECONDS = 120
 // land this many seconds of video before a seek, so a rough byte estimate still covers it
 const JUMP_BACK_SECONDS = 15
 const RETRIES = 3
+const MAX_ANDROID_FONT = 15_000_000 // matches the torrent client's guard
 
 /**
- * Blob-like wrapper around a remote URL so matroska-metadata can read it
- * through HTTP range requests, mirroring how it reads torrent files.
+ * Blob-like wrapper around a remote URL so matroska-metadata can read it through HTTP range
+ * requests, mirroring how it reads torrent files.
  */
 class RemoteFile {
   /**
@@ -61,10 +62,10 @@ class RemoteFile {
 }
 
 /**
- * Extracts embedded tracks, fonts, chapters and subtitles from a debrid HTTP
- * stream and feeds them into the same Subtitles pipeline torrents use. Unlike
- * torrents the playback bytes can't be tapped, so subtitle events come from a
- * second range request that is paced to stay just ahead of the play position.
+ * Extracts embedded tracks, fonts, chapters and subtitles from a debrid HTTP stream and feeds
+ * them into the same Subtitles pipeline torrents use. Unlike torrents the playback bytes can't be
+ * tapped, so subtitle events come from a second range request paced to stay just ahead of the
+ * play position.
  */
 export default class DebridMetadata {
   destroyed = false
@@ -84,12 +85,22 @@ export default class DebridMetadata {
     this.file = file
     this.getTime = getTime
 
-    // external subtitle files that were resolved alongside the video, matched to it
-    // exactly like the torrent client does so season packs load one episode's subs
-    for (const sub of matchSubtitleFiles(files, file.name)) {
+    // external subtitles and the fonts they style with, matched exactly like the torrent client
+    // does so a season pack loads one episode's subs
+    const subFiles = matchSubtitleFiles(files, file.name)
+    debug(`Found ${subFiles.length} subtitle files`)
+    for (const sub of subFiles) {
       fetch(sub.url).then(res => res.arrayBuffer()).then(data => {
         if (!this.destroyed) subtitles.handleSubtitleFile({ name: sub.name, data })
       }).catch(error => debug(`Failed to fetch subtitle file ${sub.name}:`, error))
+    }
+    const fontFiles = matchFontFiles(files)
+    debug(`Found ${fontFiles.length} font files`)
+    for (const font of fontFiles) {
+      fetch(font.url).then(res => res.arrayBuffer()).then(data => {
+        if (this.destroyed || (SUPPORTS.isAndroid && data.byteLength > MAX_ANDROID_FONT)) return
+        subtitles.handleFile(hex2bin(arr2hex(new Uint8Array(data))))
+      }).catch(error => debug(`Failed to fetch font file ${font.name}:`, error))
     }
 
     // everything below reads the Matroska container, which only these formats have
@@ -99,8 +110,8 @@ export default class DebridMetadata {
     }
     this.remote = new RemoteFile(file.url, file.size, file.name)
     this.metadata = new Metadata(this.remote)
-    // the parser starts several reads in its constructor, settle the ones nothing may
-    // ever await (duration when no tracks stream) so they cannot reject unhandled
+    // the parser starts several reads in its constructor, settle the ones nothing may ever await
+    // (duration when no tracks stream) so they cannot reject unhandled
     for (const pending of [this.metadata.segment, this.metadata.seekHead, this.metadata.duration]) Promise.resolve(pending).catch(() => {})
 
     this.metadata.getTracks().then(tracks => {
@@ -123,7 +134,7 @@ export default class DebridMetadata {
       debug(`Found ${attachments?.length} attachments`)
       for (const attachment of attachments) {
         if (fontRx.test(attachment.filename) || attachment.mimetype?.toLowerCase().includes('font')) {
-          if (SUPPORTS.isAndroid && attachment.data.length > 15_000_000) continue // matches the torrent client's large font guard
+          if (SUPPORTS.isAndroid && attachment.data.length > MAX_ANDROID_FONT) continue
           subtitles.handleFile(hex2bin(arr2hex(attachment.data)))
         }
       }
@@ -167,10 +178,10 @@ export default class DebridMetadata {
   }
 
   /**
-   * Waits until the parser should read further and reports where from: the current
-   * offset while playback approaches it, or a fresh one when a seek left the parsed
-   * window, where reading on sequentially would download everything in between for
-   * nothing. The player renderer deduplicates events, so overlapping parses are safe.
+   * Waits until the parser should read further, and says where from: the current offset while
+   * playback approaches it, or a fresh one when a seek left the parsed window, where reading on
+   * sequentially would download everything in between for nothing. The renderer deduplicates
+   * events, so overlapping parses are safe.
    */
   async #pace (byteRate, start, offset) {
     if (!byteRate) return offset // no duration to estimate from, so read straight through

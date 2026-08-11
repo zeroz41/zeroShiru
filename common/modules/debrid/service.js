@@ -1,9 +1,8 @@
+// No UI imports here, so this module also runs under plain Node for testing.
 import Bottleneck from 'bottleneck'
 import { Availability, AVAILABILITY_TTL, normalizeAvailability } from './availability.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
-
-// No UI imports here, so this module also runs under plain Node for testing.
 
 export class DebridError extends Error {
   /**
@@ -31,6 +30,17 @@ export class DebridNetworkError extends DebridError {
   constructor (message, opts) {
     super(message, opts)
     this.name = 'DebridNetworkError'
+  }
+}
+
+/**
+ * The service kept us waiting past the budget. It says nothing about the release, so whoever
+ * asked decides what to make of it: playback cannot wait, a badge check can come back later.
+ */
+export class DebridTimeoutError extends DebridError {
+  constructor (message, opts) {
+    super(message, opts)
+    this.name = 'DebridTimeoutError'
   }
 }
 
@@ -72,8 +82,8 @@ export class DebridNotImplementedError extends DebridError {
 }
 
 /**
- * What an error proves about a release, or null when it proves nothing. A timeout or a rate
- * limit describes the moment, not the release, so it leaves it unknown and re-checkable.
+ * What an error proves about a release, or null when it proves nothing. A timeout or a rate limit
+ * describes the moment, not the release, so it leaves it unknown and re-checkable.
  * @param {any} error
  * @returns {string | null}
  */
@@ -125,11 +135,10 @@ const MAX_CLEANUP_ATTEMPTS = 3
 
 /**
  * Base class for debrid services: rate limited requests, typed errors, availability bookkeeping.
- * Implementations only talk HTTP, state is per-instance so services stay swappable.
+ * Implementations only talk HTTP; state is per-instance so services stay swappable.
  *
  * Adding a service means subclassing this, setting the statics below, and implementing the
- * abstract methods. Nothing outside the new file changes apart from one registry entry in
- * `debrid.js`.
+ * abstract methods. Nothing outside the new file changes apart from one entry in `services.js`.
  * @abstract
  */
 export default class DebridService {
@@ -177,9 +186,9 @@ export default class DebridService {
   static maxBatch = 100
 
   /**
-   * Whether asking about a release puts a magnet on the account rather than reading a cache
-   * index. Two things follow: only one such check may be in flight, and a hash the answer leaves
-   * out is unasked rather than "not cached".
+   * Whether asking about a release puts a magnet on the account rather than reading a cache index.
+   * Two things follow: only one such check may be in flight, and a hash the answer leaves out is
+   * unasked rather than "not cached".
    * @returns {boolean}
    */
   static get checkAddsMagnets () {
@@ -256,8 +265,8 @@ export default class DebridService {
 
   /**
    * Retries removals that failed earlier. Only ever replays a removal `release()` was already
-   * asked to make, so it can no more reach a torrent the user wanted than the original call
-   * could. Never persisted: a stale id would eventually name something else.
+   * asked to make, so it can no more reach a torrent the user wanted than the original call could.
+   * Never persisted: a stale id would eventually name something else.
    */
   async retryCleanup () {
     const pending = [...this.#orphans.values()]
@@ -274,8 +283,8 @@ export default class DebridService {
   /**
    * The account's own torrent listing, read at most once per `listingTTL` and shared by every
    * caller. Both the badge refresh and every resolve want it, and reading it per play put a full
-   * listing on the play path. An entry can be a minute stale, so callers confirm it before
-   * acting on its id.
+   * listing on the play path. An entry can be a minute stale, so callers confirm it before acting
+   * on its id.
    * @param {{ fresh?: boolean }} [opts] - `fresh` forces a read, for polling a change just made.
    * @returns {Promise<any[]>}
    */
@@ -369,7 +378,7 @@ export default class DebridService {
     if (!this.apiKey) throw new DebridAuthError('No debrid API key configured')
     const authorized = this.authorize(url, { auth, authParam })
     const encoded = body ? DebridService.encodeBody(body, encoding) : null
-    debug(`${method} ${url}`) // logged before authorization so query-parameter keys never reach the log
+    debug(`${method} ${url}`) // the caller's url, never the authorized one, so a key in a query parameter stays out of the log
     const sent = Date.now()
     const res = await fetch(authorized.url, {
       method,
@@ -378,8 +387,8 @@ export default class DebridService {
       signal: AbortSignal.timeout(timeout)
     })
     this.observeLatency(Date.now() - sent) // only round trips that came back, so a timeout cannot inflate it
-    // the app short-circuits external requests while it considers itself offline,
-    // handing back a plain object instead of a Response
+    // the app short-circuits external requests while it considers itself offline, handing back a
+    // plain object instead of a Response
     if (typeof res?.json !== 'function') throw new DebridNetworkError(res?.message?.replace(/^failed to fetch: /i, '') || 'Network request failed')
     if (!res?.ok) {
       let json = null
@@ -402,8 +411,8 @@ export default class DebridService {
 
   /**
    * A poll budget stretched to fit the connection in use, up to `MAX_STRETCH`. The defaults are
-   * written for a healthy link; on a slow one the same budget buys a single request, so every
-   * poll loop times out and reports no answer.
+   * written for a healthy link; on a slow one the same budget buys a single request, so every poll
+   * loop times out and reports no answer.
    * @param {string} kind - A key of the service's `timeouts`.
    * @returns {number}
    */
@@ -563,8 +572,8 @@ export default class DebridService {
       onAnswer?.(hash, state)
     }
 
-    // one at a time where asking adds magnets: services rate limit adding far harder than
-    // reading, so overlapping checks do not answer faster, they get refused
+    // one at a time where asking adds magnets: services rate limit adding far harder than reading,
+    // so overlapping checks do not answer faster, they get refused
     if (this.config.checkAddsMagnets) {
       if (this.sweeping) return answers
       this.sweeping = true

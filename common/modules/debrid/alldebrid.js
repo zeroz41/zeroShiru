@@ -42,11 +42,11 @@ const READY = 4
  * AllDebrid implementation, see https://docs.alldebrid.com/
  *
  * Two API quirks shape this client:
- * - `/magnet/instant` is gone, so availability is read off the upload response instead, which
- *   answers `ready` per magnet and takes many at once. Cheap in requests, but every hash checked
- *   lands on the account for a moment, hence the small caps below.
- * - `/magnet/status` never says which info hash a magnet came from, so the account cannot be
- *   read for badges, only for which ids were already there before we uploaded anything.
+ * - `/magnet/instant` is gone, so availability is read off the upload response, which answers
+ *   `ready` per magnet and takes many at once. Cheap in requests, but every hash checked lands on
+ *   the account for a moment, hence the small caps below.
+ * - `/magnet/status` never says which info hash a magnet came from, so the account is only good
+ *   for telling this client's uploads from the user's own, never for badges.
  */
 export default class AllDebrid extends DebridService {
   static id = 'alldebrid'

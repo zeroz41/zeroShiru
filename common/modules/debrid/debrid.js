@@ -1,36 +1,32 @@
 import { files } from '@/components/MediaHandler.svelte'
 import { settings } from '@/modules/settings.js'
 import { status } from '@/modules/networking.js'
-import { videoRx, subRx } from '@/modules/util.js'
+import { videoRx, subRx, fontRx } from '@/modules/util.js'
 import { anitomyscript } from '@/modules/anime/anime.js'
 import { writable } from 'simple-store-svelte'
 import { derived } from 'svelte/store'
 import { toast } from 'svelte-sonner'
-import RealDebrid from '@/modules/debrid/realdebrid.js'
-import AllDebrid from '@/modules/debrid/alldebrid.js'
-import TorBox from '@/modules/debrid/torbox.js'
-import Premiumize from '@/modules/debrid/premiumize.js'
 import DebridService, { availabilityFromError, secureFiles } from '@/modules/debrid/service.js'
+import { debridServices, debridService } from '@/modules/debrid/services.js'
 import { Availability, describeAvailability } from '@/modules/debrid/availability.js'
 import { routeDebrid, debridKey } from '@/modules/debrid/route.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
 
-// register new services here, in the order the settings menu offers them. The only place that
-// touches service classes; everything else goes through the stores and functions below.
-const debridServices = Object.fromEntries([AllDebrid, Premiumize, RealDebrid, TorBox].filter(Service => Service.available).map(Service => [Service.id, Service]))
-
 /** Selectable services for the settings menu, as plain data. */
 export const debridOptions = Object.values(debridServices).map(Service => ({ id: Service.id, title: Service.title }))
 
+/** Files worth resolving: the video, its subtitles, and the fonts those subtitles need. */
+const playbackRx = new RegExp(`${videoRx.source}|${subRx.source}|${fontRx.source}`, 'i')
+
 const REFRESH_INTERVAL = 60_000
 
-// how long before re-asking about releases a check could not answer, and how far that backs off
-// while it keeps not answering. Without it a bad minute leaves a results list half badged
+// how long before asking again about releases a check could not answer, and how far that backs
+// off while it keeps not answering. Without it a bad minute leaves a results list half badged
 const RETRY_DELAY = 10_000
 const MAX_RETRY_DELAY = 4 * 60_000
 
-// user facing messages for the routing policy's blocked outcomes
+/** What the user is told when the routing policy blocks playback. */
 const blockedMessages = {
   key: () => 'Debrid only mode is on but no API key is set. Add your key in the debrid settings or disable debrid only mode.',
   offline: () => 'Shiru is currently offline, so ' + serviceTitle() + ' cannot be reached.',
@@ -43,20 +39,17 @@ let serviceKey = null
 let lastRefresh = 0
 
 /** Whether a debrid service is selected and has an API key. */
-export const debridEnabled = derived(settings, value => Boolean(debridServices[value.debridService] && debridKey(value)))
+export const debridEnabled = derived(settings, value => Boolean(debridService(value.debridService) && debridKey(value)))
 
-/**
- * How playback is routed right now, or null when no debrid service is selected.
- * The single source the UI reads to describe the active transport.
- */
+/** How playback is routed right now, or null when no service is selected. The UI reads this to describe the active transport. */
 export const debridTransport = derived(settings, value => {
-  const Service = debridServices[value.debridService]
+  const Service = debridService(value.debridService)
   if (!Service) return null
   const only = value.debridMode === 'only'
   return {
     title: Service.title,
     only,
-    checksAddMagnets: Service.checkAddsMagnets, // the only thing worth offering an opt out for
+    checksAddMagnets: Service.checkAddsMagnets,
     label: only ? 'Debrid Only' : 'Debrid First',
     description: only
       ? `Debrid Only: playback always uses ${Service.title}, torrents never start.`
@@ -65,8 +58,8 @@ export const debridTransport = derived(settings, value => {
 })
 
 /**
- * What the configured service can do with each release, keyed by lowercase info hash.
- * The one place the UI reads cache state from; anything absent is simply unknown.
+ * What the service can do with each release, keyed by lowercase info hash. The only place the UI
+ * reads cache state from; anything absent is unknown rather than uncached.
  * @type {import('simple-store-svelte').Writable<Map<string, string>>}
  */
 export const debridAvailability = writable(new Map())
@@ -75,13 +68,13 @@ export const debridAvailability = writable(new Map())
 export const debridChecking = writable(0)
 
 /**
- * Whether debrid owns what the player is showing. Set the moment playback is routed, before the
- * resolve, since the player opens straight away and must not look like a torrent while it waits.
+ * Whether debrid owns what the player is showing. Set the moment playback is routed rather than
+ * once it resolves, since the player opens straight away and must not look like a torrent.
  */
 export const debridPlayback = writable(false)
 
-// switching service or key takes effect immediately: the old instance is torn down and the
-// badges dropped, since they described a different account
+// switching service or key takes effect immediately: tear the old instance down and drop the
+// badges, which described a different account
 settings.subscribe(value => {
   const key = `${value.debridService}:${debridKey(value)}`
   if (serviceKey !== null && serviceKey !== key) {
@@ -96,7 +89,7 @@ settings.subscribe(value => {
 
 function getService () {
   if (service) return service
-  const Service = debridServices[settings.value.debridService]
+  const Service = debridService(settings.value.debridService)
   const apiKey = debridKey(settings.value)
   if (!Service || !apiKey) return null
   debug(`Initializing debrid service ${Service.title}`)
@@ -117,10 +110,10 @@ export async function testDebrid () {
  * handled, false to fall back to torrents. Routing policy lives in route.js.
  * @param {string} torrentID - Magnet URI, info hash, or .torrent link.
  * @param {string} [hash] - Info hash when known.
- * @param {{ episode?: number }} [search] - Playback context for picking the right file in packs.
+ * @param {{ episode?: number }} [search] - Playback context, for picking the right file in packs.
  */
 export async function streamDebrid (torrentID, hash, search) {
-  const serviceSelected = Boolean(debridServices[settings.value.debridService])
+  const serviceSelected = Boolean(debridService(settings.value.debridService))
   const route = routeDebrid({
     torrentID,
     hash,
@@ -183,14 +176,14 @@ export async function resolveDebridFiles (torrentID, search) {
   const service = getService()
   const episode = Number(search?.episode)
   const resolved = await service.resolve(torrentID, {
-    fileFilter: name => videoRx.test(name) || subRx.test(name),
+    fileFilter: name => playbackRx.test(name),
     pickFile: Number.isFinite(episode) ? files => pickEpisodeFile(files, episode) : undefined
   })
-  const files = secureFiles(resolved.files, serviceTitle())
-  if (files.length !== resolved.files.length) debug(`Discarded ${resolved.files.length - files.length} non-HTTPS links from ${serviceTitle()}`)
+  const secure = secureFiles(resolved.files, serviceTitle())
+  if (secure.length !== resolved.files.length) debug(`Discarded ${resolved.files.length - secure.length} non-HTTPS links from ${serviceTitle()}`)
   // playing it proves the service holds it, which is the best answer there is
   recordAvailability(resolved.hash, Availability.CACHED)
-  return Promise.all(files.map(async file => ({
+  return Promise.all(secure.map(async file => ({
     infoHash: resolved.hash,
     fileHash: await sha1hex(`${resolved.hash}:${file.name}:${file.size}`), // same key the torrent client uses, so watch progress is shared
     torrent_name: resolved.name,
@@ -220,8 +213,8 @@ export function refreshDebridAvailability () {
 
 /**
  * Whether answers from this instance still describe the configured account. A request in flight
- * outlives a settings change, and badging a new account with the old one's answers is worse
- * than no badges at all.
+ * outlives a settings change, and badging a new account with the old one's answers is worse than
+ * no badges at all.
  * @param {import('@/modules/debrid/service.js').default} instance
  */
 function current (instance) {
@@ -234,13 +227,13 @@ let retryDelay = RETRY_DELAY
 
 /**
  * Asks the service about the releases on screen, so badges say what it can actually do with them
- * rather than only what the account has touched. Answers are remembered, so browsing the same
- * show again is free. A service may answer only part of the list, so whatever is left is asked
- * about again on a backing off timer until it is done or the user moves on.
+ * rather than only what the account has touched. Answers are remembered, so browsing the same show
+ * again is free. A service may answer only part of the list, so whatever is left is asked about
+ * again on a backing off timer until it is done or the user moves on.
  * @param {string[]} hashes - Candidates, most relevant first, since probing bites from the front.
  */
 export async function checkDebridAvailability (hashes) {
-  cancelDebridAvailability() // this list supersedes whatever the last one was still waiting to retry
+  cancelDebridAvailability() // this list supersedes whatever the last one was waiting to retry
   const active = getService()
   if (!active || !settings.value.debridCacheCheck || status.value === 'offline') return
   const pending = active.unknownHashes(hashes)
@@ -278,8 +271,8 @@ export function cancelDebridAvailability () {
 }
 
 /**
- * Picks the requested episode out of a pack with the same anitomy parsing the rest of the app
- * uses, largest file as fallback.
+ * Picks the requested episode out of a pack, using the same anitomy parsing as the rest of the
+ * app. Falls back to the largest video.
  * @param {{ id: number, path: string, size: number }[]} files
  * @param {number} episode
  */
@@ -297,7 +290,7 @@ async function pickEpisodeFile (files, episode) {
 }
 
 function serviceTitle () {
-  return debridServices[settings.value.debridService]?.title || 'debrid'
+  return debridService(settings.value.debridService)?.title || 'debrid'
 }
 
 /**
