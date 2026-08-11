@@ -1,3 +1,13 @@
+# zeroShiru
+
+A fork of [Shiru](https://github.com/RockinChaos/Shiru) that tracks upstream.
+
+New cool features and fixes will be contained here, with contributing back upstream planned.
+
+Thanks!
+
+---
+
 <p align="center">
 	<a href="https://github.com/RockinChaos/Shiru">
 		<img src=".github/docs/assets/logo_filled.svg" width="400" alt="Shiru">
