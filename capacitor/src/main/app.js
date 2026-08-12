@@ -17,7 +17,7 @@ import { ipcWire } from './ipc.js'
 
 export default class App {
   protocol = new Protocol()
-  updater = new Updater({ provider: atob('Z2l0aHVi'), owner: atob('Um9ja2luQ2hhb3M='), repo: atob('U2hpcnU=') }, [{ provider: atob('Z2VuZXJpYw=='), url: atob('bGFyMi5jcmFmdGF0aW9uZ2FtaW5nLmNvbQ==') }])
+  updater = new Updater({ provider: 'github', owner: 'zeroz41', repo: 'zeroShiru' }, [])
   debug = new Debug()
   dialog = new Dialog(this.debug)
 

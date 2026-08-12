@@ -2,14 +2,14 @@ const mode = process.env.NODE_ENV?.trim() || 'development'
 const isDev = mode === 'development'
 
 const config = {
-  appId: isDev ? 'watch.shiru.dev' : 'watch.shiru',
+  appId: isDev ? 'watch.zeroshiru.dev' : 'watch.zeroshiru',
   appName: isDev ? 'Shiru (Debug)' : 'Shiru',
   webDir: 'build',
   android: {
     buildOptions: {
-      keystorePath: './watch.shiru',
+      keystorePath: './zeroshiru.jks',
       keystorePassword: '',
-      keystoreAlias: 'watch.shiru'
+      keystoreAlias: 'zeroshiru'
     },
     webContentsDebuggingEnabled: true
   },

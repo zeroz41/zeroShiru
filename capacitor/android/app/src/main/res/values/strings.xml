@@ -2,6 +2,6 @@
 <resources>
     <string name="app_name">Shiru</string>
     <string name="title_activity_main">Shiru</string>
-    <string name="package_name">watch.shiru</string>
-    <string name="custom_url_scheme">watch.shiru</string>
+    <string name="package_name">watch.zeroshiru</string>
+    <string name="custom_url_scheme">watch.zeroshiru</string>
 </resources>

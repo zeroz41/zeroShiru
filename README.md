@@ -2,7 +2,7 @@
 
 A fork of [Shiru](https://github.com/RockinChaos/Shiru) that tracks upstream.
 
-New cool features and fixes will be contained here, with contributing back upstream planned.
+New cool features and fixes will be contained here, with contributing back upstream planned when we can.
 
 Thanks!
 
@@ -19,15 +19,13 @@ Thanks!
   <a href="https://github.com/RockinChaos/Shiru/wiki/">📚 Wiki</a> •
   <a href="https://github.com/RockinChaos/Shiru/wiki/features/">✨ Features</a> •
   <a href="https://github.com/RockinChaos/Shiru/wiki/faq/">❓ FAQ</a> •
-  <a href="#-building--development">🔧 Building & Development</a> •
-  <a href="https://github.com/RockinChaos/Shiru/releases/latest/">⬇️ Download</a>
+  <a href="BUILDING.md">🔧 Building & Development</a> •
+  <a href="https://github.com/zeroz41/zeroShiru/releases/latest/">⬇️ Download</a>
 </p>
 <p align="center">
-  <a href="https://github.com/RockinChaos/Shiru/releases/latest/"><img alt="Downloads" src="https://img.shields.io/github/downloads/RockinChaos/Shiru/total?style=flat-square"></a>
-  <a href="https://github.com/RockinChaos/Shiru/releases/latest/"><img alt="Latest Release" src="https://img.shields.io/github/v/release/RockinChaos/Shiru?style=flat-square"></a>
-  <a href="https://github.com/RockinChaos/Shiru/commits"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/RockinChaos/Shiru?style=flat-square"></a>
-  <a href="https://github.com/RockinChaos/Shiru/stargazers"><img alt="Stargazers" src="https://img.shields.io/github/stars/RockinChaos/Shiru?style=flat-square"></a>
-  <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/github/license/RockinChaos/Shiru?style=flat-square"></a>
+  <a href="https://github.com/zeroz41/zeroShiru/releases/latest/"><img alt="Latest Release" src="https://img.shields.io/github/v/release/zeroz41/zeroShiru?style=flat-square"></a>
+  <a href="https://github.com/zeroz41/zeroShiru/commits"><img alt="Last Commit" src="https://img.shields.io/github/last-commit/zeroz41/zeroShiru?style=flat-square"></a>
+  <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/github/license/zeroz41/zeroShiru?style=flat-square"></a>
 </p>
 
 https://github.com/user-attachments/assets/3ff100f0-e008-4ff5-88f5-ad4290863f96
@@ -147,115 +145,26 @@ All keybinds are fully customizable via drag-and-drop in the keybinds UI (`` ` `
 | `.` / `Shift+.` | Subtitle delay +0.1s / +1.0s       |
 | `` ` `` | Open keybinds editor               |
 
-## ⚙️ **Installation**
+## ⚙️ Installation
 
-### 🐧 **Linux Installation**:
+Grab the artifact for your platform from the [releases page](https://github.com/zeroz41/zeroShiru/releases/latest):
 
-#### Arch:
-```bash
-paru -S shiru
-```
+| Platform | Artifact |
+|---|---|
+| 🪟 Windows | `win-Shiru-vX.X.X-installer.exe`, or `-portable.exe` (no install needed) |
+| 🍎 macOS | `mac-Shiru-vX.X.X.dmg` (universal) |
+| 🐧 Linux | `linux-Shiru-vX.X.X.AppImage` |
+| 📱 Android | `android-Shiru-vX.X.X-arm64-v8a.apk` |
+| 📺 Android TV | same APK as Android — use `armeabi-v7a` for 32-bit boxes (Chromecast w/ Google TV, Fire TV) |
 
-Or if you use yay:
-
-```bash
-yay -S shiru
-```
-
-#### Debian/Ubuntu:
-1. 🔗 Download the `linux-Shiru-version.deb` from the [releases page](https://github.com/RockinChaos/Shiru/releases/latest).
-2. 📦 Install using the package manager:
-
-    ```bash
-    apt install linux-Shiru-*.deb
-    ```
-
----
-
-### 🖥️ Windows Installation:
-#### Option 1: 💨 Install via Winget
-For Windows 10 **1809** or later, or Windows 11:
-```bash
-winget install shiru
-```
-
-#### Option 2: 🔄 Installer or Portable Version
-1. 🔗 Download from the [releases page](https://github.com/RockinChaos/Shiru/releases/latest):
-   - **Installer:** `win-Shiru-vx.x.x-installer.exe`
-   - **Portable:** `win-Shiru-vx.x.x-portable.exe` *(No installation required, just run it)*
+The app updates itself from this repository's releases.
 
 ## 🔧 Building & Development
 
-Credit to [NoCrypt](https://github.com/NoCrypt) for doing the legwork on this.
+See [BUILDING.md](BUILDING.md) for how to build, run and test,
+and [docs/CI.md](docs/CI.md) for the CI/release pipeline.
 
-### 📋 Requirements:
-- PNPM (or any package manager)
-- NodeJS 24.15.0
-- Visual Studio 2022 (if on Windows)
-- Docker (with WSL on Windows)
-- ADB & Android Studio (SDK 34)
-- Java 21 (JDK)
-
-###  💻 Building for PC (Electron):
-1. Navigate to the Electron directory:
-   ```bash
-   cd electron
-   ```
-2. Install dependencies:
-   ```bash
-   pnpm install
-   ```
-3. Start development:
-   ```bash
-   pnpm start
-   ```
-4. Build for release:
-   ```bash
-   pnpm build
-   ```
-
----
-
-### 📱 Building for Android (Capacitor):
-1. Navigate to the Capacitor directory:
-   ```bash
-   cd capacitor
-   ```
-2. Install dependencies:
-   ```bash
-   pnpm install
-   ```
-3. Run the doctor to check for missing dependencies:
-   ```bash
-   pnpm exec cap doctor
-   ```
-4. (First time only) Build native code:
-   - Windows:
-     ```bash
-     pnpm build:native-win
-     ```
-   - Linux:
-     ```bash
-     pnpm build:native
-     ```
-5. (Optional) Generate assets:
-   ```bash
-   pnpm build:assets
-   ```
-6. Open the Android project:
-   ```bash
-   pnpm exec cap open android
-   ```
-7. Connect your device with ADB and start development:
-   ```bash
-   pnpm dev:start
-   ```
-8. Build the app for release (APK will not be [signed](https://github.com/NoCrypt/sign-android)):
-   ```bash
-   pnpm build:app
-   ```
-
----
+Credit to [NoCrypt](https://github.com/NoCrypt) and upstream [Shiru](https://github.com/RockinChaos/Shiru) for the original build legwork.
 
 ## 📜 License
 

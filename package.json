@@ -2,10 +2,10 @@
   "name": "shiru",
   "license": "GPL-3.0-or-later",
   "private": true,
-  "author": "RockinChaos <RockinChaos@users.noreply.github.com>",
+  "author": "zeroz <zeroz@none.cx>",
   "description": "A personal anime library manager for watching and tracking your collection in real time. Lightweight, powerful, and paws-itively fast. No waiting required!",
   "main": "build/main.js",
-  "homepage": "https://github.com/RockinChaos/Shiru#readme",
+  "homepage": "https://github.com/zeroz41/zeroShiru#readme",
   "standard": {
     "ignore": [
       "bundle.js",

@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [zeroz-dev, master, 'feat/**', 'bug/**']
+  pull_request:
+    branches: [zeroz-dev, master]
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      live_tests:
+        description: 'Also run live API tests (needs REAL_DEBRID_API_KEY / TORBOX_API_KEY secrets)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: '24.15.0'
+  PNPM_VERSION: '10.34.1'
+
+jobs:
+  # Unit tests: plain node:test, no native builds needed. Tests live in
+  # test/unit/*.test.js (see docs/CI.md for the harness contract). Until a
+  # branch ships tests this job passes with a notice, so it is safe to gate
+  # merges and releases on it from day one.
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v6
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies (no native builds)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run unit tests
+        run: |
+          if [ -d test/unit ]; then
+            IMPORT_ARGS=""
+            [ -f test/register.js ] && IMPORT_ARGS="--import ./test/register.js"
+            node $IMPORT_ARGS --test test/unit/*.test.js
+          else
+            echo "::notice::No test/unit/ directory on this branch yet - nothing to run. Tests added under test/unit/*.test.js run here automatically."
+          fi
+
+  # Production webpack builds for both frontends. This is the real "does the
+  # app still compile" check - it covers common/, client/ and each platform's
+  # entry points without paying for electron-builder packaging.
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: electron
+            dir: electron
+            command: pnpm run web:build
+          - target: capacitor
+            dir: capacitor
+            command: pnpm run build:web
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v6
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Production build
+        working-directory: ${{ matrix.dir }}
+        env:
+          NODE_ENV: production
+        run: ${{ matrix.command }}
+
+  # Live API tests against real debrid services. Manual-only: they consume
+  # account quota and need secrets, so they never run on push/PR. Tests are
+  # env-gated and skip themselves when a service's key is absent.
+  live-tests:
+    name: Live API Tests
+    if: github.event_name == 'workflow_dispatch' && inputs.live_tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v6
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies (no native builds)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run live tests
+        env:
+          REAL_DEBRID_API_KEY: ${{ secrets.REAL_DEBRID_API_KEY }}
+          TORBOX_API_KEY: ${{ secrets.TORBOX_API_KEY }}
+          RD_TEST_MAGNET: ${{ vars.RD_TEST_MAGNET }}
+          RD_TEST_PACK_MAGNET: ${{ vars.RD_TEST_PACK_MAGNET }}
+          RD_TEST_PACK_EPISODE: ${{ vars.RD_TEST_PACK_EPISODE }}
+          TORBOX_TEST_HASH: ${{ vars.TORBOX_TEST_HASH }}
+        run: |
+          if [ -d test/live ]; then
+            IMPORT_ARGS=""
+            [ -f test/register.js ] && IMPORT_ARGS="--import ./test/register.js"
+            node $IMPORT_ARGS --test --test-concurrency=1 test/live/*.test.js
+          else
+            echo "::notice::No test/live/ directory on this branch."
+          fi
