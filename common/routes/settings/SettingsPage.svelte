@@ -56,10 +56,11 @@
   import AppTab from '@/routes/settings/tabs/AppTab.svelte'
   import ChangelogTab from '@/routes/settings/tabs/ChangelogTab.svelte'
   import ExtensionTab from '@/routes/settings/tabs/ExtensionTab.svelte'
+  import DebridTab from '@/routes/settings/tabs/DebridTab.svelte'
   import { status } from '@/modules/networking.js'
   import { modal } from '@/modules/navigation.js'
   import semver from 'semver'
-  import { AppWindow, Puzzle, User, Heart, Logs, Play, Rss, LayoutDashboard } from 'lucide-svelte'
+  import { AppWindow, Puzzle, User, Heart, Logs, Play, Rss, LayoutDashboard, Cloud } from 'lucide-svelte'
 
   export let statusTransition = false
 
@@ -79,6 +80,10 @@
     extensions: {
       name: 'Extensions',
       icon: Puzzle
+    },
+    debrid: {
+      name: 'Debrid',
+      icon: Cloud
     },
     login: {
       name: 'Profiles',
@@ -152,6 +157,13 @@
         <div class='root h-full w-full overflow-y-md-auto p-20 pt-5'>
           <div class='page pb-100'>
             <ExtensionTab bind:settings={$settings} />
+          </div>
+        </div>
+      </Tab>
+      <Tab>
+        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5'>
+          <div class='page pb-100'>
+            <DebridTab bind:settings={$settings} />
           </div>
         </div>
       </Tab>

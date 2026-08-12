@@ -11,6 +11,8 @@
   import { writable } from 'simple-store-svelte'
   import { createEventDispatcher } from 'svelte'
   import Subtitles from '@/modules/subtitles.js'
+  import DebridMetadata from '@/modules/debrid/metadata.js'
+  import { debridTransport, debridPlayback } from '@/modules/debrid/debrid.js'
   import { toTS, fastPrettyBytes, capitalize, matchPhrase, videoRx, isValidNumber, debounce } from '@/modules/util.js'
   import { toast } from 'svelte-sonner'
   import { getChaptersAniSkip } from '@/modules/anime/anime.js'
@@ -28,7 +30,7 @@
   import 'rvfc-polyfill'
   import { ELECTRON, ANDROID, TORRENT } from '@/modules/bridge.js'
   import { unload } from '@/modules/torrent.js'
-  import { Settings, Gauge, Timer, X, Minus, ArrowDown, ArrowUp, Captions, CaptionsOff, CircleHelp, Contrast, FastForward, Keyboard, EllipsisVertical, SquareArrowOutUpRight, List, Eye, FilePlus2, ListMusic, ListVideo, Maximize, Minimize, Pause, PictureInPicture, PictureInPicture2, Play, Proportions, RefreshCcw, Rewind, RotateCcw, RotateCw, ScreenShare, SkipBack, SkipForward, Users, Volume1, Volume2, VolumeX, SlidersVertical, SquarePen, Milestone, ClockArrowDown, ClockArrowUp } from 'lucide-svelte'
+  import { Settings, Gauge, Timer, X, Minus, ArrowDown, ArrowUp, Captions, CaptionsOff, CircleHelp, Contrast, FastForward, Keyboard, EllipsisVertical, SquareArrowOutUpRight, List, Eye, FilePlus2, ListMusic, ListVideo, Maximize, Minimize, Pause, PictureInPicture, PictureInPicture2, Play, Proportions, RefreshCcw, Rewind, RotateCcw, RotateCw, ScreenShare, SkipBack, SkipForward, Users, Volume1, Volume2, VolumeX, SlidersVertical, SquarePen, Milestone, ClockArrowDown, ClockArrowUp, Cloud } from 'lucide-svelte'
   import Debug from 'debug'
   const debug = Debug('ui:player')
 
@@ -67,6 +69,13 @@
   let container = null
   let current = null
   let subs = null
+  let debridMeta = null
+  let buffer = 0 // percent of the file reachable for seeking and thumbnails
+  // true from the moment playback is routed to debrid, not just once its files have resolved,
+  // so the player never shows torrent peers and speeds during the seconds a resolve takes
+  $: isDebrid = current?.debrid || $debridPlayback
+  // the player shows the service name in place of peers and speeds, which debrid streams have none of
+  $: debridTitle = `Streaming from ${$debridTransport?.title ?? 'your debrid service'}, no torrent peers involved`
   let duration = 0.1
   let muted = false
   let wasPaused = null
@@ -226,6 +235,10 @@
         subs.destroy()
         subs = null
       }
+      if (debridMeta) {
+        debridMeta.destroy()
+        debridMeta = null
+      }
     }
   }
 
@@ -279,7 +292,14 @@
         subs.destroy()
         subs = null
       }
+      if (debridMeta) {
+        debridMeta.destroy()
+        debridMeta = null
+      }
       current = file
+      // a debrid stream is served over HTTP ranges, so every byte is reachable immediately.
+      // Torrent playback starts at nothing and is filled in by the client's progress events.
+      buffer = file.debrid ? 100 : 0
       setCurrent(file)
     }
   }
@@ -290,6 +310,8 @@
       src = file.url
       if (!launchExternal) {
         subs = new Subtitles(video, files, current, handleHeaders)
+        // debrid streams never pass through the torrent client, parse metadata from the remote file instead
+        if (current?.debrid) debridMeta = new DebridMetadata(current, files, subs, { getTime: () => currentTime, onChapters: _chapters => { chapters = _chapters; embeddedChapters = _chapters } })
         video.load()
         await loadAnimeProgress()
       } else video.load()
@@ -1174,8 +1196,8 @@
     }
     return 0
   }
-  let buffer = 0
   TORRENT.onProgress(progress => {
+    if (isDebrid) return // a background torrent's download says nothing about this stream
     buffer = progress * 100
   })
 
@@ -1459,6 +1481,9 @@
   const torrent = {}
   TORRENT.onCurrentStats(updateStats)
   function updateStats (detail) {
+    // no torrent backs a debrid stream, and the client keeps its own session running in the
+    // background, so its numbers must never be shown against what is actually playing
+    if (isDebrid) return
     torrent.peers = detail.numPeers || 0
     torrent.up = detail.uploadSpeed || 0
     torrent.down = detail.downloadSpeed || 0
@@ -1731,12 +1756,17 @@
       </div>
     {/if}
     <div class='d-flex justify-content-center bottom-0 d-title d-filler' class:col-4={$settings.playerTitleTop}>
-      <span class='icon'><Users class='pt-5 block-scale-30' strokeWidth={3} /> </span>
-      <span class='stats font-scale-24'>{torrent.peers || 0}</span>
-      <span class='icon'><ArrowDown class='block-scale-30' /></span>
-      <span class='stats font-scale-24'>{fastPrettyBytes(torrent.down)}/s</span>
-      <span class='icon'><ArrowUp class='block-scale-30' /></span>
-      <span class='stats font-scale-24'>{fastPrettyBytes(torrent.up)}/s</span>
+      {#if isDebrid}
+        <span class='icon' title={debridTitle}><Cloud class='pt-5 block-scale-30' strokeWidth={3} /> </span>
+        <span class='stats font-scale-24' title={debridTitle}>{$debridTransport?.title ?? 'Debrid'}</span>
+      {:else}
+        <span class='icon'><Users class='pt-5 block-scale-30' strokeWidth={3} /> </span>
+        <span class='stats font-scale-24'>{torrent.peers || 0}</span>
+        <span class='icon'><ArrowDown class='block-scale-30' /></span>
+        <span class='stats font-scale-24'>{fastPrettyBytes(torrent.down)}/s</span>
+        <span class='icon'><ArrowUp class='block-scale-30' /></span>
+        <span class='stats font-scale-24'>{fastPrettyBytes(torrent.up)}/s</span>
+      {/if}
       {#if resolvePrompt}
         <div class='position-absolute text-monospace rounded skipPrompt d-flex flex-column align-items-center text-center bg-dark-light p-20 z-50 mt-60' class:w-500={SUPPORTS.isAndroid}>
           <div class='skipFont'>

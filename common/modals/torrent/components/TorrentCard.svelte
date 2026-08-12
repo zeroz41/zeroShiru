@@ -6,8 +6,19 @@
   import { getEpisodeMetadataForMedia, getKitsuMappings } from '@/modules/anime/anime.js'
   import { copyToClipboard } from '@/modules/lib/clipboard.js'
   import { malDubs } from '@/modules/anime/animedubs.js'
+  import { debridEnabled, debridAvailability, debridTransport } from '@/modules/debrid/debrid.js'
+  import { Availability, availabilityOf, describeAvailability } from '@/modules/debrid/availability.js'
   import { settings } from '@/modules/settings.js'
-  import { Database, BadgeCheck, HardDrive, FileQuestion, AlertCircle, TriangleAlert } from 'lucide-svelte'
+  import { Database, BadgeCheck, HardDrive, FileQuestion, AlertCircle, TriangleAlert, Cloud, CloudDownload, CloudOff, CloudAlert } from 'lucide-svelte'
+
+  // one badge per availability state, so a glance separates what streams instantly from what the
+  // service would have to fetch, from what it cannot serve at all
+  const availabilityBadges = {
+    [Availability.CACHED]: { icon: Cloud, style: 'background: hsla(var(--primary-color-dim-hsl), .15); border-color: var(--primary-color-light) !important; color: var(--primary-color-light)' },
+    [Availability.AVAILABLE]: { icon: CloudDownload, style: 'background: hsla(var(--warning-color-dim-hsl), .15); border-color: var(--warning-color-dim) !important; color: var(--warning-color-dim)' },
+    [Availability.UNAVAILABLE]: { icon: CloudOff, style: 'background: hsla(var(--danger-color-dim-hsl), .15); border-color: var(--danger-color-light) !important; color: var(--danger-color-light)' },
+    [Availability.UNKNOWN]: { icon: CloudAlert, style: 'background: hsla(var(--white-color-dim-hsl), .08); border-color: var(--white-color-very-dim) !important; color: var(--white-color-dim)' }
+  }
 
   const { reactive, init } = createListener(['torrent-button', 'torrent-safe-area'])
   init(true)
@@ -354,6 +365,10 @@
 
   $: errorType = type === 'error' ? (result.title?.match(/no results/i) || result.title?.match(/extension is not enabled/i) ? 'warning' : 'error') : ''
 
+  $: availability = availabilityOf($debridAvailability, result.hash)
+  $: availabilityBadge = availabilityBadges[availability]
+  $: availabilityTitle = describeAvailability(availability, $debridTransport?.title).description
+
   let card
   $: updateGlowColor(countdown)
   function updateGlowColor(value) {
@@ -447,6 +462,11 @@
           <div class='text-light d-flex align-items-center text-nowrap'>{since(new Date(result.date))}</div>
         </div>
         <div class='secondary-metadata d-flex flex-wrap ml-auto justify-content-end gap-5'>
+          {#if $debridEnabled && result.hash}
+            <div class='rounded px-10 py-5 border text-nowrap d-flex align-items-center' style={availabilityBadge.style} title={availabilityTitle}>
+              <svelte:component this={availabilityBadge.icon} size='1.6rem' />
+            </div>
+          {/if}
           {#if result.type === 'best'}
             <div class='rounded px-15 py-5 border text-nowrap font-weight-bold d-flex align-items-center' style='background: var(--success-color-very-dim); border-color: var(--success-color-light) !important; color: var(--success-color-light)'>
               Best Release

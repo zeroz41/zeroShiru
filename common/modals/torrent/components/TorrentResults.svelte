@@ -10,13 +10,16 @@
   import { anitomyscript, getMediaMaxEp, getKitsuMappings, getEpisodeMetadataForMedia } from '@/modules/anime/anime.js'
   import { loadedTorrent, completedTorrents, seedingTorrents, stagingTorrents } from '@/modules/torrent.js'
   import { dedupe, getTorrentResults, updatePeerCounts } from '@/modules/extensions/handler.js'
+  import { debridEnabled, debridAvailability, debridTransport, debridChecking, refreshDebridAvailability, checkDebridAvailability, cancelDebridAvailability } from '@/modules/debrid/debrid.js'
+  import { Availability, AVAILABILITY_ORDER, availabilityOf, describeAvailability } from '@/modules/debrid/availability.js'
+  import { listResult } from '@/modules/debrid/route.js'
   import { getId, getHash } from '@/modules/anime/animehash.js'
   import AnimeResolver from '@/modules/anime/animeresolver.js'
   import { anilistClient } from '@/modules/providers/anilist/anilist.js'
   import { click } from '@/modules/lib/click.js'
   import { toast } from 'svelte-sonner'
   import NestedDropdown from '@/components/overlays/NestedDropdown.svelte'
-  import { X, Search, EllipsisVertical, Timer, Clapperboard, MonitorCog, ArrowDownWideNarrow, Paintbrush, ListMusic, ChevronUp, ChevronDown, Radio, RefreshCw } from 'lucide-svelte'
+  import { X, Search, EllipsisVertical, Timer, Clapperboard, MonitorCog, ArrowDownWideNarrow, Paintbrush, ListMusic, ChevronUp, ChevronDown, Radio, RefreshCw, Cloud } from 'lucide-svelte'
   import Debug from 'debug'
   const debug = Debug('ui:torrents')
 
@@ -88,27 +91,56 @@
    * @param {boolean} batch
    */
   function sortResults(results, sort, batch) {
-    if (!results) return { results: [], hiddenResults: [] }
+    if (!results) return []
     const deduped = Array.from(dedupe(results)).map(result => {
       if (!(result.parseObject?.release_group && result.parseObject.release_group.length < 20)) result.parseObject = { ...result.parseObject, release_group: 'No Group' }
       return result
     })
-    return {
-      results: deduped.filter(entry => entry.seeders > 0 || entry.source?.managed).sort((a, b) => {
-        switch (sort) {
-          case 'smallest': return a.size - b.size
-          case 'best': return ((b.type === 'best') - (a.type === 'best') || (b.type === 'alt') - (a.type === 'alt')) || b.seeders - a.seeders
-          case 'batch': {
-            if (!batch) return b.seeders - a.seeders
-            return ((b.type === 'batch') - (a.type === 'batch')) || b.seeders - a.seeders
-          }
-          case 'new': return new Date(b.date) - new Date(a.date)
-          case 'old': return new Date(a.date) - new Date(b.date)
-          case 'seeders':
-          default: return b.seeders - a.seeders
+    return deduped.sort((a, b) => {
+      switch (sort) {
+        case 'smallest': return a.size - b.size
+        case 'best': return ((b.type === 'best') - (a.type === 'best') || (b.type === 'alt') - (a.type === 'alt')) || b.seeders - a.seeders
+        case 'batch': {
+          if (!batch) return b.seeders - a.seeders
+          return ((b.type === 'batch') - (a.type === 'batch')) || b.seeders - a.seeders
         }
-      }),
-      hiddenResults: deduped.filter(entry => !entry.seeders && !entry.source?.managed)
+        case 'new': return new Date(b.date) - new Date(a.date)
+        case 'old': return new Date(a.date) - new Date(b.date)
+        case 'seeders':
+        default: return b.seeders - a.seeders
+      }
+    })
+  }
+
+  const sameOrder = (a, b) => a.length === b.length && a.every((entry, index) => entry === b[index])
+
+  /**
+   * Splits sorted results into what is listed and what is hidden, and tallies what the debrid
+   * service said about each. Kept apart from the sorting above so an answer landing only redoes
+   * these passes, not the dedupe and sort. The previous split lives in the closure rather than a
+   * component variable to stay out of the reactive graph.
+   * @returns {(sorted: Result[], availability?: Map<string, string>, filters?: { cachedOnly?: boolean, only?: boolean }) => any}
+   */
+  function createListResults() {
+    let previous = null
+    return function listResults(sorted, availability, filters) {
+      const results = []
+      const hiddenResults = []
+      const counts = Object.fromEntries(AVAILABILITY_ORDER.map(state => [state, 0]))
+      for (const entry of sorted) {
+        const state = availability ? availabilityOf(availability, entry.hash) : Availability.UNKNOWN
+        counts[state]++
+        // narrows what the rest of the modal sees, so the best pick and autoplay follow it too
+        if (listResult(entry, state, filters)) results.push(entry)
+        else hiddenResults.push(entry)
+      }
+      // most answers only move the counts, since a seeded release was listed either way. Handing
+      // back the same arrays keeps the best-release pick from being redone, which reparses every
+      // result and is what made answers landing feel like a freeze
+      if (previous && sameOrder(previous.results, results) && sameOrder(previous.hiddenResults, hiddenResults)) {
+        return { ...previous, counts }
+      }
+      return (previous = { sorted, counts, results, hiddenResults })
     }
   }
 
@@ -164,6 +196,7 @@
   export let search
   export let close
 
+  const listResults = createListResults()
   let container
   let containerEl
   let countdown = 5
@@ -247,6 +280,7 @@
 
   async function queryExtensions(request, resolution) {
     scrollTop()
+    if ($debridEnabled) refreshDebridAvailability()
     $results = {}
     const cachedHashes = []
     for (const resolvedHash of getHash(search?.media?.id, { episode: search?.episode, client: true, batchGuess: true }, false, true, true) ?? []) {
@@ -329,7 +363,16 @@
   $: resolution = $settings.rssQuality
   $: queries = queryExtensions({...search}, resolution)
   $: errors = getErrors({...search}, queries)
-  $: queryResults = sortResults($results?.torrents, $settings.torrentSort, batch)
+  $: cachedOnly = $debridEnabled && $settings.debridCachedOnly
+  $: debridFilters = { cachedOnly, only: $debridEnabled && Boolean($debridTransport?.only) }
+  $: sortedResults = sortResults($results?.torrents, $settings.torrentSort, batch)
+  // ask about the results from the top of the list down, which is where the releases worth
+  // playing are. How far it reaches is the service's call: one request for a service with a
+  // cache endpoint, a handful of probes for one without.
+  $: if ($debridEnabled && $results?.resolved) checkDebridAvailability(sortedResults.map(result => result.hash))
+  $: queryResults = listResults(sortedResults, $debridEnabled ? $debridAvailability : undefined, debridFilters)
+  // every state and its count, for the tooltip on the cached filter
+  $: availabilitySummary = AVAILABILITY_ORDER.map(state => `${queryResults?.counts?.[state] ?? 0} ${describeAvailability(state, $debridTransport?.title).label}`).join(' · ')
   $: lookup = queryResults?.results
   $: (episodeSearch || resolution || $settings.torrentSort || $settings.audioLanguage) && scrollTop()
 
@@ -389,6 +432,7 @@
 
   onDestroy(() => {
     clearTimeout(timeoutHandle)
+    cancelDebridAvailability() // nobody is looking at these results any more
     viewHidden = false
     $results = {}
     search = null
@@ -476,6 +520,19 @@
           <Clapperboard size='2.75rem' class='position-absolute z-10 text-dark-light pl-10 pointer-events-none' />
           <input type='number' inputmode='numeric' pattern='[0-9]*' max={maxEpisode} class='form-control bg-dark-very-light pl-40 control' placeholder='5' step='1' value={episodeSearch} on:input={episodeInput} disabled={(!search.episode && search.episode !== 0) || movie} />
         </div>
+        {#if $debridTransport}
+          <div class='d-flex align-items-center px-10 py-5 rounded border text-nowrap font-weight-bold' style='background: hsla(var(--primary-color-dim-hsl), .15); border-color: var(--primary-color-light) !important; color: var(--primary-color-light)' title={$debridTransport.description}>
+            <Cloud size='1.8rem' class='mr-5' />
+            {$debridTransport.label}
+          </div>
+        {/if}
+        {#if $debridEnabled}
+          <button type='button' class='btn d-flex align-items-center px-10 py-5 ml-5 rounded text-nowrap font-weight-bold flex-shrink-0' class:bg-dark-very-light={!cachedOnly} class:bg-primary={cachedOnly} use:click={() => $settings.debridCachedOnly = !$settings.debridCachedOnly}
+               title={`Show only releases known to be cached on ${$debridTransport?.title ?? 'your debrid service'}, which play instantly.\n${availabilitySummary}`}>
+            <Cloud size='1.8rem' class='mr-5' />
+            Cached {queryResults?.counts?.cached ?? 0}{#if $debridChecking}<RefreshCw size='1.4rem' class='ml-5 spinning' />{/if}
+          </button>
+        {/if}
       </div>
       <div class='col-12 col-sm-6 d-flex align-items-center mt-5 justify-content-center mt-sm-0 justify-content-sm-end'>
         <div class='d-flex align-items-center mr-5' data-toggle='tooltip' data-placement='top' data-title='Scrape Peer Data'>
@@ -555,7 +612,7 @@
     {/if}
     {#if lookupHidden?.length && $results?.torrents?.length && filterResults(lookupHidden, searchText)?.length}
       <button type='button' class='long-button mb-10 control bd-highlight h-50 btn w-full p-5 rounded-3 d-flex align-items-center font-size-16 font-weight-semi-bold overflow-hidden' class:bg-dark={!viewHidden} class:bg-primary={viewHidden} use:click={()=> { viewHidden = !viewHidden }}>
-        <span class='ml-20'>{lookupHidden?.length} Unseeded Result{lookupHidden?.length > 1 ? 's' : ''} (Unavailable)</span>
+        <span class='ml-20'>{lookupHidden?.length} {cachedOnly ? `Result${lookupHidden?.length > 1 ? 's' : ''} Not Cached` : `Unseeded Result${lookupHidden?.length > 1 ? 's' : ''} (Unavailable)`}</span>
         <svelte:component this={ viewHidden ? ChevronUp : ChevronDown } class='ml-auto mr-10' size='2.2rem' />
       </button>
       {#if viewHidden}

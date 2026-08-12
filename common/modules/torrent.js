@@ -8,6 +8,7 @@ import { writable } from 'simple-store-svelte'
 import { toast } from 'svelte-sonner'
 import { capitalize } from '@/modules/util.js'
 import clipboard from '@/modules/lib/clipboard.js'
+import { streamDebrid, debridPlayback } from '@/modules/debrid/debrid.js'
 import { setHash } from '@/modules/anime/animehash.js'
 import { TORRENT, ELECTRON } from '@/modules/bridge.js'
 import { get } from 'svelte/store'
@@ -79,6 +80,10 @@ TORRENT.portRequest(_settings).then(() => {
 
   TORRENT.onFiles(_files => {
     debug(`Got files request:`, _files?.length)
+    // the client announces the files of every torrent it loads, including the one restored at
+    // startup, which would swap out what debrid is playing. Playing a torrent hands the player
+    // back first, so this never blocks a real request
+    if (debridPlayback.value) return debug('Ignoring torrent files, debrid owns playback')
     files.set(_files)
   })
 
@@ -138,6 +143,7 @@ export async function add(torrentID, search, hash, magnet, base64 = false) {
     media.value = search ? { media: (search.media || media.value?.media), episode: (search.episode || media.value?.episode), ...(media.value?.torrent ? { torrent: true } : { feed: true }) } : { torrent: true }
     if (hash && search) setHash(hash, { mediaId: search.media?.id, episode: search.episode, client: true })
     if (SUPPORTS.isAndroid && !settings.value.enableExternal) document.querySelector('.content-wrapper').requestFullscreen() // this WILL not work with auto-select torrents due to permissions check.
+    if (await streamDebrid(torrentID, hash, search)) return
     TORRENT.stream(torrentID, (hash === torrentID && torrentID) || false, magnet, base64)
   }
 }
