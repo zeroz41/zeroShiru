@@ -43,6 +43,8 @@ export default class Subtitles {
     this.handleFile = (detail) => {
       if (this.selected) {
         const uint8 = hex2arr(bin2hex(detail))
+        // an empty font throw away.
+        if (!uint8.length) return console.warn('Discarded an empty font, subtitles may render with a fallback typeface.')
         this.fonts.push(uint8)
         this.renderer?.addFont(uint8)
       }
