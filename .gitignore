@@ -16,6 +16,11 @@ node_modules
 
 package-lock.json
 
+# Local secrets: API keys for the live tests, never commit these
+.env
+.env.*
+!.env.example
+
 .gitignore
 
 .idea

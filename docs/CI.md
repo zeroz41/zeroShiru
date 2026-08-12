@@ -22,13 +22,16 @@ Dropped from upstream: deb, flatpak, x86_64/universal APKs. Re-enable in
 
 ## Tests in CI
 
-- **Unit**: `test/unit/*.test.js` via `node --test` (with `test/register.js`
-  if present). No `test/` dir yet → job passes with a notice.
-- **Live API**: manual only (Actions → CI → Run workflow → tick "live tests").
-  Keys come from secrets `REAL_DEBRID_API_KEY` / `TORBOX_API_KEY`; unset keys
-  make those tests skip, so the secrets are optional. Fixture vars (optional):
-  `RD_TEST_MAGNET`, `RD_TEST_PACK_MAGNET`, `RD_TEST_PACK_EPISODE`,
-  `TORBOX_TEST_HASH`. Prefer running live tests locally ([BUILDING.md](../BUILDING.md#test)).
+- **Unit**: `pnpm test` — everything under `test/unit/`, picked up by glob, so
+  new test files need no workflow change. Installed with `--ignore-scripts`
+  (no native builds), so tests must stay pure JS.
+- **Live API**: `pnpm test:live`, manual only (Actions → CI → Run workflow →
+  tick "live tests"). Keys come from secrets `REAL_DEBRID_API_KEY` /
+  `TORBOX_API_KEY`; **unset keys make those tests skip**, so the secrets are
+  optional and personal keys need never live in the repo. Optional fixture
+  vars: `RD_TEST_MAGNET`, `RD_TEST_PACK_MAGNET`, `RD_TEST_PACK_EPISODE`,
+  `TORBOX_TEST_HASH`. Prefer running these locally
+  ([BUILDING.md](../BUILDING.md#test)).
 
 ## Releasing
 

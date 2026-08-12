@@ -19,10 +19,8 @@ env:
   PNPM_VERSION: '10.34.1'
 
 jobs:
-  # Unit tests: plain node:test, no native builds needed. Tests live in
-  # test/unit/*.test.js (see docs/CI.md for the harness contract). Until a
-  # branch ships tests this job passes with a notice, so it is safe to gate
-  # merges and releases on it from day one.
+  # Unit tests: plain node:test, no native builds needed. Anything added under
+  # test/unit/ is picked up automatically - see BUILDING.md.
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -45,14 +43,7 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Run unit tests
-        run: |
-          if [ -d test/unit ]; then
-            IMPORT_ARGS=""
-            [ -f test/register.js ] && IMPORT_ARGS="--import ./test/register.js"
-            node $IMPORT_ARGS --test test/unit/*.test.js
-          else
-            echo "::notice::No test/unit/ directory on this branch yet - nothing to run. Tests added under test/unit/*.test.js run here automatically."
-          fi
+        run: pnpm test
 
   # Production webpack builds for both frontends. This is the real "does the
   # app still compile" check - it covers common/, client/ and each platform's
@@ -127,11 +118,4 @@ jobs:
           RD_TEST_PACK_MAGNET: ${{ vars.RD_TEST_PACK_MAGNET }}
           RD_TEST_PACK_EPISODE: ${{ vars.RD_TEST_PACK_EPISODE }}
           TORBOX_TEST_HASH: ${{ vars.TORBOX_TEST_HASH }}
-        run: |
-          if [ -d test/live ]; then
-            IMPORT_ARGS=""
-            [ -f test/register.js ] && IMPORT_ARGS="--import ./test/register.js"
-            node $IMPORT_ARGS --test --test-concurrency=1 test/live/*.test.js
-          else
-            echo "::notice::No test/live/ directory on this branch."
-          fi
+        run: pnpm test:live
