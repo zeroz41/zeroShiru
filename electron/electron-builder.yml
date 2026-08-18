@@ -1,12 +1,12 @@
-appId: com.github.rockinchaos.shiru
+appId: com.github.zeroz41.zeroshiru
 productName: Shiru
 extraMetadata:
   _synopsis: &synopsis "A personal anime library manager."
   _description: &description "A personal anime library manager for watching and tracking your collection in real time. Lightweight, powerful, and paws-itively fast. No waiting required!"
 publish:
   - provider: github
-    owner: RockinChaos
-    repo: shiru
+    owner: zeroz41
+    repo: zeroShiru
 electronDownload:
   mirror: https://craftationgaming.com/api/packages/electron/
   customDir: "42.3.0"
@@ -47,7 +47,7 @@ linux:
   category: AudioVideo;Video
   synopsis: *synopsis
   description: *description
-  maintainer: RockinChaos <RockinChaos@users.noreply.github.com>
+  maintainer: zeroz <zeroz@none.cx>
   desktop:
     entry:
       Comment: *description
@@ -56,23 +56,6 @@ linux:
   target:
     - arch: x64
       target: AppImage
-    - arch: x64
-      target: deb
-    - arch: x64
-      target: flatpak
-flatpak:
-  runtime: org.freedesktop.Platform
-  sdk: org.freedesktop.Sdk
-  runtimeVersion: "25.08"
-  baseVersion: "25.08"
-  branch: stable
-  useWaylandFlags: true
-  synopsis: *synopsis
-  description: *description
-  desktop:
-    entry:
-      Keywords: anime
-      MimeType: x-scheme-handler/shiru;
 mac:
   artifactName: ${os}-${productName}-v${version}.${ext}
   singleArchFiles: node_modules/+(register-scheme|utp-native|fs-native-extensions)/**

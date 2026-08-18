@@ -159,7 +159,7 @@ export default class App {
     })
 
     if (process.platform === 'win32') {
-      app.setAppUserModelId('com.github.rockinchaos.shiru')
+      app.setAppUserModelId('com.github.zeroz41.zeroshiru')
       // this message usually fires in dev-mode from the parent process
       process.on('message', data => {
         if (data === 'graceful-exit') this.destroy()

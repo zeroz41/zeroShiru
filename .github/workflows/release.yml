@@ -1,6 +1,17 @@
-name: Build and Release
+name: Release
+
+# Releases run two ways:
+#   1. Push a tag like v6.8.1 (must match electron/package.json version).
+#   2. Manual dispatch with the confirmation box ticked.
+# Either way it runs full CI first, then drafts a GitHub Release and uploads
+# one artifact set per platform: Windows (installer + portable), macOS
+# (universal), Linux (AppImage) and Android (arm64 + armv7 APKs). Publishing
+# the draft is a manual step on the Releases page - that is the moment users
+# (and the in-app updater) can see it.
 
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       version_confirmed:
@@ -14,9 +25,14 @@ env:
   PNPM_VERSION: '10.34.1'
 
 jobs:
+  # Releases are gated on the same CI that runs on every push.
+  ci:
+    if: ${{ github.event_name == 'push' || inputs.version_confirmed == true }}
+    uses: ./.github/workflows/ci.yml
+
   prepare-release:
+    needs: ci
     runs-on: ubuntu-latest
-    if: ${{ inputs.version_confirmed == true }}
     outputs:
       app_version: ${{ steps.read_version.outputs.app_version }}
 
@@ -31,6 +47,15 @@ jobs:
           APP_VERSION="v$VERSION"
           echo "app_version=$APP_VERSION" >> $GITHUB_OUTPUT
           echo "App Version: $APP_VERSION"
+
+      - name: Verify tag matches package version
+        if: github.event_name == 'push'
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ "$TAG" != "${{ steps.read_version.outputs.app_version }}" ]; then
+            echo "::error::Tag $TAG does not match electron/package.json version ${{ steps.read_version.outputs.app_version }} - bump the version and re-tag."
+            exit 1
+          fi
 
       - name: Prepare GitHub Release
         env:
@@ -48,78 +73,20 @@ jobs:
             echo "Release $APP_VERSION already exists, skipping creation."
           fi
 
-  release-windows:
+  release-desktop:
+    name: Desktop (${{ matrix.name }})
     needs: prepare-release
-    runs-on: windows-2022
-
-    steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v6
-
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: |
-          cd electron
-          pnpm install --frozen-lockfile
-
-      - name: Build and Publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cd electron
-          npm run publish
-
-  release-linux:
-    needs: prepare-release
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v6
-
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v6
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-
-      - name: Install Flatpak dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder
-          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
-
-      - name: Install dependencies
-        run: |
-          cd electron
-          pnpm install --frozen-lockfile
-
-      - name: Build and Publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cd electron
-          npm run publish
-
-  release-macos:
-    needs: prepare-release
-    runs-on: macos-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-2022
+          - name: macOS
+            os: macos-latest
+          - name: Linux
+            os: ubuntu-latest
 
     steps:
       - name: Check out Git repository
@@ -137,21 +104,21 @@ jobs:
           cache: 'pnpm'
 
       - name: Install Setuptools for Python (macOS only)
+        if: runner.os == 'macOS'
         run: pip3 install setuptools --break-system-packages
 
       - name: Install dependencies
-        run: |
-          cd electron
-          pnpm install --frozen-lockfile
+        working-directory: electron
+        run: pnpm install --frozen-lockfile
 
       - name: Build and Publish
+        working-directory: electron
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          cd electron
-          npm run publish
+        run: npm run publish
 
   release-android:
+    name: Android
     needs: prepare-release
     runs-on: ubuntu-latest
     env:
@@ -229,13 +196,6 @@ jobs:
           appVersion: ${{ env.APP_VERSION }}
           appPrefix: android
 
-      - name: Split Signed Files
-        uses: jungwinter/split@v2
-        id: signed_files
-        with:
-          msg: ${{ steps.sign_app.outputs.signedFiles }}
-          separator: ':'
-
       - name: Generate latest-android.yml
         run: |
           echo "version: ${{ env.APP_VERSION }}" | sed 's/^version: v/version: /' > latest-android.yml
@@ -244,7 +204,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for f in "${{ steps.signed_files.outputs._0 }}" "${{ steps.signed_files.outputs._1 }}" "${{ steps.signed_files.outputs._2 }}" "${{ steps.signed_files.outputs._3 }}"; do
+          # signedFiles is a ':'-separated list - one path per built ABI.
+          IFS=':' read -ra FILES <<< "${{ steps.sign_app.outputs.signedFiles }}"
+          for f in "${FILES[@]}"; do
             if [ -n "$f" ]; then
               echo "uploading $(basename $f)"
               gh release upload --clobber "$APP_VERSION" "../$f"

@@ -17,7 +17,7 @@ export default class Protocol {
     schedule: () => ipcWire.send('common:onRequestPage', 'schedule'),
     donate: () => Browser.open({ url: 'https://github.com/sponsors/RockinChaos/' }),
     update: () => ipcWire.emit('common:quitAndInstall'),
-    changelog: () => Browser.open({ url: 'https://github.com/RockinChaos/Shiru/releases/latest' })
+    changelog: () => Browser.open({ url: 'https://github.com/zeroz41/zeroShiru/releases/latest' })
   }
 
   protocolRx = /shiru:\/\/([a-z0-9]+)\/(.*)/i

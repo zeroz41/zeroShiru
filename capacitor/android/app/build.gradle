@@ -16,7 +16,7 @@ android {
     namespace = "watch.shiru"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId = "watch.shiru"
+        applicationId = "watch.zeroshiru"
         minSdk = rootProject.ext.minSdkVersion
         targetSdk = rootProject.ext.targetSdkVersion
         versionCode = verCode
@@ -42,8 +42,11 @@ android {
         abi {
             enable gradle.startParameter.taskNames.any { it.contains("Release") } // https://stackoverflow.com/a/39950584
             reset()
-            include "arm64-v8a", "armeabi-v7a", "x86_64"
-            universalApk true
+            // Fork ships two APKs: arm64 for phones/tablets/modern TVs, armv7
+            // for 32-bit Android TV hardware (Chromecast w/ Google TV, Fire TV,
+            // older boxes). Re-add "x86_64"/universalApk if ever needed.
+            include "arm64-v8a", "armeabi-v7a"
+            universalApk false
         }
     }
 

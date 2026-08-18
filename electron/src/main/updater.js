@@ -12,10 +12,10 @@ import semver from 'semver'
  */
 
 /** @type {UpdateFeedSource} */
-const PRIMARY_SOURCE = { provider: atob('Z2l0aHVi'), owner: atob('Um9ja2luQ2hhb3M='), repo: atob('U2hpcnU=') }
+const PRIMARY_SOURCE = { provider: 'github', owner: 'zeroz41', repo: 'zeroShiru' }
 
 /** @type {UpdateFeedSource[]} */
-const FALLBACK_SOURCES = [{ provider: atob('Z2VuZXJpYw=='), url: atob('bGFyMi5jcmFmdGF0aW9uZ2FtaW5nLmNvbQ==') }]
+const FALLBACK_SOURCES = []
 
 /**
  * Manages application updates for Electron using electron-updater.
