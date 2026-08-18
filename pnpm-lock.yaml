@@ -8,24 +8,12 @@ overrides:
   '@electron/universal': 3.0.4
 
 patchedDependencies:
-  '@capacitor/android':
-    hash: c94a4679400f9edbaab7f82e73b25787c1dd44e9f170b0f61f4166cff5699d22
-    path: patches/@capacitor__android.patch
-  '@capacitor/local-notifications':
-    hash: 92e9cb4b54ea8684b0027c29ec61d24c886b142730b548ae3199be718f58a638
-    path: patches/@capacitor__local-notifications.patch
-  cordova-plugin-apkupdater:
-    hash: 6efbafdbdca79d50b2e3016fca9da323ba046d9a6d8834571050e1827f587c37
-    path: patches/cordova-plugin-apkupdater.patch
-  lucide-svelte@0.455.0:
-    hash: 0609c957d625c84712d92a612c0fe92d6b06ae161e98c32f1b6b5694e5ff66ed
-    path: patches/lucide-svelte@0.455.0.patch
-  rfdc:
-    hash: c9f93965feee0cc9f6da8f3451b078a567c0bb98da4f0c2f8b552e51a055789b
-    path: patches/rfdc.patch
-  svelte-keybinds:
-    hash: f0c94591da45fd53ec510b56276e74597f95557fc91757f7ddc0f4a516ef90b9
-    path: patches/svelte-keybinds.patch
+  '@capacitor/android': c94a4679400f9edbaab7f82e73b25787c1dd44e9f170b0f61f4166cff5699d22
+  '@capacitor/local-notifications': 92e9cb4b54ea8684b0027c29ec61d24c886b142730b548ae3199be718f58a638
+  cordova-plugin-apkupdater: 6efbafdbdca79d50b2e3016fca9da323ba046d9a6d8834571050e1827f587c37
+  lucide-svelte@0.455.0: 0609c957d625c84712d92a612c0fe92d6b06ae161e98c32f1b6b5694e5ff66ed
+  rfdc: c9f93965feee0cc9f6da8f3451b078a567c0bb98da4f0c2f8b552e51a055789b
+  svelte-keybinds: f0c94591da45fd53ec510b56276e74597f95557fc91757f7ddc0f4a516ef90b9
 
 importers:
 
@@ -71,9 +59,15 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^5.20260804.1
         version: 5.20260804.1
+      matroska-metadata:
+        specifier: github:cedarpolar/matroska-metadata#b36dd003c41da5acd11c70144c13aef16a5603ee
+        version: https://codeload.github.com/cedarpolar/matroska-metadata/tar.gz/b36dd003c41da5acd11c70144c13aef16a5603ee
       npm-run-all:
         specifier: ^4.1.5
         version: 4.1.5
+      uint8-util:
+        specifier: ^2.3.2
+        version: 2.3.2
 
   capacitor:
     dependencies:
@@ -1280,10 +1274,12 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@xtuc/ieee754@1.2.0':
     resolution: {integrity: sha512-DX8nKgqcGwsc0eJSqYt5lwP4DH5FlHnmuWWBRy7X0NcaGR0ZtuyeESgMwTYVEtxmsNGY+qit4QYT/MIYTOTPeA==}
@@ -1770,7 +1766,7 @@ packages:
       '@capacitor/core': ^6.0.0
 
   capacitor-nodejs@https://github.com/RockinChaos/capacitor-nodejs/releases/download/v1.0.0-beta.13/capacitor-nodejs-1.0.0-beta.13.tgz:
-    resolution: {integrity: sha512-Ke5oWd1pub54OrqpCLqjZb7lLh7GN4Xl53vf6vNYy2LhQYT/LjmAgD+nXeoqUV50uWZCt5gzChbWlrJ+/aolrw==, tarball: https://github.com/RockinChaos/capacitor-nodejs/releases/download/v1.0.0-beta.13/capacitor-nodejs-1.0.0-beta.13.tgz}
+    resolution: {tarball: https://github.com/RockinChaos/capacitor-nodejs/releases/download/v1.0.0-beta.13/capacitor-nodejs-1.0.0-beta.13.tgz}
     version: 1.0.0-beta.13
     peerDependencies:
       '@capacitor/core': '>=8.0.0'
@@ -1974,10 +1970,12 @@ packages:
   conventional-changelog-atom@2.0.8:
     resolution: {integrity: sha512-xo6v46icsFTK3bb7dY/8m2qvc8sZemRgdqLb/bjpBsH2UyOS8rKNTgcb5025Hri6IpANPApbXMg15QLb1LJpBw==}
     engines: {node: '>=10'}
+    deprecated: This preset is deprecated. Please use conventional-changelog-conventionalcommits or conventional-changelog-angular instead.
 
   conventional-changelog-codemirror@2.0.8:
     resolution: {integrity: sha512-z5DAsn3uj1Vfp7po3gpt2Boc+Bdwmw2++ZHa5Ak9k0UKsYAO5mH1UBTN0qSCuJZREIhX6WU4E1p3IW2oRCNzQw==}
     engines: {node: '>=10'}
+    deprecated: This preset is deprecated. Please use conventional-changelog-conventionalcommits or conventional-changelog-angular instead.
 
   conventional-changelog-conventionalcommits@4.6.3:
     resolution: {integrity: sha512-LTTQV4fwOM4oLPad317V/QNQ1FY4Hju5qeBIM1uTHbrnCE+Eg4CdRZ3gO2pUeR+tzWdp80M2j3qFFEDWVqOV4g==}
@@ -1986,26 +1984,32 @@ packages:
   conventional-changelog-core@4.2.4:
     resolution: {integrity: sha512-gDVS+zVJHE2v4SLc6B0sLsPiloR0ygU7HaDW14aNJE1v4SlqJPILPl/aJC7YdtRE4CybBf8gDwObBvKha8Xlyg==}
     engines: {node: '>=10'}
+    deprecated: Deprecated and no longer maintained. Please use conventional-changelog instead.
 
   conventional-changelog-ember@2.0.9:
     resolution: {integrity: sha512-ulzIReoZEvZCBDhcNYfDIsLTHzYHc7awh+eI44ZtV5cx6LVxLlVtEmcO+2/kGIHGtw+qVabJYjdI5cJOQgXh1A==}
     engines: {node: '>=10'}
+    deprecated: This preset is deprecated. Please use conventional-changelog-conventionalcommits or conventional-changelog-angular instead.
 
   conventional-changelog-eslint@3.0.9:
     resolution: {integrity: sha512-6NpUCMgU8qmWmyAMSZO5NrRd7rTgErjrm4VASam2u5jrZS0n38V7Y9CzTtLT2qwz5xEChDR4BduoWIr8TfwvXA==}
     engines: {node: '>=10'}
+    deprecated: This preset is deprecated. Please use conventional-changelog-conventionalcommits or conventional-changelog-angular instead.
 
   conventional-changelog-express@2.0.6:
     resolution: {integrity: sha512-SDez2f3iVJw6V563O3pRtNwXtQaSmEfTCaTBPCqn0oG0mfkq0rX4hHBq5P7De2MncoRixrALj3u3oQsNK+Q0pQ==}
     engines: {node: '>=10'}
+    deprecated: This preset is deprecated. Please use conventional-changelog-conventionalcommits or conventional-changelog-angular instead.
 
   conventional-changelog-jquery@3.0.11:
     resolution: {integrity: sha512-x8AWz5/Td55F7+o/9LQ6cQIPwrCjfJQ5Zmfqi8thwUEKHstEn4kTIofXub7plf1xvFA2TqhZlq7fy5OmV6BOMw==}
     engines: {node: '>=10'}
+    deprecated: This preset is deprecated. Please use conventional-changelog-conventionalcommits or conventional-changelog-angular instead.
 
   conventional-changelog-jshint@2.0.9:
     resolution: {integrity: sha512-wMLdaIzq6TNnMHMy31hql02OEQ8nCQfExw1SE0hYL5KvU+JCTuPaDO+7JiogGT2gJAxiUGATdtYYfh+nT+6riA==}
     engines: {node: '>=10'}
+    deprecated: This preset is deprecated. Please use conventional-changelog-conventionalcommits or conventional-changelog-angular instead.
 
   conventional-changelog-preset-loader@2.3.4:
     resolution: {integrity: sha512-GEKRWkrSAZeTq5+YjUZOYxdHq+ci4dNwHvpaBC3+ENalzFWuCWa9EZXSuZBpkr72sMdKB+1fyDV4takK1Lf58g==}
@@ -2905,7 +2909,7 @@ packages:
   git-raw-commits@2.0.11:
     resolution: {integrity: sha512-VnctFhw+xfj8Va1xtfEqCUD2XDrbAPSJx+hSrE5K7fGdjZruW7XV+QOrN7LF/RJyvspRiD2I0asWsxFp0ya26A==}
     engines: {node: '>=10'}
-    deprecated: This package is no longer maintained. For the JavaScript API, please use @conventional-changelog/git-client instead.
+    deprecated: Deprecated and no longer maintained. Use @conventional-changelog/git-client instead.
     hasBin: true
 
   git-remote-origin-url@2.0.0:
@@ -2915,7 +2919,7 @@ packages:
   git-semver-tags@4.1.1:
     resolution: {integrity: sha512-OWyMt5zBe7xFs8vglMmhM9lRQzCWL3WjHtxNNfJTMngGym7pC1kh8sP6jevfydJ6LP3ZvGxfb6ABYgPUM0mtsA==}
     engines: {node: '>=10'}
-    deprecated: This package is no longer maintained. For the JavaScript API, please use @conventional-changelog/git-client instead.
+    deprecated: Deprecated and no longer maintained. Use @conventional-changelog/git-client instead.
     hasBin: true
 
   gitconfiglocal@1.0.0:
@@ -10138,7 +10142,7 @@ snapshots:
 
   minimist@1.2.8: {}
 
-  minimizer-webpack-plugin@5.6.1(postcss@8.5.15)(webpack@5.109.2(postcss@8.5.15)(webpack-cli@7.2.2)):
+  minimizer-webpack-plugin@5.6.1(postcss@8.5.15)(webpack@5.109.2):
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       jest-worker: 27.5.1
@@ -12088,7 +12092,7 @@ snapshots:
       events: 3.3.0
       graceful-fs: 4.2.11
       mime-db: 1.54.0
-      minimizer-webpack-plugin: 5.6.1(postcss@8.5.15)(webpack@5.109.2(postcss@8.5.15)(webpack-cli@7.2.2))
+      minimizer-webpack-plugin: 5.6.1(postcss@8.5.15)(webpack@5.109.2)
       neo-async: 2.6.2
       schema-utils: 4.3.3
       tapable: 2.3.3
