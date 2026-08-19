@@ -54,6 +54,8 @@
   onDestroy(() => clearTimeout(timeout))
 </script>
 
+<!-- every field below is read unguarded; a list that empties out must not take the app down -->
+{#if currentStatic}
 {#key currentStatic}
   <div class='position-absolute h-full w-full overflow-hidden z--1'>
     <SmartImage class={`img-cover position-absolute h-full w-full ${(!(currentStatic.bannerImage || currentStatic.trailer?.id) && settings.value.adult === 'hentai' && settings.value.hentaiBanner) ? 'banner-rotated' : ''}`} images={[currentStatic.bannerImage, ...(currentStatic.trailer?.id ? [`https://i.ytimg.com/vi/${currentStatic.trailer.id}/maxresdefault.jpg`, `https://i.ytimg.com/vi/${currentStatic.trailer.id}/hqdefault.jpg`] : []), currentStatic.coverImage?.extraLarge, './no_image_banner.jpg']}/>
@@ -144,6 +146,8 @@
     {/each}
   </div>
 </div>
+
+{/if}
 
 <style>
   .gradient-bottom {

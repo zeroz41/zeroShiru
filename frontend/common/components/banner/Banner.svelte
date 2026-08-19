@@ -2,33 +2,27 @@
   import FullBanner from '@/components/banner/FullBanner.svelte'
   import BannerSk from '@/components/skeletons/BannerSk.svelte'
   import ErrorCard from '@/components/cards/ErrorCard.svelte'
+  import { bannerList } from '@/modules/banner.js'
   import { settings } from '@/modules/settings.js'
   export let data
 
-  function shuffle (media) {
-    const array = media.filter(media => media.bannerImage || media.trailer?.id || (settings.value.adult === 'hentai' && settings.value.hentaiBanner && media.coverImage?.extraLarge)) // filter entries that shouldn't be considered first.
-    let currentIndex = (array.length >= 10 ? 10 : array.length) // We only need the first 10 entries, anything else wouldn't really be high in popularity.
-    let randomIndex
-    while (currentIndex > 0) {
-      randomIndex = Math.floor(Math.random() * currentIndex--);
-      [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]]
-    }
-    return array
-  }
-
-  function shuffleAndFilter (media) {
-    return shuffle(media).slice(0, 5)
-  }
+  const coverFallback = () => settings.value.adult === 'hentai' && settings.value.hentaiBanner
 </script>
 
 <div class='w-full h-400 position-relative'>
   {#await data}
     <BannerSk />
   {:then res}
-    {#if !res.errors}
-      <FullBanner mediaList={shuffleAndFilter(res?.data?.Page?.media?.filter(media => media))} />
-    {:else}
+    {#if res?.errors}
       <ErrorCard promise={res} />
+    {:else}
+      {@const mediaList = bannerList(res?.data?.Page?.media, { coverFallback: coverFallback() })}
+      <!-- an offline start resolves to no media at all; the banner has nothing to rotate through -->
+      {#if mediaList.length}
+        <FullBanner {mediaList} />
+      {:else}
+        <BannerSk />
+      {/if}
     {/if}
   {/await}
 </div>
