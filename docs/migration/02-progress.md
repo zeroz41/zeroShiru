@@ -45,13 +45,36 @@ below that needs a person at a desktop.
 
 ## What's left to finish
 
-1. **Live-run the desktop app** — the window now boots, renders the full UI and
-   assembles every bridge surface (verified 2026-08-19 on a headless
-   kwin_wayland, screenshots and an in-page beacon; three boot-blocking bugs
-   fixed: the missing `events` shim, the bridge injecting before Tauri's own
-   scripts, and plain cargo builds being dev binaries). Still needs a person at
-   a desktop with network: load a magnet, check files/stats/subtitles/seek,
-   then the same over debrid.
+1. **Live-run the desktop app** — the window boots, renders the full UI, comes up
+   online with real AniList data, and assembles every bridge surface (verified
+   2026-08-19 headlessly; see the fixes below). Still needs a person at a desktop:
+   load a magnet, check files/stats/subtitles/seek, then the same over debrid.
+
+   Fixed on the way there, each with tests where the logic is testable:
+   - `events` was externalized to an empty stub by Vite, so matroska-metadata's
+     `class ... extends EventEmitter` threw at module scope and killed the bundle
+     before Svelte mounted (`common/vite-shims/events.js`).
+   - the injected host bridge ran *before* Tauri's own scripts, so `window.__TAURI__`
+     was undefined and every surface stayed at its noop default. The main window is
+     now built in code with the bridge as a webview initialization script.
+   - a plain `cargo build` produces a **dev** binary that renders the Vite dev server;
+     bundles worked, hand-built binaries showed "Could not connect to localhost".
+     The host crate now has a `custom-protocol` feature and BUILDING.md says so.
+   - the connectivity ping went out `no-cors` and required `res.ok`, but an opaque
+     response is always `status 0, ok false` — so a working connection always read as
+     an outage and the app opened offline with nothing loaded. Probing moved into the
+     core (`crates/networking/src/reachability.rs`) where there is no CORS to fight,
+     behind `COMMON.probeNetwork`; the webview fallback now reads opaque as reachable
+     and treats a timeout as no answer rather than an outage.
+   - an offline start rendered the home banner with no media at all, throwing on every
+     field it read. The list preparation moved to `common/modules/banner.js`.
+   - nothing below the fold started loading until it was reached: the observers watched
+     the viewport while the pages scroll inside a div, so everything past that div's edge
+     was clipped before `rootMargin` applied. `common/modules/preload.js` roots them at
+     the scroller and leads by screens — rows query 3 ahead, art loads 2 ahead, grids
+     page 1.5 ahead. Measured on the home page: rows below the fold went from having no
+     media at all to their visible art already decoded, with 25 of 113 images fetched
+     rather than all of them.
 2. **Updater** — built and wired end to end (check on a timer → download with
    progress → restart into it), and the release workflow publishes signed
    artifacts plus the `latest.json` the app reads. It stays inert until a signing
