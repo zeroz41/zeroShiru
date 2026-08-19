@@ -1,0 +1,37 @@
+[package]
+name = "shiru-tauri"
+version = "6.8.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Shiru desktop host (Tauri)"
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync"] }
+shiru-domain = { path = "../../crates/domain" }
+shiru-core = { path = "../../crates/core" }
+shiru-debrid = { path = "../../crates/debrid", features = ["native"] }
+shiru-networking = { path = "../../crates/networking", features = ["native"] }
+shiru-media = { path = "../../crates/media" }
+shiru-torrent = { path = "../../crates/torrent", features = ["native"] }
+shiru-platform-contracts = { path = "../../crates/platform-contracts" }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-deep-link = "2"
+url = "2"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+open = "5"
+discord-rich-presence = "1"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+[features]
+default = []

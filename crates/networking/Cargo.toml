@@ -1,0 +1,17 @@
+[package]
+name = "shiru-networking"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Native HTTP transport backed by reqwest. TV builds use a web transport supplied
+# by the host instead, so the trait stays wasm-clean.
+native = ["dep:reqwest"]
+
+[dependencies]
+serde = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { workspace = true, optional = true }

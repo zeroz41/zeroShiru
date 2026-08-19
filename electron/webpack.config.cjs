@@ -3,7 +3,9 @@ const HtmlWebpackPlugin = require('html-webpack-plugin')
 
 const mode = process.env.NODE_ENV?.trim() || 'development'
 
-const commonConfig = require('common/webpack.config.cjs')
+// NOTE: the renderer bundle (formerly common/webpack.config.cjs) is built by Vite
+// (common/vite.config.mjs). Webpack only builds the node/electron-target bundles
+// until they move to Rust (migration phases 8-9).
 
 /** @type {import('webpack').WebpackOptionsNormalized[]} */
 module.exports = [
@@ -32,8 +34,9 @@ module.exports = [
         ws: false,
         wrtc: false,
         debug: resolve(__dirname, '../common/modules/lib/debug.js'),
-        'webrtc-polyfill': resolve('../node_modules/webrtc-polyfill/browser.js'),
-        'http-tracker': resolve('../node_modules/bittorrent-tracker/lib/client/http-tracker.js')
+        'webrtc-polyfill': resolve(__dirname, '../node_modules/webrtc-polyfill/browser.js'),
+        'http-tracker': resolve(__dirname, '../node_modules/bittorrent-tracker/lib/client/http-tracker.js'),
+        'bittorrent-tracker/lib/client/websocket-tracker.js': resolve(__dirname, '../node_modules/bittorrent-tracker/lib/client/websocket-tracker.js')
       }
     },
     plugins: [new HtmlWebpackPlugin({ filename: 'background.html' })],
@@ -56,7 +59,6 @@ module.exports = [
       port: 5000
     }
   },
-  commonConfig(__dirname),
   {
     devtool: 'source-map',
     stats: { warnings: false },

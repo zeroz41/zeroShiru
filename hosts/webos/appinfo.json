@@ -1,0 +1,13 @@
+{
+  "id": "watch.shiru.tv",
+  "version": "6.8.0",
+  "vendor": "zeroz",
+  "type": "web",
+  "main": "index.html",
+  "title": "Shiru",
+  "icon": "icon.png",
+  "largeIcon": "icon-large.png",
+  "bgColor": "#17191c",
+  "resolution": "1920x1080",
+  "disableBackHistoryAPI": true
+}

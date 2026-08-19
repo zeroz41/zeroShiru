@@ -1,3 +1,4 @@
+import '@/polyfills.js'
 import 'quartermoon/css/quartermoon-variables.css'
 import '@fontsource-variable/nunito'
 import { cacheReady, migrationStatus } from '@/modules/cache.js'

@@ -5,7 +5,9 @@
     import { getMediaMaxEp } from '@/modules/anime/anime.js'
     import { matchPhrase, resizeObserver } from '@/modules/util.js'
     import { writable } from 'simple-store-svelte'
-    import { Mic, MicOff, Captions, Adult, ClockFading } from 'lucide-svelte'
+    import { Mic, MicOff, Captions } from 'lucide-svelte'
+  import Adult from '@/components/icons/Adult.svelte'
+  import ClockFading from '@/components/icons/ClockFading.svelte'
 
     /** @type {import('@/modules/providers/anilist/al.d.ts').Media} */
     export let media = null

@@ -2,20 +2,20 @@
   "name": "shiru",
   "version": "6.8.0",
   "license": "GPL-3.0-or-later",
-  "packageManager": "pnpm@10.34.1",
   "private": true,
   "author": "zeroz <zeroz@none.cx>",
   "description": "A personal anime library manager for watching and tracking your collection in real time. Lightweight, powerful, and paws-itively fast. No waiting required!",
   "main": "build/main.js",
   "homepage": "https://github.com/zeroz41/zeroShiru#readme",
   "scripts": {
-    "start": "cross-env NODE_ENV=development webpack build && concurrently --kill-others \"npm run web:watch\" \"npm run electron:start\"",
+    "start": "cross-env NODE_ENV=development webpack build && concurrently --kill-others \"npm run web:watch\" \"npm run vite:watch\" \"npm run electron:start\"",
     "web:watch": "webpack serve",
-    "web:build": "cross-env NODE_ENV=production webpack build",
+    "web:build": "node -e \"fs.rmSync('build',{recursive:true,force:true})\" && cross-env NODE_ENV=production webpack build && cross-env NODE_ENV=production vite build ../common",
     "electron:start": "electron ./build/main.js",
     "build": "npm run web:build && electron-builder",
     "electron:build": "electron-builder",
-    "publish": "npm run web:build && electron-builder -p always"
+    "publish": "npm run web:build && electron-builder -p always",
+    "vite:watch": "vite ../common"
   },
   "devDependencies": {
     "@electron/notarize": "^3.1.1",

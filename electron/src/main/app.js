@@ -174,7 +174,7 @@ export default class App {
       process.on('SIGTERM', () => this.destroy())
     }
 
-    this.mainWindow.loadURL(development ? 'http://localhost:5000/app.html' : `file://${join(__dirname, '/app.html')}`)
+    this.mainWindow.loadURL(development ? 'http://localhost:5173/app.html' : `file://${join(__dirname, '/app.html')}`)
 
     if (development) this.mainWindow.webContents.openDevTools({ mode: 'detach' })
 

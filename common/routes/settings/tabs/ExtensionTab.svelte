@@ -9,7 +9,8 @@
   import { slide } from 'svelte/transition'
   import { marked } from 'marked'
   import DOMPurify from 'dompurify'
-  import { TriangleAlert, CircleAlert, Github, Folder, FileQuestion, Trash2, CircleX, ChevronDown, ChevronUp, SquarePlus, Adult, Settings, RefreshCw } from 'lucide-svelte'
+  import { TriangleAlert, CircleAlert, Github, Folder, FileQuestion, Trash2, CircleX, ChevronDown, ChevronUp, SquarePlus, Settings, RefreshCw } from 'lucide-svelte'
+  import Adult from '@/components/icons/Adult.svelte'
   export let settings
 
   const activeWorkers = extensionManager.activeWorkers

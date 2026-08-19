@@ -1,5 +1,6 @@
 <script>
-  import { Earth, WifiOff, CloudAlert } from 'lucide-svelte'
+  import { Earth, WifiOff } from 'lucide-svelte'
+  import CloudAlert from '@/components/icons/CloudAlert.svelte'
   import { status } from '@/modules/networking.js'
   import { SUPPORTS } from '@/modules/support.js'
   import { onDestroy } from 'svelte'

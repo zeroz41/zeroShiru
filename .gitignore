@@ -25,3 +25,6 @@ package-lock.json
 
 .idea
 Shiru.iml
+# Rust
+/target
+/dist

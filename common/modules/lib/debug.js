@@ -1,16 +1,20 @@
 /* eslint-env browser */
 // patched version of debug because there's actually not a way to disable colors globally!
+// ESM module (not CJS) so it bundles identically under webpack, Vite/Rollup, and Node.
 
 /**
  * This is the web browser implementation of `debug()`.
  */
 
-exports.formatArgs = formatArgs
-exports.save = save
-exports.load = load
-exports.useColors = useColors
-exports.storage = localstorage()
-exports.destroy = (() => {
+import ms from 'ms'
+
+const env = {}
+env.formatArgs = formatArgs
+env.save = save
+env.load = load
+env.useColors = useColors
+env.storage = localstorage()
+env.destroy = (() => {
   let warned = false
 
   return () => {
@@ -33,9 +37,9 @@ console.error = function(...args) {
  * Colors.
  */
 
-exports.colors = [196, 208, 220, 46, 51, 27, 201, 93, 214, 231, 129, 160, 118, 39, 207, 45, 227, 171, 81, 229]
+env.colors = [196, 208, 220, 46, 51, 27, 201, 93, 214, 231, 129, 160, 118, 39, 207, 45, 227, 171, 81, 229]
 
-const { formatters = {} } = module.exports
+const formatters = {}
 
 /**
  * Currently only WebKit-based Web Inspectors, Firefox >= v31,
@@ -63,7 +67,7 @@ function formatArgs (args) {
     const colorCode = '\u001B[3' + (c < 8 ? c : '8;5;' + c)
     const prefix = `  ${colorCode};1m${name} \u001B[0m`
 
-    args[0] = prefix + args[0].split('\n').join('\n' + prefix) + ' ' + colorCode + ';1m+' + module.exports.humanize(this.diff) + ' \u001B[0m'
+    args[0] = prefix + args[0].split('\n').join('\n' + prefix) + ' ' + colorCode + ';1m+' + ms(this.diff) + ' \u001B[0m'
   } else {
     args[0] = new Date().toISOString() + ' ' + name + ' ' + args[0]
   }
@@ -77,7 +81,7 @@ function formatArgs (args) {
  *
  * @api public
  */
-exports.log = console.debug || console.log || (() => {})
+env.log = console.debug || console.log || (() => {})
 
 /**
  * Save `namespaces`.
@@ -88,9 +92,9 @@ exports.log = console.debug || console.log || (() => {})
 function save (namespaces) {
   try {
     if (namespaces) {
-      exports.storage.setItem('debug', namespaces)
+      env.storage.setItem('debug', namespaces)
     } else {
-      exports.storage.removeItem('debug')
+      env.storage.removeItem('debug')
     }
   } catch (error) {
     // Swallow
@@ -107,7 +111,7 @@ function save (namespaces) {
 function load () {
   let r
   try {
-    r = exports.storage.getItem('debug')
+    r = env.storage.getItem('debug')
   } catch (error) {
     // Swallow
     // XXX (@Qix-) should we be logging these?
@@ -167,7 +171,7 @@ function setup (env) {
   createDebug.disable = disable
   createDebug.enable = enable
   createDebug.enabled = enabled
-  createDebug.humanize = require('ms')
+  createDebug.humanize = ms
   createDebug.destroy = destroy
 
   Object.keys(env).forEach(key => {
@@ -425,4 +429,4 @@ function setup (env) {
   return createDebug
 }
 
-module.exports = setup(exports)
+export default setup(env)

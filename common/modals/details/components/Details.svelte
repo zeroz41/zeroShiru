@@ -1,5 +1,6 @@
 <script>
-  import { Building2, Earth, Adult, FolderKanban, Languages, CalendarRange, MonitorPlay, Type } from 'lucide-svelte'
+  import { Building2, Earth, FolderKanban, Languages, CalendarRange, MonitorPlay, Type } from 'lucide-svelte'
+  import Adult from '@/components/icons/Adult.svelte'
   import { currentYear } from '@/modules/providers/anilist/anilist.js'
 
   export let media = null

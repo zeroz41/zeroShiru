@@ -1,0 +1,4 @@
+[toolchain]
+channel = "1.89.0"
+# wasm32 target is used by the shared-core TV builds (migration phase 15+)
+targets = ["wasm32-unknown-unknown"]

@@ -47,7 +47,7 @@ export const normalizeUrl = url => isLocalPath(url) || url.startsWith('file:') ?
  * @returns {Worker} The created worker instance.
  */
 function createWorker(source) {
-  return new Worker(new URL('@/modules/extensions/worker.js', import.meta.url), { type: 'module', name: getKey(source) })
+  return new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })
 }
 
 /**

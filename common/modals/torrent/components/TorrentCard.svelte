@@ -9,7 +9,8 @@
   import { debridEnabled, debridAvailability, debridTransport } from '@/modules/debrid/debrid.js'
   import { Availability, availabilityOf, describeAvailability } from '@/modules/debrid/availability.js'
   import { settings } from '@/modules/settings.js'
-  import { Database, BadgeCheck, HardDrive, FileQuestion, AlertCircle, TriangleAlert, Cloud, CloudDownload, CloudOff, CloudAlert } from 'lucide-svelte'
+  import { Database, BadgeCheck, HardDrive, FileQuestion, AlertCircle, TriangleAlert, Cloud, CloudDownload, CloudOff } from 'lucide-svelte'
+  import CloudAlert from '@/components/icons/CloudAlert.svelte'
 
   // one badge per availability state, so a glance separates what streams instantly from what the
   // service would have to fetch, from what it cannot serve at all

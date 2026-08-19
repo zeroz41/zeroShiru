@@ -42,7 +42,8 @@ const capacitorConfig = {
       '@client': resolve(__dirname, '..', 'client'),
       'webtorrent-client': resolve(__dirname, '..', 'client/core/webtorrent.js'),
       debug: resolve(__dirname, '..', 'common/modules/lib/debug.js'),
-      'http-tracker': resolve(__dirname, '../client/node_modules/bittorrent-tracker/lib/client/http-tracker.js'),
+      'http-tracker': resolve(__dirname, '../node_modules/bittorrent-tracker/lib/client/http-tracker.js'),
+      'bittorrent-tracker/lib/client/websocket-tracker.js': resolve(__dirname, '../node_modules/bittorrent-tracker/lib/client/websocket-tracker.js'),
       'webrtc-polyfill': false // no webrtc on mobile, need the resources
     }
   },

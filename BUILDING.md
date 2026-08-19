@@ -2,7 +2,7 @@
 
 ## Requirements
 
-Everyone needs Node.js 24+ and pnpm 10 (`corepack enable`). Running the tests
+Everyone needs Node.js 24+ and Bun 1.3+ (https://bun.sh). Running the tests
 needs nothing else.
 
 Building the app compiles native modules, so you also need a toolchain for the
@@ -23,7 +23,7 @@ Building for Android additionally needs, on any host:
 One install covers the whole workspace:
 
 ```bash
-pnpm install
+bun install
 ```
 
 ## Test
@@ -31,8 +31,8 @@ pnpm install
 One command, from the repo root:
 
 ```bash
-pnpm test          # all unit tests
-pnpm test:watch    # reruns on save
+npm test          # all unit tests
+npm run test:watch    # reruns on save
 ```
 
 Tests are plain [`node:test`](https://nodejs.org/api/test.html) — no framework
@@ -64,12 +64,12 @@ in a new subfolder, so `test/unit/torrent/` needs no setup beyond creating it.
 
 ### Live tests and API keys
 
-Live tests talk to real debrid accounts, so they are never part of `pnpm test`.
+Live tests talk to real debrid accounts, so they are never part of `npm test`.
 **A service with no key configured skips its tests**, so this is safe to run
 with nothing set up — you get a list of skips, not failures:
 
 ```bash
-pnpm test:live
+npm run test:live
 ```
 
 To actually exercise them, copy `.env.example` to `.env` and fill in what you
@@ -78,14 +78,14 @@ have. `.env` is gitignored and read automatically:
 ```bash
 cp .env.example .env
 $EDITOR .env
-pnpm test:live
+npm run test:live
 ```
 
 Or pass them per-run, if you would rather not keep keys on disk:
 
 ```bash
-REAL_DEBRID_API_KEY=xxx pnpm test:live          # bash / zsh
-env REAL_DEBRID_API_KEY=xxx pnpm test:live      # fish
+REAL_DEBRID_API_KEY=xxx npm run test:live          # bash / zsh
+env REAL_DEBRID_API_KEY=xxx npm run test:live      # fish
 ```
 
 | Variable | Needed for |
@@ -111,7 +111,7 @@ hook once — it refuses any commit carrying an API key or an `.env` file:
 git config core.hooksPath .githooks
 ```
 
-CI runs `pnpm test` plus both production builds on every push, and the live
+CI runs `npm test` plus both production builds on every push, and the live
 suite only on manual request ([docs/CI.md](docs/CI.md)).
 
 ## Run in development
@@ -120,10 +120,10 @@ Desktop, with hot reload:
 
 ```bash
 cd electron
-pnpm start
+npm start
 ```
 
-`pnpm start` compiles once into `electron/build`, then leaves `webpack serve`
+`npm start` compiles once into `electron/build`, then leaves `webpack serve`
 watching. The watcher writes to disk, so **the compiled bundle is only as new
 as the last time that watcher was running**. Stop it (Ctrl+C) and every source
 change after that point is invisible to the app, however many times you relaunch
@@ -177,8 +177,8 @@ Android, on an ADB-connected device:
 
 ```bash
 cd capacitor
-pnpm build:native     # first time only, see below
-pnpm dev:start
+npm run build:native  # first time only, see below
+npm run dev:start
 ```
 
 `build:native` builds the bundled Node runtime inside Docker and only has to
@@ -186,11 +186,11 @@ run once. Which script you use depends on the machine you are sitting at, not
 on the device you are targeting:
 
 ```bash
-pnpm build:native       # Linux and macOS hosts
-pnpm build:native-win   # Windows hosts (Docker via WSL)
+npm run build:native    # Linux and macOS hosts
+npm run build:native-win # Windows hosts (Docker via WSL)
 ```
 
-If the device or SDK isn't picked up, `pnpm exec cap doctor` says what's missing.
+If the device or SDK isn't picked up, `npx cap doctor` says what's missing.
 
 ## Desktop builds
 
@@ -199,16 +199,16 @@ runs one job per OS.
 
 ```bash
 cd electron
-pnpm build            # every target for the OS you are on
+npm run build         # every target for the OS you are on
 ```
 
 Or one target at a time:
 
 ```bash
-pnpm run web:build && pnpm exec electron-builder --win
-pnpm run web:build && pnpm exec electron-builder --mac
-pnpm run web:build && pnpm exec electron-builder --linux AppImage
-pnpm run web:build && pnpm exec electron-builder --linux dir      # raw binary only
+npm run web:build && npx electron-builder --win
+npm run web:build && npx electron-builder --mac
+npm run web:build && npx electron-builder --linux AppImage
+npm run web:build && npx electron-builder --linux dir      # raw binary only
 ```
 
 Everything lands in `electron/dist/`. `X.X.X` is the `version` from
@@ -227,7 +227,7 @@ Everything lands in `electron/dist/`. `X.X.X` is the `version` from
 
 ```bash
 cd capacitor
-pnpm build:app                            # webpack + native + capacitor sync
+npm run build:app                          # webpack + native + capacitor sync
 cd android && ./gradlew assembleRelease
 ```
 
@@ -252,3 +252,18 @@ adb install zeroShiru-arm64.apk
 Released APKs are named `android-Shiru-vX.X.X-arm64-v8a.apk` /
 `android-Shiru-vX.X.X-armeabi-v7a.apk`; the in-app updater looks them up by
 that exact name.
+
+## Rust core and the Tauri host (migration)
+
+The Electron→Tauri migration (see `docs/migration/`) adds a Cargo workspace:
+
+```
+cargo test --workspace          # shared-core unit tests
+cargo build -p shiru-wasm-bridge --target wasm32-unknown-unknown   # TV core
+npm run tauri:dev               # vite dev server + Tauri window
+npm run tauri:build             # production frontend + release Tauri binary
+```
+
+The Tauri host lives in `hosts/tauri/` and boots the same Vite-built renderer
+Electron uses. On Linux, `SHIRU_GRAPHICS=auto|no-dmabuf|safe` selects the
+WebKitGTK graphics path; auto only degrades on NVIDIA stacks.

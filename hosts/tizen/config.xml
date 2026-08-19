@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets"
+        id="http://shiru.watch/tv" version="6.8.0" viewmodes="maximized">
+  <tizen:application id="Shiru0000.Shiru" package="Shiru0000" required_version="5.5"/>
+  <name>Shiru</name>
+  <content src="index.html"/>
+  <icon src="icon.png"/>
+  <feature name="http://tizen.org/feature/screen.size.all"/>
+  <tizen:privilege name="http://tizen.org/privilege/internet"/>
+  <tizen:privilege name="http://developer.samsung.com/privilege/avplay"/>
+  <!-- TV networking verification gate (migration report section 11): every
+       provider/metadata/CDN host the app talks to must be listed and then
+       proven reachable from REAL hardware before this port is declared viable -->
+  <access origin="https://api.torbox.app" subdomains="true"/>
+  <access origin="https://api.real-debrid.com" subdomains="true"/>
+  <access origin="https://api.alldebrid.com" subdomains="true"/>
+  <access origin="https://www.premiumize.me" subdomains="true"/>
+  <access origin="https://graphql.anilist.co" subdomains="true"/>
+  <access origin="https://api.myanimelist.net" subdomains="true"/>
+  <access origin="*" subdomains="true"/> <!-- stream CDN redirects; tighten after the hardware spike -->
+  <tizen:profile name="tv"/>
+  <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
+</widget>

@@ -16,7 +16,8 @@ import { status } from '@/modules/networking.js'
 import { derived } from 'simple-store-svelte'
 import Helper from '@/modules/providers/helper.js'
 import Bottleneck from 'bottleneck'
-import { Drama, BookHeart, MountainSnow, Laugh, Adult, Droplets, FlaskConical, Ghost, Skull, HeartPulse, Volleyball, Car, Brain, Footprints, Guitar, Bot, Sparkles, WandSparkles, Activity } from 'lucide-svelte'
+import { Drama, BookHeart, MountainSnow, Laugh, Droplets, FlaskConical, Ghost, Skull, HeartPulse, Volleyball, Car, Brain, Footprints, Guitar, Bot, Sparkles, WandSparkles, Activity } from 'lucide-svelte'
+import Adult from '@/components/icons/Adult.svelte'
 import Debug from 'debug'
 const debug = Debug('ui:anime')
 

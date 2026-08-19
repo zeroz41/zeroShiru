@@ -103,7 +103,9 @@ const electronDefaults = {
   getYouTube: async () => 'https://www.youtube-nocookie.com'
 }
 
-export const TORRENT = window.torrent || torrentDefaults
-export const COMMON = window.common || commonDefaults
-export const ANDROID = window.android || androidDefaults
-export const ELECTRON = window.electron || electronDefaults
+// hosts may implement the surface incrementally (the Tauri host grows command by
+// command), so host objects override the noop defaults instead of replacing them
+export const TORRENT = { ...torrentDefaults, ...window.torrent }
+export const COMMON = { ...commonDefaults, ...window.common }
+export const ANDROID = { ...androidDefaults, ...window.android }
+export const ELECTRON = { ...electronDefaults, ...window.electron }
