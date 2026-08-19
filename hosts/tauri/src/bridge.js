@@ -35,6 +35,10 @@
     onUpdateDownloaded: (callback) => { updateListeners.set('downloaded', callback) },
     onUpdateProgress: (callback) => { updateListeners.set('progress', callback) },
     onUpdateAborted: (callback) => { updateListeners.set('aborted', callback) },
+    // is there a connection? asked natively because a webview may only ask a
+    // connectivity endpoint no-cors, and an opaque answer cannot tell a working
+    // link from a captive portal answering for it
+    probeNetwork: (timeoutMs) => invoke('probe_network', { timeoutMs }),
     // deep links (shiru://, magnet:) as raw URLs; routing lives in the renderer
     onProtocol: (callback) => { listen('shiru://protocol', (event) => callback(event.payload)) }
   }

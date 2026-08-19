@@ -8,6 +8,7 @@ mod desktop;
 mod discord;
 mod graphics;
 mod logging;
+mod net;
 #[cfg(desktop)]
 mod shell;
 mod torrent;
@@ -70,6 +71,7 @@ pub fn run() {
             commands::get_platform_info,
             commands::route_playback,
             commands::open_uri,
+            net::probe_network,
             debrid::debrid_validate,
             debrid::debrid_list_availability,
             debrid::debrid_check_availability,

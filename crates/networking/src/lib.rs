@@ -78,6 +78,8 @@ pub trait HttpTransport: Send + Sync {
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, TransportError>;
 }
 
+pub mod reachability;
+
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "native")]

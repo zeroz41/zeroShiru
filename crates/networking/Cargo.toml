@@ -10,6 +10,9 @@ default = []
 # by the host instead, so the trait stays wasm-clean.
 native = ["dep:reqwest"]
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+
 [dependencies]
 serde = { workspace = true }
 async-trait = { workspace = true }
