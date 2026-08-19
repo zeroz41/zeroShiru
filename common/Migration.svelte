@@ -15,7 +15,7 @@
   <div class='migration-card d-flex flex-column align-items-center w-full wm-1000 text-center gap-5 py-20 px-40 z-100'>
     <Database class='block-scale-160' size={192} strokeWidth={1.25} color='var(--dm-muted-text-color)' />
     <span class='font-size-34 font-weight-bold text-white mt-10'>Migrating Your Data</span>
-    <span class='font-size-22 text-muted'>Shiru is reorganizing your cached data, this only happens once.</span>
+    <span class='font-size-22 text-muted'>zeroShiru is reorganizing your cached data, this only happens once.</span>
     <div class='migration-status-row d-flex align-items-center gap-10 mb-10 mt-30'>
       <span class='migration-dot rounded-circle flex-shrink-0 bg-septenary' />
       <span class='font-size-18 text-muted mt-2'>{$migrationStatus ?? 'Preparing your data for migration...'}</span>

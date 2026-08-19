@@ -1577,11 +1577,11 @@
       } else {
         activity.buttons = [
           {
-            label: 'Watch on Shiru',
+            label: 'Watch on zeroShiru',
             url: `shiru://anime/${np.media?.id}`
           },
           {
-            label: 'Download Shiru',
+            label: 'Download zeroShiru',
             url: 'https://github.com/RockinChaos/Shiru/releases/latest'
           }
         ]
@@ -1595,11 +1595,11 @@
           large_image: 'icon',
           large_text: 'https://github.com/RockinChaos/Shiru',
           small_image: 'searching',
-          small_text: 'Browsing anime on Shiru',
+          small_text: 'Browsing anime on zeroShiru',
         },
         buttons: [
           {
-            label: 'Download Shiru',
+            label: 'Download zeroShiru',
             url: 'https://github.com/RockinChaos/Shiru/releases/latest'
           }
         ],

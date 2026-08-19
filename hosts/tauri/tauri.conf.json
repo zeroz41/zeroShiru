@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Shiru",
+  "productName": "zeroShiru",
   "version": "6.8.0",
-  "identifier": "watch.shiru.app",
+  "identifier": "watch.zeroshiru.app",
   "build": {
     "devUrl": "http://localhost:5173/app.html",
     "frontendDist": "../../dist/web",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Shiru",
+        "title": "zeroShiru",
         "width": 1280,
         "height": 800,
         "minWidth": 320,

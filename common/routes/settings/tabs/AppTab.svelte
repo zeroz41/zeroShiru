@@ -189,7 +189,7 @@
 </SettingCard>
 
 <h4 class='mb-10 font-weight-bold'>Debug Settings</h4>
-<SettingCard title='Logging Levels' description='Enable logging of specific parts of the app.{!SUPPORTS.isAndroid ? ` These logs are saved to ${COMMON.getPlatformInfo().platform === `win32` ? `%appdata%` : `~/config`}/Shiru/logs/main.log.` : ``}'>
+<SettingCard title='Logging Levels' description='Enable logging of specific parts of the app.{!SUPPORTS.isAndroid ? ` These logs are saved to ${COMMON.getPlatformInfo().platform === `win32` ? `%appdata%` : `~/config`}/zeroShiru/logs/main.log.` : ``}'>
   <select class='form-control bg-dark mw-150 w-150 text-truncate' bind:value={$debugStore}>
     <option value='' selected>None</option>
     <option value='*'>All</option>

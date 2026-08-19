@@ -1,4 +1,4 @@
-package watch.shiru.app
+package watch.zeroshiru.app
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge

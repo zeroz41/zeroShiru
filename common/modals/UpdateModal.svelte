@@ -201,7 +201,7 @@
         </div>
       {/if}
       <hr class='my-20' class:d-none={!isNightlyVersion && !isLesser && !manualInstall}/>
-      <span>Consider <span class='custom-link' use:click={() => COMMON.openURI('https://github.com/sponsors/RockinChaos')}>donating on GitHub</span> to help support future Shiru development.</span>
+      <span>Consider <span class='custom-link' use:click={() => COMMON.openURI('https://github.com/sponsors/RockinChaos')}>donating on GitHub</span> to help support future zeroShiru development.</span>
       <hr class='my-20'/>
       {#if changelog?.entry?.body?.trim().length}
         <div class='whats-new'>

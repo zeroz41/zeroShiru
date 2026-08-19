@@ -5,7 +5,7 @@
 
 <Menubar primary={false} />
 <div class='splash-container position-fixed inset-0 d-flex align-items-center justify-content-center bg-dark overflow-hidden' class:hidden={done} class:pointer-events-none={done}>
-  <img src='./icon_filled.png' alt='Shiru' class='splash-logo' />
+  <img src='./icon_filled.png' alt='zeroShiru' class='splash-logo' />
 </div>
 
 <style>
