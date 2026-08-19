@@ -2,6 +2,8 @@ import { toast } from 'svelte-sonner'
 import { writable } from 'simple-store-svelte'
 import { settings } from '@/modules/settings.js'
 import { codes, throttle, getRandomInt } from '@/modules/util.js'
+import { isConnected, readResponse, readError } from '@/modules/reachability.js'
+import { COMMON } from '@/modules/bridge.js'
 import Debug from 'debug'
 const trace = Debug('net:networking')
 
@@ -84,20 +86,29 @@ window.fetch = async (...args) => {
   }
 }
 
-const networkPing = (timeout = 2_000) => pingWith({
-  url: 'https://cp.cloudflare.com/generate_204?cacheBust=' + Date.now(),
-  options: {
-    method: 'HEAD',
-    mode: 'no-cors',
-    cache: 'no-cache',
-    headers: { 'Pragma': 'no-cache' }
-  },
-  timeout
-})
+// Hosts with a native HTTP stack answer this in the core: no CORS, so they read the
+// endpoint's real status and can tell a captive portal from a working link. A webview
+// only ever gets an opaque answer back — see modules/reachability.js.
+const networkPing = async (timeout = 2_000) => {
+  if (!navigator.onLine) return 'offline'
+  const native = await COMMON.probeNetwork?.(timeout).catch(() => null)
+  if (native) return native
+  return pingWith({
+    url: 'https://cp.cloudflare.com/generate_204?cacheBust=' + Date.now(),
+    options: {
+      method: 'HEAD',
+      mode: 'no-cors',
+      cache: 'no-cache',
+      headers: { 'Pragma': 'no-cache' }
+    },
+    timeout
+  })
+}
 
-// quick-check connection on initial startup
-networkPing(300).then(success => {
-  if (!success) isOffline({ message: 'failed to fetch: client is offline' })
+// quick-check connection on initial startup. Nothing was believed yet, so only a
+// definite answer counts: a slow link must not open the app on an offline banner.
+networkPing().then(result => {
+  if (!isConnected(result, false)) isOffline({ message: 'failed to fetch: client is offline' })
 })
 
 function isNetworkError(error) {
@@ -154,23 +165,31 @@ export const isAnilistDown = newOutageChecker({
   }
 })
 
+/** Pings over the webview's own fetch. Answers in the reachability vocabulary. */
 async function pingWith({ url, options, timeout = 2_000, validate }) {
-  if (!navigator.onLine) return false
+  if (!navigator.onLine) return 'offline'
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeout)
   trace(`Pinging ${url} to check for connection within ${timeout}ms`)
   try {
     const res = await fetch(url, { ...options, signal: controller.signal })
-    if (!res.ok) {
-      trace(`Ping to ${url} failed, network or host is likely offline...`)
-      return false
+    // a validated ping asks about one service, not about the link: it wants the body,
+    // so it is only ever pointed at an API that permits us to read one
+    if (validate) {
+      if (!res.ok) {
+        trace(`Ping to ${url} failed, network or host is likely offline...`)
+        return 'offline'
+      }
+      trace(`Ping to ${url} successful. Validating...`)
+      return (await validate(res)) ? 'online' : 'offline'
     }
-    trace(`Ping to ${url} successful.${validate ? ' Validating...' : ''}`)
-    if (validate) return await validate(res)
-    return true
-  } catch {
-    trace(`Ping to ${url} failed, network or host is likely offline...`)
-    return false
+    const result = readResponse(res)
+    trace(`Ping to ${url} read as ${result}.`)
+    return result
+  } catch (error) {
+    const result = readError(error)
+    trace(`Ping to ${url} failed (${result}), network or host is likely offline...`)
+    return result
   } finally {
     clearTimeout(timer)
   }
@@ -194,7 +213,8 @@ function newOutageChecker({ key, ping, detect, offlineEvent, onlineEvent, retryR
         return
       }
       trace(`Verified suspicious error, navigator.onLine=${navigator.onLine}, verifying with ${key} ping...`)
-      const result = await ping()
+      // an unanswered ping is not an outage: a slow link keeps whatever we believed
+      const result = isConnected(await ping(), status.value === offlineEvent)
       if (!result) {
         trace(`${key} confirmed offline, starting up periodic checks...`)
         status.value = offlineEvent
@@ -210,7 +230,8 @@ function newOutageChecker({ key, ping, detect, offlineEvent, onlineEvent, retryR
             let stop = false
             async function checkLoop() {
               if (stop) return
-              const result = await ping(status.value === offlineEvent ? 500 : 2_000)
+              const answer = await ping(status.value === offlineEvent ? 500 : 2_000)
+              const result = isConnected(answer, status.value === offlineEvent)
               if (result && status.value === offlineEvent) {
                 status.value = 'online'
                 window.dispatchEvent(new CustomEvent(onlineEvent))

@@ -53,6 +53,12 @@ const commonDefaults = {
   pickFile: noopAsyncString,
   pickFolder: noopAsyncString,
   linkAccount: noopAsyncVoid,
+  /**
+   * Is there a connection? Answers 'online' | 'portal' | 'offline' | 'unknown', or
+   * null where the host has no native stack to ask — then the renderer falls back to
+   * a webview ping, which can only ever learn less. See modules/reachability.js.
+   */
+  probeNetwork: async () => null,
   /** raw shiru:// and magnet: URLs; routing lives in modules/protocol.js */
   onProtocol: noopVoid,
   /** @param {'stable' | 'nightly'} channel */
