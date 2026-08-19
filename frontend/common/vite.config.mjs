@@ -23,6 +23,7 @@ export default defineConfig(({ mode }) => ({
       '@': here,
       'bittorrent-tracker/lib/client/websocket-tracker.js': join(here, '../node_modules/bittorrent-tracker/lib/client/websocket-tracker.js'),
       debug: join(here, 'modules/lib/debug.js'),
+      events: join(here, 'vite-shims/events.js'),
       module: join(here, 'vite-shims/empty.js'),
       url: join(here, 'vite-shims/empty.js')
     },
