@@ -12,7 +12,8 @@ it renders, and asks the core.
 
 | Area | State |
 |---|---|
-| Frontend build | Vite only (`bun run build` → `dist/web`), Svelte 4 preserved |
+| Layout | JS lives in `frontend/` (workspace root, lockfile, packages); the repository root is Rust and hosts. Packages install to `frontend/.deps` behind the symlink the resolvers require |
+| Frontend build | Vite only (`bun run build` from `frontend/` → `dist/web`), Svelte 4 preserved |
 | Desktop host | Tauri 2 (`hosts/tauri`): window/tray/dialogs/notifications, deep links, single instance, Discord RPC, NVIDIA/Wayland graphics fallback |
 | Torrenting | Rust (`crates/torrent`): librqbit behind `TorrentEngine`, plus `TorrentSession` — role registry, sidecar persistence, auto-restore, seeding-limit policy, HTTP tracker scrape, external player launch, loopback range gateway |
 | Torrent UI wiring | One pushed `stats` snapshot drives all four Svelte stores; `files` events carry gateway URLs with the debrid-identical `fileHash` watch key |
@@ -96,6 +97,7 @@ and `manager.rs` hold these to it.
 ## Running things
 
 ```
+cd frontend                 # every bun command runs from the JS workspace
 bun run test                # 145 JS unit tests
 bun run test:rust           # cargo test --workspace
 bun run tauri:dev           # Vite :5173 + Tauri window (SHIRU_GRAPHICS=safe if needed)

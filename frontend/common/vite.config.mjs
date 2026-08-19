@@ -37,7 +37,7 @@ export default defineConfig(({ mode }) => ({
     host: 'localhost'
   },
   build: {
-    outDir: join(here, '../dist/web'),
+    outDir: join(here, '../../dist/web'),
     emptyOutDir: false,
     target: 'chrome128',
     sourcemap: true,

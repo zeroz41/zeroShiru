@@ -10,7 +10,7 @@
 #
 # Runs after an install, and moves a freshly created real directory into place.
 set -e
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../frontend"
 
 if [ -L node_modules ]; then
   mkdir -p .deps

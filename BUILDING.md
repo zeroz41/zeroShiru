@@ -23,19 +23,24 @@ Everything needs Bun and Rust; the rest depends on what you are building.
 Desktop bundles are **not** cross-compiled: build each OS on that OS (or in
 CI, which does exactly that — see [docs/CI.md](docs/CI.md)).
 
-One install covers the JS workspace:
+The JS side lives in `frontend/`, and every `bun` command runs from there:
 
 ```bash
+cd frontend
 bun install
 ```
 
-Packages land in `.deps/`, with `node_modules` as a symlink into it — the
-resolvers in Bun, Vite, esbuild and Rollup all insist on that exact name, and
-Vite's CommonJS interop only applies to files under one, so the link has to
-exist even though nothing here runs on Node. `scripts/deps-dir.sh` sets it up
-after every install.
+Cargo commands run from the repository root as usual.
+
+Packages land in `frontend/.deps/`, with `frontend/node_modules` as a symlink
+into it. The link has to carry that name even though nothing here runs on Node:
+Bun, Vite, esbuild and Rollup all resolve bare imports by walking up for a path
+segment called `node_modules`, and Vite's CommonJS interop only applies to files
+under one. `scripts/deps-dir.sh` sets it up after every install.
 
 ## Test
+
+All of these run from `frontend/`, except `cargo` ones which run anywhere:
 
 ```bash
 bun run test          # JS unit tests (bun:test, no config)
@@ -170,18 +175,21 @@ Releasing is a tag push; see [docs/CI.md](docs/CI.md).
 ## Layout
 
 ```
-common/          Svelte frontend (presentation only)
+frontend/        everything JS: the workspace root, its lockfile and its packages
+  common/        Svelte frontend (presentation only)
+  extensions/    example source extension
+  test/          JS test suite
 crates/          shared Rust core: domain, core, debrid, torrent, media,
                  networking, storage, credentials, sources, platform-contracts,
                  wasm-bridge
 hosts/tauri/     desktop + Android host (thin command adapters)
 hosts/tizen/     Samsung TV host scaffold
 hosts/webos/     LG TV host scaffold
-extensions/      example source extension
-test/            JS test suite
+scripts/         build and dev entry points
 docs/migration/  architecture report, progress, parity checklist
 ```
 
-The rule for new code: presentation goes in `common/`, everything else goes in
-`crates/`, platform-specific glue goes in the host. `common/modules/bridge.js`
-is the only file in the frontend allowed to touch a host API.
+The rule for new code: presentation goes in `frontend/common/`, everything else
+goes in `crates/`, platform-specific glue goes in the host.
+`frontend/common/modules/bridge.js` is the only file in the frontend allowed to
+touch a host API.

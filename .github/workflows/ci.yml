@@ -33,9 +33,11 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies (no native builds)
+        working-directory: frontend
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Run unit tests
+        working-directory: frontend
         run: bun run test
 
   # Production frontend build - "does the app still compile".
@@ -52,9 +54,11 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies
+        working-directory: frontend
         run: bun install --frozen-lockfile
 
       - name: Production build
+        working-directory: frontend
         run: bun run build
 
   # Shared Rust core: unit tests plus the wasm32 build the TV hosts depend on.
@@ -102,6 +106,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies (no native builds)
+        working-directory: frontend
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Setup Rust
@@ -117,6 +122,7 @@ jobs:
           TORBOX_TEST_HASH: ${{ vars.TORBOX_TEST_HASH }}
           TB_TEST_PACK_HASH: ${{ vars.TB_TEST_PACK_HASH }}
           TB_TEST_PACK_EPISODE: ${{ vars.TB_TEST_PACK_EPISODE }}
+        working-directory: frontend
         run: |
           bun run test:rust:live
           bun run test:live

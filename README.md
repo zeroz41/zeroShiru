@@ -19,6 +19,7 @@ webOS hosts reuse the same frontend with the core compiled to WebAssembly.
 See [BUILDING.md](BUILDING.md). Short version:
 
 ```bash
+cd frontend
 bun install
 bun run tauri:dev
 ```

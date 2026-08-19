@@ -9,6 +9,9 @@
 Publishing is GitHub Releases only; upstream's R2/GitLab/Codeberg workflows
 were removed. In-app updaters point at `zeroz41/zeroShiru`.
 
+The JS workspace is `frontend/`, so every `bun` step in CI runs with
+`working-directory: frontend`; `cargo` steps run from the repository root.
+
 Nothing in CI uses npm, node or pnpm: Bun runs the JS side, Cargo runs the Rust
 side, and desktop/Android packaging goes through the Tauri CLI.
 

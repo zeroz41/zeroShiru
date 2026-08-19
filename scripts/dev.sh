@@ -4,7 +4,7 @@
 # Deliberately a shell script rather than a dependency — the package that used to
 # do this pulled in 12MB of reactive-streams library to run two commands.
 set -e
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../frontend"
 
 vite common &
 VITE=$!

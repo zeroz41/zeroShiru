@@ -444,7 +444,7 @@ mod real_names {
     // video". This is the real file list of that release, scraped from the tracker.
     #[test]
     fn a_partial_pack_asked_for_an_episode_it_lacks_refuses_instead_of_guessing() {
-        let fixture = include_str!("../../../test/fixtures/fr-one-piece-459-516.json");
+        let fixture = include_str!("../../../frontend/test/fixtures/fr-one-piece-459-516.json");
         let entries: Vec<serde_json::Value> = serde_json::from_str(fixture).unwrap();
         let files: Vec<(String, u64)> = entries
             .iter()

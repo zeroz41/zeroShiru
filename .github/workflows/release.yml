@@ -132,9 +132,11 @@ jobs:
           tool: tauri-cli
 
       - name: Install dependencies
+        working-directory: frontend
         run: bun install --frozen-lockfile
 
       - name: Build frontend
+        working-directory: frontend
         run: bun run build
 
       # tauri.conf.json declares the bundle targets; beforeBuildCommand is empty
@@ -238,9 +240,11 @@ jobs:
           tool: tauri-cli
 
       - name: Install dependencies
+        working-directory: frontend
         run: bun install --frozen-lockfile
 
       - name: Build frontend
+        working-directory: frontend
         run: bun run build
 
       # armv7 covers 32-bit TV boxes; the same APK serves phone and Android TV.
