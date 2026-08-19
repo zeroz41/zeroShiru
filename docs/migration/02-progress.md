@@ -45,10 +45,13 @@ below that needs a person at a desktop.
 
 ## What's left to finish
 
-1. **Live-run the desktop app** — the engine, the gateway, the debrid path and
-   the picker are each proven live from their own test harness, but nothing has
-   yet driven them through the Tauri window. `bun run tauri:dev`, load a magnet,
-   check files/stats/subtitles/seek, then the same over debrid.
+1. **Live-run the desktop app** — the window now boots, renders the full UI and
+   assembles every bridge surface (verified 2026-08-19 on a headless
+   kwin_wayland, screenshots and an in-page beacon; three boot-blocking bugs
+   fixed: the missing `events` shim, the bridge injecting before Tauri's own
+   scripts, and plain cargo builds being dev binaries). Still needs a person at
+   a desktop with network: load a magnet, check files/stats/subtitles/seek,
+   then the same over debrid.
 2. **Updater** — built and wired end to end (check on a timer → download with
    progress → restart into it), and the release workflow publishes signed
    artifacts plus the `latest.json` the app reads. It stays inert until a signing
