@@ -18,6 +18,7 @@ export default defineConfig(({ mode }) => ({
     })
   ],
   resolve: {
+    preserveSymlinks: true,
     alias: {
       '@': here,
       'bittorrent-tracker/lib/client/websocket-tracker.js': join(here, '../node_modules/bittorrent-tracker/lib/client/websocket-tracker.js'),

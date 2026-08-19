@@ -29,6 +29,12 @@ One install covers the JS workspace:
 bun install
 ```
 
+Packages land in `.deps/`, with `node_modules` as a symlink into it — the
+resolvers in Bun, Vite, esbuild and Rollup all insist on that exact name, and
+Vite's CommonJS interop only applies to files under one, so the link has to
+exist even though nothing here runs on Node. `scripts/deps-dir.sh` sets it up
+after every install.
+
 ## Test
 
 ```bash
