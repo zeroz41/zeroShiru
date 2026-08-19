@@ -143,7 +143,7 @@
 
 @font-face {
   font-family: "Roboto";
-  src: /* webpackIgnore: true */ url(Roboto.ttf) format("truetype");
+  src: url(/Roboto.ttf) format("truetype");
   unicode-range: U+0000, U+0002, U+0009, U+000D, U+0020-007E, U+00A0-0377,
       U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03E1,
       U+03F0-052F, U+1AB0-1ABE, U+1D00-1DF5, U+1DFC-1F15, U+1F18-1F1D,
@@ -164,7 +164,7 @@
 
 @font-face {
   font-family: "Twemoji";
-  src: /* webpackIgnore: true */ url(Twemoji.ttf) format("truetype");
+  src: url(/Twemoji.ttf) format("truetype");
   unicode-range: U+1F1E6-1F1FF;
 }
 
