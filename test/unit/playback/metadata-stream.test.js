@@ -3,7 +3,7 @@
 // audio track, ASS and SRT subtitle tracks, chapters and a font attachment, served over mocked
 // HTTP range requests. What is asserted is exactly what reaches the player's Subtitles
 // instance — this is the parity a debrid stream owes a torrent stream.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import { hex2arr, bin2hex } from 'uint8-util'
 import DebridMetadata from '../../../common/modules/debrid/metadata.js'

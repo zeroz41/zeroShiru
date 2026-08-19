@@ -1,7 +1,7 @@
 <script context='module'>
   import SoftModal from '@/components/modals/SoftModal.svelte'
   import { Minimize2, SquareX, X } from 'lucide-svelte'
-  import { COMMON, ELECTRON } from '@/modules/bridge.js'
+  import { COMMON, DESKTOP } from '@/modules/bridge.js'
   import { settings } from '@/modules/settings.js'
   import { modal } from '@/modules/navigation.js'
   import { click } from '@/modules/lib/click.js'
@@ -9,21 +9,21 @@
 <script>
   function minimizeTray() {
     if ($modal[modal.MINIMIZE_PROMPT]?.data) $settings.closeAction = 'Minimize'
-    ELECTRON.hideWindow()
+    DESKTOP.hideWindow()
     close()
   }
   async function exitApp() {
     if ($modal[modal.MINIMIZE_PROMPT]?.data) {
-      ELECTRON.hideWindow()
+      DESKTOP.hideWindow()
       $settings.closeAction = 'Close'
       await new Promise(res => setTimeout(res, 2050))
     }
-    ELECTRON.exit()
+    DESKTOP.exit()
   }
   function close() {
     modal.close(modal.MINIMIZE_PROMPT)
   }
-  ELECTRON.onExitIntent(() => {
+  DESKTOP.onExitIntent(() => {
     if ($settings.closeAction === 'Prompt') modal.toggle(modal.MINIMIZE_PROMPT, false)
     else if ($settings.closeAction === 'Minimize') minimizeTray()
     else exitApp()

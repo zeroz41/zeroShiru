@@ -6,13 +6,13 @@
 // the same shape a real batch like `One Piece 0001-0782` parses to, so the app read every array
 // as "a batch, therefore it has everything". A two episode fix release was offered for every
 // episode of the show, and picking any of them played 487.
-import { test, before } from 'node:test'
+import { test, beforeAll } from 'bun:test'
 import assert from 'node:assert/strict'
 import { releaseHoldsEpisode, releaseSpan } from '../../../common/modules/playback/coverage.js'
 
 /** @type {(names: string[]) => Promise<any[]>} */
 let anitomy
-before(async () => {
+beforeAll(async () => {
   anitomy = (await import('anitomyscript')).default
 })
 

@@ -1,4 +1,4 @@
-import { test, beforeEach } from 'node:test'
+import { test, beforeEach, afterEach } from 'bun:test'
 import assert from 'node:assert/strict'
 import RealDebrid from '../../../common/modules/debrid/realdebrid.js'
 import { DebridError, DebridAuthError, DebridNotCachedError, DebridUnavailableError } from '../../../common/modules/debrid/service.js'
@@ -52,6 +52,7 @@ let service
 beforeEach(() => {
   service = new RealDebrid('test-key')
 })
+afterEach(() => service?.destroy())
 
 test('validate accepts premium accounts and rejects free ones', async () => {
   mockFetch([{ path: '/user', body: { username: 'tester', type: 'premium', expiration: '2030-01-01' } }])

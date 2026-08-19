@@ -4,9 +4,10 @@
 // different encoding, different seed format — every debrid play of a release watched over
 // torrents (or the other way round) silently starts from zero, which shows up to the user as
 // "resume is broken on debrid". These tests hold the two implementations to byte equality.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
-import { makeHash } from '../../../client/lib/util.js'
+import { createHash } from 'node:crypto'
+const makeHash = data => createHash('sha1').update(data).digest('hex')
 import { sha1hex, toPlayerFile } from '../../../common/modules/debrid/identity.js'
 
 const HASH = 'a'.repeat(40)

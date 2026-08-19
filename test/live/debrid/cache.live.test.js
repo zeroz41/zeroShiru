@@ -8,7 +8,7 @@
 // The invariant that matters most: probing must leave the account exactly as it found it.
 //
 //   REAL_DEBRID_API_KEY=<key> npm run test:live
-import { test, before, after } from 'node:test'
+import { test, beforeAll, afterAll } from 'bun:test'
 import assert from 'node:assert/strict'
 import RealDebrid from '../../../common/modules/debrid/realdebrid.js'
 import { DebridUnstreamableError } from '../../../common/modules/debrid/service.js'
@@ -43,13 +43,13 @@ let badged = []
 // hashes this file probed, so cleanup can tell our torrents from everyone else's
 const probed = new Set()
 
-before(async () => {
+beforeAll(async () => {
   if (!service) return
   before_ = await accountTorrents()
   badged = [...await service.listAvailability()].filter(([, state]) => state === Availability.CACHED).map(([hash]) => hash)
 })
 
-after(async () => {
+afterAll(async () => {
   if (!service) return
   service.destroy()
   await new Promise(resolve => setTimeout(resolve, 2_000))

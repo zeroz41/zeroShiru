@@ -8,7 +8,7 @@
 // Uses the same public-domain fixture as the TorBox suite, resolves it once, and probes the
 // link the way the <video> element and DebridMetadata do. Leaves the account as the other
 // TorBox live file does: anything this file adds is removed again afterwards.
-import { test, before, after } from 'node:test'
+import { test, beforeAll, afterAll } from 'bun:test'
 import assert from 'node:assert/strict'
 import TorBox from '../../../common/modules/debrid/torbox.js'
 import DebridMetadata from '../../../common/modules/debrid/metadata.js'
@@ -34,7 +34,7 @@ let before_ = null
 let resolved = null
 let video = null
 
-before(async () => {
+beforeAll(async () => {
   if (!service) return
   before_ = await accountTorrents()
   resolved = await service.resolve(CACHED, { fileFilter: name => /\.(mp4|mkv|avi)$/i.test(name) })
@@ -42,7 +42,7 @@ before(async () => {
   console.log(`  streaming "${video.name}" (${(video.size / 1e6).toFixed(1)} MB)`)
 })
 
-after(async () => {
+afterAll(async () => {
   if (!service) return
   service.destroy()
   await new Promise(resolve => setTimeout(resolve, 2_000))

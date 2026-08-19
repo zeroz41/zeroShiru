@@ -2,7 +2,7 @@
   import { variables, setStyle, setScale } from '@/modules/themes.js'
   import { click } from '@/modules/lib/click.js'
   import HomeSections from '@/routes/settings/components/HomeSections.svelte'
-  import { ELECTRON } from '@/modules/bridge.js'
+  import { DESKTOP } from '@/modules/bridge.js'
   import SettingCard from '@/routes/settings/components/SettingCard.svelte'
   import { SUPPORTS } from '@/modules/support.js'
   import { Trash2, RotateCcw } from 'lucide-svelte'
@@ -32,7 +32,7 @@
 <SettingCard title='CSS Variables' description='Used for custom themes. Can change colors, sizes, spacing and more. Supports only variables.{!SUPPORTS.isAndroid ? ` Best way to discover variables is to use the built-in devtools.` : ``}'>
   <div class='d-flex flex-column'>
     <textarea class='form-control w-md-500 w-full bg-dark' placeholder='--accent-color: #e5204c;' bind:value={$variables} />
-    <button type='button' use:click={() => ELECTRON.openDevTools()} class='btn btn-primary d-none align-items-center justify-content-center mt-10' class:d-flex={!SUPPORTS.isAndroid}><span class='text-truncate'>Open Devtools</span></button>
+    <button type='button' use:click={() => DESKTOP.openDevTools()} class='btn btn-primary d-none align-items-center justify-content-center mt-10' class:d-flex={!SUPPORTS.isAndroid}><span class='text-truncate'>Open Devtools</span></button>
   </div>
 </SettingCard>
 <SettingCard title='Donate Button' description='Enables the "Support This App" button on the bottom and side bar.'>
@@ -159,7 +159,7 @@
 {#if SUPPORTS.angle}
   <h4 class='mb-10 font-weight-bold'>Rendering Settings</h4>
   <SettingCard title='ANGLE Backend' description="What ANGLE backend to use for rendering. DON'T CHANGE WITHOUT REASON! On some Windows machines D3D9 might help with flicker. Changing this setting to something your device doesn't support might prevent Shiru from opening which will require a full reinstall. While Vulkan is an available option it might not be fully supported on Linux.">
-    <select class='form-control bg-dark w-300 mw-full text-truncate' bind:value={settings.angle} on:change={() => ELECTRON.setAngle(settings.angle)}>
+    <select class='form-control bg-dark w-300 mw-full text-truncate' bind:value={settings.angle} on:change={() => DESKTOP.setAngle(settings.angle)}>
       <option value='default' selected>Default</option>
       <option value='d3d9'>D3D9</option>
       <option value='d3d11'>D3D11</option>

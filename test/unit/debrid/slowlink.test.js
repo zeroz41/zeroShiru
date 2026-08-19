@@ -8,7 +8,7 @@
 // These tests pin the three things that changed: time limits that follow the connection rather
 // than assuming one, a stalled probe that is abandoned after a fixed number of reads rather than
 // a fixed number of seconds, and a sweep whose giving up is temporary.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import DebridService, { DebridError } from '../../../common/modules/debrid/service.js'
 import RealDebrid from '../../../common/modules/debrid/realdebrid.js'

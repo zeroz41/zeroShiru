@@ -9,7 +9,7 @@
   import Helper from '@/modules/providers/helper.js'
   import { Heart, Play, VolumeX, Volume2, ThumbsUp, ThumbsDown } from 'lucide-svelte'
   import { settings } from '@/modules/settings.js'
-  import { ELECTRON } from '@/modules/bridge.js'
+  import { DESKTOP } from '@/modules/bridge.js'
 
   /** @type {import('@/modules/providers/anilist/al.d.ts').Media} */
   export let media
@@ -56,7 +56,7 @@
       <SmartImage class='img-cover w-full h-full' images={[media.bannerImage, ...(media.trailer?.id ? [`https://i.ytimg.com/vi/${media.trailer.id}/maxresdefault.jpg`, `https://i.ytimg.com/vi/${media.trailer.id}/hqdefault.jpg`] : []), media.coverImage?.extraLarge, './no_image_episode.jpg' ]}/>
       {#await (media.trailer?.id && media) || episodesList.getMedia(media.idMal) then trailer}
         {#if trailer?.trailer?.id || trailer?.data?.trailer?.youtube_id }
-          {#await ELECTRON.getYouTube() then youtubeServer}
+          {#await DESKTOP.getYouTube() then youtubeServer}
             <div style='transition: opacity .3s' class:transparent={hide}>
               <SmartImage class='position-absolute top-0 left-0 w-full h-full img-cover blur-6' images={[`https://i.ytimg.com/vi/${media.trailer.id}/maxresdefault.jpg`, `https://i.ytimg.com/vi/${media.trailer.id}/hqdefault.jpg`]}/>
               <button type='button' class='position-absolute z-10 top-0 right-0 m-15 btn-square bg-transparent shadow-none border-0 rounded pointer mute' style='filter: drop-shadow(0 0 .4rem hsla(var(--black-color-hsl), 1))' use:click={toggleMute}>

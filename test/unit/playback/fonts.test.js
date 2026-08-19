@@ -1,7 +1,7 @@
 // Fonts reach Subtitles.handleFile as a binary string, never as bytes. Producers encode with
 // hex2bin(arr2hex(bytes)) because handleFile decodes with hex2arr(bin2hex(detail)); sending
 // anything else drops the font silently, which is the bug fixed in 62791bbf.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import { hex2arr, bin2hex } from 'uint8-util'
 import DebridMetadata from '../../../common/modules/debrid/metadata.js'

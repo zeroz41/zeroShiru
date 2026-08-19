@@ -1,7 +1,7 @@
 // windowFiles caps how many stream links one resolve requests, sliced AROUND the episode being
 // played. The failure it guards against is quiet and nasty: cap a 200-episode pack to its first
 // 60 files and asking for episode 150 resolves successfully — then plays the wrong episode.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import DebridService from '../../../common/modules/debrid/service.js'
 

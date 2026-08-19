@@ -4,7 +4,7 @@
 //
 // The endpoints themselves were confirmed to exist by calling them unauthenticated, which answers
 // `authentication_failed` where an endpoint that had been withdrawn answers with the site's 404.
-import { test, beforeEach } from 'node:test'
+import { test, beforeEach, afterEach } from 'bun:test'
 import assert from 'node:assert/strict'
 import Premiumize from '../../../common/modules/debrid/premiumize.js'
 import { DebridError, DebridAuthError, DebridNotCachedError, DebridUnavailableError } from '../../../common/modules/debrid/service.js'
@@ -43,6 +43,7 @@ let service
 beforeEach(() => {
   service = new Premiumize('test-key')
 })
+afterEach(() => service?.destroy())
 
 test('the key travels as a bearer header, never in the URL', async () => {
   const calls = mockFetch([{ path: '/account/info', body: { status: 'success', customer_id: '1234567', premium_until: 1799999999 } }])

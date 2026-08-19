@@ -2,7 +2,7 @@
 // 1. With no debrid service selected, EVERY input routes to the torrent client
 //    exactly like stock Shiru (original torrent behavior untouched).
 // 2. In debrid only mode, NO input ever routes to the torrent client.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import { routeDebrid, listResult, debridKey } from '../../../common/modules/debrid/route.js'
 import { Availability } from '../../../common/modules/debrid/availability.js'

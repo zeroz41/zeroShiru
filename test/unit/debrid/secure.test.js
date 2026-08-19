@@ -1,7 +1,7 @@
 // Debrid links are account bound and time limited. Streaming one over cleartext
 // would expose both the link and the viewing traffic, so the HTTPS half of the
 // DebridFile contract is enforced rather than assumed of each service.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import { secureFiles, DebridError } from '../../../common/modules/debrid/service.js'
 

@@ -1,4 +1,5 @@
-import { COMMON, ELECTRON, ANDROID } from '@/modules/bridge.js'
+import { DESKTOP, ANDROID } from '@/modules/bridge.js'
+import { onRequestPage, onRequestModal } from '@/modules/protocol.js'
 import { settings } from '@/modules/settings.js'
 import { writable } from 'simple-store-svelte'
 import { cache } from '@/modules/cache.js'
@@ -235,24 +236,24 @@ export const modal = (() => {
 })()
 
 const validPages = Object.values(page).filter(value => typeof value === 'string')
-COMMON.onRequestPage((pageName) => {
+onRequestPage((pageName) => {
   if (validPages.includes(pageName)) {
-    ELECTRON.showAndFocus()
+    DESKTOP.showAndFocus()
     page.navigateTo(pageName)
   } else debug(`onRequestPage: unknown page "${pageName}"`)
 })
 
 const validModals = Object.values(modal).filter(value => typeof value === 'string')
-COMMON.onRequestModal(async (modalName, opts) => {
+onRequestModal(async (modalName, opts) => {
   if (validModals.includes(modalName)) {
     if (modalName === modal.ANIME_DETAILS && Object.keys(opts)?.length) {
       const foundMedia = await cache.requestMedia(opts.id, opts.isMal)
       if (foundMedia) {
-        ELECTRON.showAndFocus()
+        DESKTOP.showAndFocus()
         modal.open(modal.ANIME_DETAILS, foundMedia)
       }
     } else {
-      ELECTRON.showAndFocus()
+      DESKTOP.showAndFocus()
       modal.open(modalName)
     }
   } else debug(`onRequestModal: unknown modal "${modalName}" ${JSON.stringify(opts)}`)

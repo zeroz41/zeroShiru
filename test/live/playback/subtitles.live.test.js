@@ -6,7 +6,7 @@
 // external subtitle files matched to the playing episode.
 //
 //   REAL_DEBRID_API_KEY=<key> RD_TEST_MAGNET=<hash of a cached MKV> npm run test:live
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import RealDebrid from '../../../common/modules/debrid/realdebrid.js'
 import DebridMetadata from '../../../common/modules/debrid/metadata.js'

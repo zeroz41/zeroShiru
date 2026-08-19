@@ -7,7 +7,7 @@
   import { X } from 'lucide-svelte'
   import SmartImage from '@/components/visual/SmartImage.svelte'
   import { episodesList } from '@/modules/episodes.js'
-  import { ELECTRON } from '@/modules/bridge.js'
+  import { DESKTOP } from '@/modules/bridge.js'
   import { modal } from '@/modules/navigation.js'
 
   export let staticMedia
@@ -46,7 +46,7 @@
         {#if trailerId}
           {show()}
           {#if $modal[modal.TRAILER]}
-            {#await ELECTRON.getYouTube() then youtubeServer}
+            {#await DESKTOP.getYouTube() then youtubeServer}
               <div class='pointer-events-auto ratio-16-9 position-relative w-full wm-calc'>
                 <SmartImage class='ratio-16-9 img-cover w-full h-full rounded-bottom-6' images={[...(trailerId ? [`https://i.ytimg.com/vi/${trailerId}/maxresdefault.jpg`, `https://i.ytimg.com/vi/${trailerId}/hqdefault.jpg`] : []), staticMedia.bannerImage, staticMedia.coverImage?.extraLarge, './no_image_episode.jpg' ]} hidden={!loading}/>
                 <iframe

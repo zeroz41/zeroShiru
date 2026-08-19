@@ -2,7 +2,7 @@
   import { click } from '@/modules/lib/click.js'
   import { cache, caches } from '@/modules/cache.js'
   import { SUPPORTS } from '@/modules/support.js'
-  import { COMMON, ELECTRON, TORRENT } from '@/modules/bridge.js'
+  import { COMMON, DESKTOP } from '@/modules/bridge.js'
   import { toast } from 'svelte-sonner'
 
   async function importSettings() {
@@ -78,14 +78,13 @@
   export let settings
 
   function resetSettings () {
-    ELECTRON.setAngle(defaults.angle)
+    DESKTOP.setAngle(defaults.angle)
     cache.resetSettings()
   }
 
   function updateDebug (debug) {
     Debug.disable()
     if (debug) Debug.enable(debug)
-    TORRENT.debug(debug)
   }
 
   $: updateDebug($debugStore)
@@ -197,7 +196,6 @@
     <option value='ui:*'>Interface</option>
     <option value='net:*'>Network</option>
     <option value='torrent:*'>Torrent</option>
-    <option value='webtorrent:*,simple-peer,bittorrent-protocol,bittorrent-dht,bittorrent-lsd,torrent-discovery,bittorrent-tracker:*,ut_metadata,nat-pmp,nat-api'>WebTorrent</option>
     <option value='ui:*,torrent:*,net:*'>Full Stack</option>
   </select>
 </SettingCard>
@@ -222,10 +220,10 @@
 </SettingCard>
 {#if !SUPPORTS.isAndroid}
   <SettingCard title='Open Torrent Devtools' description="Open devtools for the detached torrent process, this allows to inspect code execution and memory. DO NOT PASTE ANY CODE IN THERE, YOU'RE LIKELY BEING SCAMMED IF SOMEONE TELLS YOU TO!">
-    <button type='button' use:click={() => ELECTRON.openTorrentDevTools()} class='btn btn-primary d-flex align-items-center justify-content-center'><span class='text-truncate'>Open Devtools</span></button>
+    <button type='button' use:click={() => DESKTOP.openTorrentDevTools()} class='btn btn-primary d-flex align-items-center justify-content-center'><span class='text-truncate'>Open Devtools</span></button>
   </SettingCard>
   <SettingCard title='Open UI Devtools' description="Open devtools for the UI process, this allows to inspect media playback information, rendering performance and more. DO NOT PASTE ANY CODE IN THERE, YOU'RE LIKELY BEING SCAMMED IF SOMEONE TELLS YOU TO!">
-    <button type='button' use:click={() => ELECTRON.openDevTools()} class='btn btn-primary d-flex align-items-center justify-content-center'><span class='text-truncate'>Open Devtools</span></button>
+    <button type='button' use:click={() => DESKTOP.openDevTools()} class='btn btn-primary d-flex align-items-center justify-content-center'><span class='text-truncate'>Open Devtools</span></button>
   </SettingCard>
 {/if}
 <ChangelogTab {version} class='d-lg-none' />

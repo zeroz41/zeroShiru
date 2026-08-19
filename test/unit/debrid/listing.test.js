@@ -2,7 +2,7 @@
 // and every resolve, checking whether the account already holds the release — and reading it per
 // play put a full listing on the play path (4.6s on a 312 torrent Real-Debrid account). These
 // tests pin the sharing, and the invalidation that is the price of it.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import DebridService, { DebridNotImplementedError } from '../../../common/modules/debrid/service.js'
 

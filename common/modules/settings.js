@@ -3,7 +3,8 @@ import { persisted } from 'svelte-persisted-store'
 import { writable } from 'simple-store-svelte'
 import { defaults } from '@/modules/util.js'
 import { toast } from 'svelte-sonner'
-import { COMMON, TORRENT, ANDROID } from '@/modules/bridge.js'
+import { COMMON, ANDROID } from '@/modules/bridge.js'
+import { handleProtocol, onProviderToken } from '@/modules/protocol.js'
 import Debug from 'debug'
 const debug = Debug('ui:settings')
 
@@ -14,14 +15,9 @@ export let malToken = JSON.parse(localStorage.getItem('MALviewer')) || null
 
 export const debugStore = persisted('debug', '', { serializer: { parse: e => e, stringify: e => e }})
 
-/**
- * Ensures that the webtorrent service is reloaded when the app is reloaded.
- * This is triggered by a `location.reload()` or force reload event.
- */
 const _onbeforeunload = window.onbeforeunload
 window.onbeforeunload = function (event) {
   ANDROID.showSplash()
-  TORRENT.reload()
   if (typeof _onbeforeunload === 'function') {
     const result = _onbeforeunload(event)
     if (typeof result === 'string') return result
@@ -110,13 +106,13 @@ window.addEventListener('paste', (event) => {
         } else if (malMatch) {
           protocol = `shiru://malanime/${malMatch[1]}`
         }
-        COMMON.handleProtocol(protocol)
+        handleProtocol(protocol)
       }
     }
   }
 }, true)
 
-COMMON.onProviderToken((provider, opts) => {
+onProviderToken((provider, opts) => {
   if (provider.match(/anilist/i)) handleToken(opts.token)
   else if (provider.match(/myanimelist/i)) handleMalToken(opts.code, opts.state)
   else debug(`onProviderToken: unknown provider ${provider}`)

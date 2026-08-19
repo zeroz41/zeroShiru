@@ -1,7 +1,7 @@
 // The generic availability contract in DebridService. Every service is asked the same way,
 // whichever way it can answer: one batch call where the API has a cache endpoint, a capped
 // number of probes where it does not, and nothing at all where neither is possible.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import DebridService, { DebridAuthError, DebridError, DebridNotCachedError, DebridUnavailableError, DebridNotImplementedError } from '../../../common/modules/debrid/service.js'
 import { Availability } from '../../../common/modules/debrid/availability.js'

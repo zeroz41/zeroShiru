@@ -4,7 +4,7 @@
 // Optionally set RD_TEST_MAGNET to a magnet you know is cached (an anime MKV)
 // to exercise episode file mapping and remote subtitle metadata end to end.
 // Any torrent the tests add to the account is removed afterwards.
-import { test, after } from 'node:test'
+import { test, afterAll } from 'bun:test'
 import assert from 'node:assert/strict'
 import RealDebrid from '../../../common/modules/debrid/realdebrid.js'
 import { DebridNotCachedError, secureFiles } from '../../../common/modules/debrid/service.js'
@@ -37,7 +37,7 @@ async function fetchWithRetry (url, options, attempts = 3) {
   }
 }
 
-after(async () => {
+afterAll(async () => {
   if (!service || !addedHashes.size) return
   // remove any torrents the tests added so the account stays clean
   const torrents = await service.request('https://api.real-debrid.com/rest/1.0/torrents?limit=100')

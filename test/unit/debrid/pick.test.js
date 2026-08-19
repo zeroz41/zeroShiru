@@ -7,7 +7,7 @@
 //   for episode 1 played the creditless opening
 // - multi-episode files ("Show - 01-12") parse their number as an array, which Number() turns
 //   into NaN, so they could never match and playback fell back to the largest file
-import { test, before } from 'node:test'
+import { test, beforeAll } from 'bun:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -16,7 +16,7 @@ import { pickEpisodeFile, pickPackFile, EpisodeNotInPackError } from '../../../c
 
 /** @type {(names: string[]) => Promise<any[]>} */
 let anitomy
-before(async () => {
+beforeAll(async () => {
   anitomy = (await import('anitomyscript')).default
 })
 

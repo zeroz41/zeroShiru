@@ -7,7 +7,7 @@
 // 404 as an endpoint that never existed. That is why availability is read off the upload here.
 //
 // The invariant these tests exist for: a check must never delete a magnet the user already had.
-import { test, beforeEach } from 'node:test'
+import { test, beforeEach, afterEach } from 'bun:test'
 import assert from 'node:assert/strict'
 import AllDebrid from '../../../common/modules/debrid/alldebrid.js'
 import { DebridError, DebridAuthError, DebridNotCachedError, DebridUnavailableError } from '../../../common/modules/debrid/service.js'
@@ -51,6 +51,7 @@ let service
 beforeEach(() => {
   service = new AllDebrid('test-key')
 })
+afterEach(() => service?.destroy())
 
 test('the key travels as a bearer header, never in the URL', async () => {
   const calls = mockFetch([{ path: '/v4/user', body: ok({ user: { username: 'tester', isPremium: true, premiumUntil: 1799999999 } }) }])

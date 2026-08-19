@@ -3,7 +3,7 @@
   import { onDestroy, onMount } from 'svelte'
   import { settings } from '@/modules/settings.js'
   import { fastPrettyBytes } from '@/modules/util.js'
-  import { add, stage, unload, untrack, complete, reannounce } from '@/modules/torrent.js'
+  import { add, stage, unload, untrack, complete } from '@/modules/torrent.js'
   import { click } from '@/modules/lib/click.js'
   import { eta, createListener } from '@/modules/util.js'
   import { mediaCache } from '@/modules/cache.js'
@@ -105,12 +105,12 @@
         ...(current && infoHash ? [{
           label: 'Stop Playing',
           close: true,
-          onSelect: () => unload(infoHash, true)
+          onSelect: () => unload()
         }] : []),
         ...(!completed && !current && data.progress < 1 && settings.value.torrentPersist && infoHash ? [{
           label: 'Stop Download',
           close: true,
-          onSelect: () => unload(infoHash, true)
+          onSelect: () => complete(infoHash)
         }] : []),
         ...(!completed && !current && data.progress === 1 && settings.value.torrentPersist && infoHash ? [{
           label: 'Stop Seeding',
@@ -127,11 +127,6 @@
           label: 'View Media',
           close: true,
           onSelect: () => viewMedia()
-        }] : []),
-        ...(!completed && infoHash ? [{
-          label: 'Reannounce',
-          close: true,
-          onSelect: () => reannounce(infoHash)
         }] : []),
         ...(data.magnetURI ? [{
           label: 'Copy Magnet',

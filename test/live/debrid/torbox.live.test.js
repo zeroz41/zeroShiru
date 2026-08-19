@@ -8,7 +8,7 @@
 // The invariant that matters most, as with the Real-Debrid suite: this file must leave the
 // account exactly as it found it. The `after` hook fails loudly if a torrent was left behind,
 // and refuses to let anything delete a torrent the account already had.
-import { test, before, after } from 'node:test'
+import { test, beforeAll, afterAll } from 'bun:test'
 import assert from 'node:assert/strict'
 import TorBox from '../../../common/modules/debrid/torbox.js'
 import { DebridNotCachedError } from '../../../common/modules/debrid/service.js'
@@ -41,7 +41,7 @@ async function accountTorrents (attempts = 3) {
 
 let before_ = null
 
-before(async () => {
+beforeAll(async () => {
   if (!service) return
   before_ = await accountTorrents()
 })
@@ -59,7 +59,7 @@ async function deleteTorrent (id) {
 // the user is watching, and Real-Debrid behaves the same way. So this tidies up after the file
 // rather than asserting nothing was added; the assertion that nothing is left behind by a
 // *failed* resolve lives in the test that provokes one.
-after(async () => {
+afterAll(async () => {
   if (!service) return
   service.destroy()
   await new Promise(resolve => setTimeout(resolve, 2_000))

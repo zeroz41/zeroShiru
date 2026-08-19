@@ -1,13 +1,13 @@
 <script>
   import { persisted } from 'svelte-persisted-store'
   import { SUPPORTS } from '@/modules/support.js'
-  import { ELECTRON, COMMON } from '@/modules/bridge.js'
+  import { DESKTOP, COMMON } from '@/modules/bridge.js'
   export let primary = true
 
   let fullScreen = false
-  ELECTRON.isFullScreen().then(isFullScreen => {
+  DESKTOP.isFullScreen().then(isFullScreen => {
     fullScreen = isFullScreen
-    ELECTRON.onFullScreen((isFullScreen) => fullScreen = isFullScreen)
+    DESKTOP.onFullScreen((isFullScreen) => fullScreen = isFullScreen)
   })
   const debug = persisted('debug', '', { serializer: { parse: e => e, stringify: e => e } })
 </script>

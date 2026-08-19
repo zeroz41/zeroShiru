@@ -1,7 +1,7 @@
 // Verifies the remote-MKV metadata approach (HTTP range reads through
 // matroska-metadata) against a real MKV that contains subtitle tracks.
 // Needs network but no API key. Uses the official Matroska test files.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import Metadata from 'matroska-metadata'
 

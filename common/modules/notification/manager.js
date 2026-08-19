@@ -2,7 +2,7 @@ import { sort, dedupe, upsert, splitLocalAndSystem, markAsRead, getFlags } from 
 import { debounce } from '@/modules/util.js'
 import { cache, caches, mediaCache } from '@/modules/cache.js'
 import { derived, writable } from 'simple-store-svelte'
-import { COMMON, ELECTRON } from '@/modules/bridge.js'
+import { COMMON, DESKTOP } from '@/modules/bridge.js'
 
 /** @type {import('simple-store-svelte').Writable<any[]>} */
 export const localNotifications = writable(cache.getEntry(caches.NOTIFICATIONS, 'notifications') || [])
@@ -25,7 +25,7 @@ const incomingNotifications = cache.getEntry(caches.NOTIFICATIONS, 'incomingNoti
  */
 const debounceAsBatch = debounce(() => {
   cache.setEntry(caches.NOTIFICATIONS, 'notifications', localNotifications.value)
-  setTimeout(() => ELECTRON.setUnreadCount(unreadCount.value), 50).unref?.()
+  setTimeout(() => DESKTOP.setUnreadCount(unreadCount.value), 50).unref?.()
 }, 1_500)
 localNotifications.subscribe(debounceAsBatch)
 
@@ -82,4 +82,4 @@ export function resetNotifications() {
   incomingNotifications.length = 0
 }
 
-ELECTRON.setUnreadCount(unreadCount.value)
+DESKTOP.setUnreadCount(unreadCount.value)

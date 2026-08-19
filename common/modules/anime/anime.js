@@ -11,7 +11,8 @@ import { animeSchedule } from '@/modules/anime/animeschedule.js'
 import AnimeResolver from '@/modules/anime/animeresolver.js'
 import { settings } from '@/modules/settings.js'
 import { cache, caches, mediaCache } from '@/modules/cache.js'
-import { COMMON, ELECTRON } from '@/modules/bridge.js'
+import { COMMON, DESKTOP } from '@/modules/bridge.js'
+import { onRequestPlay } from '@/modules/protocol.js'
 import { status } from '@/modules/networking.js'
 import { derived } from 'simple-store-svelte'
 import Helper from '@/modules/providers/helper.js'
@@ -23,8 +24,8 @@ const debug = Debug('ui:anime')
 
 const imageRx = /\.(jpeg|jpg|gif|png|webp)/i
 
-COMMON.onRequestPlay((opts) => {
-  ELECTRON.showAndFocus()
+onRequestPlay((opts) => {
+  DESKTOP.showAndFocus()
   handlePlay(opts.id, opts.episode, opts.torrentOnly)
 })
 
@@ -82,7 +83,7 @@ export function handlePlay (id, episode, torrentOnly) {
 export async function handleAnime (detail) {
   const foundMedia = await cache.requestMedia(detail.id, detail.isMal)
   if (foundMedia) {
-    ELECTRON.showAndFocus()
+    DESKTOP.showAndFocus()
     modal.open(modal.ANIME_DETAILS, foundMedia)
   }
 }

@@ -3,7 +3,7 @@
 // clock the way a user moves the seek bar. The failure they were written against: a seek while
 // the connection was stalled never restarted the stream, because a seek was only ever noticed
 // while chunks were arriving — on a bad link, subtitles died the moment the user jumped ahead.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import DebridMetadata from '../../../common/modules/debrid/metadata.js'
 import { FIXTURE, serveRemote, until, subtitleSpy } from './remote.js'

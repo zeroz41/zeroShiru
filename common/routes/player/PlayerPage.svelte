@@ -28,7 +28,7 @@
   import Keybinds, { loadWithDefaults, condition } from 'svelte-keybinds'
   import { SUPPORTS } from '@/modules/support.js'
   import 'rvfc-polyfill'
-  import { ELECTRON, ANDROID, TORRENT } from '@/modules/bridge.js'
+  import { DESKTOP, ANDROID, TORRENT } from '@/modules/bridge.js'
   import { unload } from '@/modules/torrent.js'
   import { Settings, Gauge, Timer, X, Minus, ArrowDown, ArrowUp, Captions, CaptionsOff, CircleHelp, Contrast, FastForward, Keyboard, EllipsisVertical, SquareArrowOutUpRight, List, Eye, FilePlus2, ListMusic, ListVideo, Maximize, Minimize, Pause, PictureInPicture, PictureInPicture2, Play, Proportions, RefreshCcw, Rewind, RotateCcw, RotateCw, ScreenShare, SkipBack, SkipForward, Users, Volume1, Volume2, VolumeX, SlidersVertical, SquarePen, Milestone, ClockArrowDown, ClockArrowUp, Cloud } from 'lucide-svelte'
   import Debug from 'debug'
@@ -310,8 +310,8 @@
       src = file.url
       if (!launchExternal) {
         subs = new Subtitles(video, files, current, handleHeaders)
-        // debrid streams never pass through the torrent client, parse metadata from the remote file instead
-        if (current?.debrid) debridMeta = new DebridMetadata(current, files, subs, { getTime: () => currentTime, onChapters: _chapters => { chapters = _chapters; embeddedChapters = _chapters } })
+        // every stream (debrid or the torrent gateway) is a range-served URL; parse embedded metadata from it
+        if (current?.url) debridMeta = new DebridMetadata(current, files, subs, { getTime: () => currentTime, onChapters: _chapters => { chapters = _chapters; embeddedChapters = _chapters } })
         video.load()
         await loadAnimeProgress()
       } else video.load()
@@ -480,20 +480,6 @@
         })
       }
       externalPlaying = true
-      if (SUPPORTS.isAndroid) {
-        TORRENT.onAndroidExternal(url => {
-          const startTime = Date.now()
-          const externalWatched = () => {
-            const watchTime = (Date.now() - startTime) / 1_000
-            const watchDuration = duration * 60
-            checkCompletionByTime(watchTime, watchDuration)
-            currentTime = watchTime > watchDuration ? watchDuration : watchTime
-            targetTime = watchTime > watchDuration ? watchDuration : watchTime
-            launchedExternal = false
-          }
-          ANDROID.launchExternal?.(url)?.then?.(() => externalWatched())
-        })
-      }
       TORRENT.launchExternal(current)
     } else paused = !paused
     resetImmerse()
@@ -511,9 +497,9 @@
       }
     }
   }
-  ELECTRON.isMinimized().then(isMinimized => {
+  DESKTOP.isMinimized().then(isMinimized => {
     handleVisibility(!isMinimized)
-    ELECTRON.onMinimize(handleVisibility)
+    DESKTOP.onMinimize(handleVisibility)
   })
   function tryPlayNext () {
     currentSkippable = null
@@ -1203,12 +1189,6 @@
 
   let chapters = []
   let embeddedChapters = []
-  TORRENT.onChapters(_chapters => {
-    if (_chapters.length) {
-      chapters = _chapters
-      embeddedChapters = _chapters
-    }
-  })
   async function findChapters () {
     if ((!chapters.length || settings.value.playerChapterSkip.match(/aniskip/i)) && current?.media?.media) {
       const _chapters = await getChaptersAniSkip(current, safeduration)
@@ -1559,7 +1539,7 @@
   function setDiscordRPC (np = media, browsing) {
     if ((!np || Object.keys(np).length === 0) && !browsing) return
     if (hidden) {
-      ELECTRON.clearPresence()
+      DESKTOP.clearPresence()
       return
     }
     let activity
@@ -1627,7 +1607,7 @@
         type: 3
       }
     }
-    ELECTRON.setPresence({ activity })
+    DESKTOP.setPresence({ activity })
   }
 </script>
 
@@ -1808,7 +1788,7 @@
       <span class='position-absolute rounded-10 top-0 right-0 m-10 btn-shadow button' class:ctrl={!SUPPORTS.isAndroid} class:mr-40={!SUPPORTS.isAndroid} class:mr-50={SUPPORTS.isAndroid} title='Minimize' data-name='playPause' use:click={() => (playPage.set(!playPage.value))}>
         <Minus size='1.9rem' strokeWidth='3'/>
       </span>
-      <span class='position-absolute rounded-10 top-0 right-0 m-10 btn-shadow button' class:ctrl={!SUPPORTS.isAndroid} title='Exit' data-name='playPause' use:click={() => { unload(null, null, true); if ($page === page.PLAYER) page.navigateTo(page.HOME)}}>
+      <span class='position-absolute rounded-10 top-0 right-0 m-10 btn-shadow button' class:ctrl={!SUPPORTS.isAndroid} title='Exit' data-name='playPause' use:click={() => { unload(); if ($page === page.PLAYER) page.navigateTo(page.HOME)}}>
         <X size='1.9rem' strokeWidth='3'/>
       </span>
     {/if}

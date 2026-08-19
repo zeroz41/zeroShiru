@@ -1,50 +1,48 @@
+// The host seam. This is the ONLY file in common/ that touches a host API:
+// hosts (Tauri desktop/Android, TV bootstraps) inject window.torrent /
+// window.common / window.android / window.desktop, and everything merges over
+// noop defaults so a host may implement its surface incrementally.
 const noopVoid = () => {}
 const noopAsyncVoid = async () => {}
 const noopAsyncBool = async () => false
 const noopAsyncString = async () => ''
+
+// the torrent session lives in the Rust core; commands go down, state is pushed back
 const torrentDefaults = {
-  reload: noopVoid,
-  onCrash: noopVoid,
-  onRequest: noopVoid,
-  debug: noopVoid,
+  /** boots the session with the user's torrent settings; resolves when ready */
+  start: noopAsyncVoid,
+  /** load a magnet / hash / .torrent URL / .torrent bytes for playback */
+  stream: noopAsyncVoid,
+  /** pre-download in the background without touching playback */
+  stage: noopAsyncVoid,
+  /** stop playback; finished torrents keep seeding */
+  unload: noopAsyncVoid,
+  /** forget a torrent completely, data included */
+  untrack: noopAsyncVoid,
+  /** stop seeding but keep files */
+  complete: noopAsyncVoid,
+  /** refresh the pushed snapshot */
   rescan: noopAsyncVoid,
-  scrape: noopAsyncVoid,
-  stream: noopVoid,
-  stage: noopVoid,
-  complete: noopVoid,
-  unload: noopVoid,
-  untrack: noopVoid,
-  reannounce: noopVoid,
-  onStats: noopVoid,
-  onFiles: noopVoid,
-  onMagnet: noopVoid,
-  onTracks: noopVoid,
-  offTracks: noopVoid,
-  onSubtitles: noopVoid,
-  offSubtitles: noopVoid,
-  onChapters: noopVoid,
-  onProgress: noopVoid,
-  onCurrentStats: noopVoid,
-  onExternalReady: noopVoid,
-  onExternalWatched: noopVoid,
-  onAndroidExternal: noopVoid,
-  onLoaded: noopVoid,
-  onUntrack: noopVoid,
-  onStage: noopVoid,
-  onSeed: noopVoid,
-  onComplete: noopVoid,
-  onCompletedStats: noopVoid,
+  /** seeder/leecher counts for a list of info hashes */
+  scrape: async (hashes) => [],
+  /** tell the engine which file the player opened */
   setPlayback: noopVoid,
-  restoreSession: noopVoid,
+  /** open the current file in the configured external player */
   launchExternal: noopVoid,
-  updateNetwork: noopVoid,
   updateSettings: noopVoid,
+  onStats: noopVoid,
+  onCurrentStats: noopVoid,
+  onProgress: noopVoid,
+  onFiles: noopVoid,
+  onLoaded: noopVoid,
   onNotify: noopVoid,
-  portRequest: noopAsyncVoid
+  onExternalReady: noopVoid,
+  onExternalWatched: noopVoid
 }
+
 const commonDefaults = {
   getAppVersion: noopAsyncString,
-  getPlatformInfo: () => ({ platform: '', arch: '', flatpak: undefined, session: '', development: false, manualInstall: false }),
+  getPlatformInfo: () => ({ platform: '', arch: '', development: false, capabilities: {} }),
   getDeviceInfo: noopAsyncVoid,
   exportLog: noopAsyncVoid,
   resetLog: noopAsyncVoid,
@@ -55,7 +53,8 @@ const commonDefaults = {
   pickFile: noopAsyncString,
   pickFolder: noopAsyncString,
   linkAccount: noopAsyncVoid,
-  handleProtocol: noopVoid,
+  /** raw shiru:// and magnet: URLs; routing lives in modules/protocol.js */
+  onProtocol: noopVoid,
   /** @param {'stable' | 'nightly'} channel */
   setUpdateChannel: (channel = 'stable') => {},
   /** @param {'stable' | 'nightly'} channel */
@@ -64,13 +63,9 @@ const commonDefaults = {
   onUpdateAvailable: noopVoid,
   onUpdateDownloaded: noopVoid,
   onUpdateProgress: noopVoid,
-  onUpdateAborted: noopVoid,
-  onLobbyInvite: noopVoid,
-  onRequestPage: noopVoid,
-  onRequestModal: noopVoid,
-  onProviderToken: noopVoid,
-  onRequestPlay: noopVoid
+  onUpdateAborted: noopVoid
 }
+
 const androidDefaults = {
   minimize: noopVoid,
   showSplash: noopVoid,
@@ -82,7 +77,8 @@ const androidDefaults = {
   requestFileAccess: async () => ({ granted: true }),
   launchExternal: noopAsyncVoid
 }
-const electronDefaults = {
+
+const desktopDefaults = {
   exit: noopVoid,
   setDoH: noopVoid,
   getAngle: async () => 'default',
@@ -94,7 +90,6 @@ const electronDefaults = {
   hideWindow: noopVoid,
   showAndFocus: noopVoid,
   onExitIntent: noopVoid,
-  openTorrentDevTools: noopVoid,
   openDevTools: noopVoid,
   setUnreadCount: noopVoid,
   setDiscordRPC: noopVoid,
@@ -103,9 +98,7 @@ const electronDefaults = {
   getYouTube: async () => 'https://www.youtube-nocookie.com'
 }
 
-// hosts may implement the surface incrementally (the Tauri host grows command by
-// command), so host objects override the noop defaults instead of replacing them
 export const TORRENT = { ...torrentDefaults, ...window.torrent }
 export const COMMON = { ...commonDefaults, ...window.common }
 export const ANDROID = { ...androidDefaults, ...window.android }
-export const ELECTRON = { ...electronDefaults, ...window.electron }
+export const DESKTOP = { ...desktopDefaults, ...window.desktop }

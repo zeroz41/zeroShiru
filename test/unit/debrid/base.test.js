@@ -1,7 +1,7 @@
 // The base class is the contract every debrid service inherits. These tests pin
 // the behavior an implementer gets for free, so adding a service stays a matter of
 // writing three methods in one file.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import DebridService, { DebridError, DebridNotImplementedError } from '../../../common/modules/debrid/service.js'
 import { debridServices } from '../../../common/modules/debrid/services.js'

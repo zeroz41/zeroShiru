@@ -4,7 +4,7 @@
 // the resolved list is a window centred on the wanted episode: with a 12 file window the lowest
 // episode present is the wanted one minus six, so picking episode 10 played 4 and picking 24
 // played 18. These pin the request that now outranks that guess.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import DebridService from '../../../common/modules/debrid/service.js'
 import TorBox from '../../../common/modules/debrid/torbox.js'

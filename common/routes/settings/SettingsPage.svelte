@@ -3,7 +3,7 @@
   import { SUPPORTS } from '@/modules/support.js'
   import { capitalize, debounce } from '@/modules/util.js'
   import { toast } from 'svelte-sonner'
-  import { ANDROID, COMMON, ELECTRON } from '@/modules/bridge.js'
+  import { ANDROID, COMMON, DESKTOP } from '@/modules/bridge.js'
   import Debug from 'debug'
   const debug = Debug('ui:settings-view')
 
@@ -19,14 +19,14 @@
     win32: 'Windows'
   }
   export let version = '1.0.0'
-  const debounceRPC = debounce((state) => ELECTRON.setDiscordRPC(state), 100)
+  const debounceRPC = debounce((state) => DESKTOP.setDiscordRPC(state), 100)
   COMMON.getAppVersion().then(_version => {
     version = _version
     debug(`v${version} ${platformMap[COMMON.getPlatformInfo().platform] || 'dev'} ${COMMON.getPlatformInfo().arch || 'dev'} ${capitalize(COMMON.getPlatformInfo().session) || ''}`, JSON.stringify(settings))
   })
   debounceRPC(settings.value.enableRPC)
-  if (settings.value.enableDoH) ELECTRON.setDoH(settings.value.doHURL)
-  if (SUPPORTS.angle) settings.value.angle = await ELECTRON.getAngle()
+  if (settings.value.enableDoH) DESKTOP.setDoH(settings.value.doHURL)
+  if (SUPPORTS.angle) settings.value.angle = await DESKTOP.getAngle()
   if (SUPPORTS.isAndroid) setTimeout(() => requestFileAccess(settings.value.torrentPathNew), 2_500).unref?.()
   function requestFileAccess(path, cb) {
     if (path && path !== '/tmp') {

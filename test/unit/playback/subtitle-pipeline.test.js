@@ -3,7 +3,7 @@
 // client) produces, so a regression here breaks subtitles for both transports at once. The
 // browser-only pieces (JASSUB, settings, bridge) are stubbed by the test loader; everything
 // else is the real class the player instantiates.
-import { test, beforeEach } from 'node:test'
+import { test, beforeEach } from 'bun:test'
 import assert from 'node:assert/strict'
 import Subtitles from '@/modules/subtitles.js'
 import JASSUB from 'jassub'

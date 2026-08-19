@@ -1,7 +1,7 @@
 // The torrent client and debrid playback both pick external subtitle and font files with these
 // helpers. If they drift, one lane silently loads the wrong subtitles or renders them with the
 // wrong fonts (season packs are the case that bites: every episode ships its own .ass).
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import { matchFontFiles, matchSubtitleFiles, matroskaRx } from '../../../common/modules/util.js'
 

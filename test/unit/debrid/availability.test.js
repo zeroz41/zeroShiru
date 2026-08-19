@@ -1,7 +1,7 @@
 // The four state vocabulary the whole debrid layer speaks. Small module, but everything else
 // leans on these invariants: unknown is an absence of an answer rather than a negative one,
 // and anything unrecognised degrades to unknown rather than to "not cached".
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import {
   Availability,

@@ -1,6 +1,6 @@
 [install]
-# webpack configs alias into the flat root node_modules (e.g. ../node_modules/
-# bittorrent-tracker, ../node_modules/webrtc-polyfill), so the hoisted layout is
-# required until webpack is fully removed (migration phase 11). Only then may
-# this switch to "isolated".
+# the flat layout the workspace was migrated on; isolated is a future cleanup
 linker = "hoisted"
+
+[test]
+preload = ["./test/bun-register.js"]

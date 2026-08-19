@@ -1,7 +1,7 @@
 // TorBox against a mocked API. No live key exists yet, so these pin the request shapes and the
 // response handling the implementation was written against: the `{ success, data }` envelope,
 // the bulk cache check, and the one endpoint that authenticates differently from the rest.
-import { test, beforeEach } from 'node:test'
+import { test, beforeEach, afterEach } from 'bun:test'
 import assert from 'node:assert/strict'
 import TorBox from '../../../common/modules/debrid/torbox.js'
 import { DebridError, DebridAuthError, DebridNotCachedError, DebridUnavailableError } from '../../../common/modules/debrid/service.js'
@@ -68,6 +68,7 @@ let service
 beforeEach(() => {
   service = new TorBox('test-key')
 })
+afterEach(() => service?.destroy())
 
 test('validate reads the account behind the key', async () => {
   mockFetch([{ path: '/user/me', body: ok({ email: 'tester@example.test', plan: 2, premium_expires_at: '2030-01-01' }) }])

@@ -4,7 +4,6 @@ import { toTS, subRx, videoRx } from '@/modules/util.js'
 import { settings } from '@/modules/settings.js'
 import clipboard from '@/modules/lib/clipboard.js'
 import { SUPPORTS } from '@/modules/support.js'
-import { TORRENT } from '@/modules/bridge.js'
 
 const defaultHeader = `[Script Info]
 Title: English (US)
@@ -117,8 +116,6 @@ export default class Subtitles {
       this.addSingleSubtitleFile(new File([detail.data], detail.name))
     }
 
-    TORRENT.onTracks(this.handleTracks)
-    TORRENT.onSubtitles(this.handleSubtitle, this.handleFile, this.handleSubtitleFile)
     clipboard.addEventListener('text', this.handleClipboardText)
     clipboard.addEventListener('files', this.handleClipboardFiles)
   }
@@ -298,8 +295,6 @@ export default class Subtitles {
   }
 
   destroy () {
-    TORRENT.offTracks()
-    TORRENT.offSubtitles()
     clipboard.removeEventListener('text', this.handleClipboardText)
     clipboard.removeEventListener('files', this.handleClipboardFiles)
     this.stream?.destroy()

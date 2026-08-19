@@ -9,7 +9,7 @@
 // account happens to hold, absolute numbering included.
 //
 //   TORBOX_API_KEY=<key> [TB_TEST_PACK_HASH=<hash>] [TB_TEST_PACK_EPISODE=<n>] npm run test:live
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import TorBox from '../../../common/modules/debrid/torbox.js'
 import { pickEpisodeFile } from '../../../common/modules/debrid/pick.js'

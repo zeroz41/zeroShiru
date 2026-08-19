@@ -2,7 +2,7 @@
 // after adding. Playback sits on top of every one of these paths, so each has to end in a typed
 // error or a clean recovery within its budget — a hang here is a player that never starts, and
 // an unremoved torrent is clutter on the user's account.
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import TorBox from '../../../common/modules/debrid/torbox.js'
 import { DebridError, DebridNotCachedError } from '../../../common/modules/debrid/service.js'

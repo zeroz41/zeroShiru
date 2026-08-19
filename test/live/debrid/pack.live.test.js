@@ -5,7 +5,7 @@
 //
 //   REAL_DEBRID_API_KEY=xxx RD_TEST_PACK_MAGNET=<hash of a cached pack> \
 //   RD_TEST_PACK_EPISODE=25 npm run test:live
-import { test } from 'node:test'
+import { test } from 'bun:test'
 import assert from 'node:assert/strict'
 import RealDebrid from '../../../common/modules/debrid/realdebrid.js'
 import { DebridNotCachedError, secureFiles } from '../../../common/modules/debrid/service.js'

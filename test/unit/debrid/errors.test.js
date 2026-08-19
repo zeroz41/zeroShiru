@@ -1,7 +1,7 @@
 // Failure-reporting tests: every failure mode must produce a message a user can
 // act on. Regression guard for "Request failed with status undefined", which is
 // what the offline short-circuit used to surface as.
-import { test, beforeEach } from 'node:test'
+import { test, beforeEach, afterEach } from 'bun:test'
 import assert from 'node:assert/strict'
 import RealDebrid from '../../../common/modules/debrid/realdebrid.js'
 import { DebridError, DebridAuthError, DebridNetworkError } from '../../../common/modules/debrid/service.js'
@@ -10,6 +10,7 @@ let service
 beforeEach(() => {
   service = new RealDebrid('test-key')
 })
+afterEach(() => service?.destroy())
 
 /** Shiru's networking layer returns this plain object instead of a Response while offline. */
 const OFFLINE_RESULT = { message: 'failed to fetch: client is offline' }

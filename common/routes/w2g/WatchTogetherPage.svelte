@@ -5,6 +5,7 @@
   import { SUPPORTS } from '@/modules/support.js'
   import { page } from '@/modules/navigation.js'
   import { COMMON, TORRENT } from '@/modules/bridge.js'
+  import { onLobbyInvite } from '@/modules/protocol.js'
   import { loadedTorrent } from '@/modules/torrent.js'
   import { settings } from '@/modules/settings.js'
   import { toast } from 'svelte-sonner'
@@ -47,14 +48,14 @@
 
   // Only allow host to change magnet.
   // TODO: Make this an optional setting.
-  TORRENT.onMagnet(magnet => {
-    if (state.value?.isHost) state.value.magnetLink(magnet)
+  TORRENT.onLoaded(detail => {
+    if (detail && state.value?.isHost) state.value.magnetLink({ magnet: detail.magnet, hash: detail.infoHash })
   })
 
   w2gEmitter.addEventListener('player', ({ detail }) => state.value?.playerStateChanged(detail))
   w2gEmitter.addEventListener('index', ({ detail }) => state.value?.mediaIndexChanged(detail))
 
-  COMMON.onLobbyInvite((link) => {
+  onLobbyInvite((link) => {
     if (settings.value.w2g || COMMON.getPlatformInfo().development) {
       joinLobby(link)
       page.navigateTo(page.WATCH_TOGETHER)

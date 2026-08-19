@@ -4,7 +4,7 @@
   import NavLink from '@/components/navigation/components/NavLink.svelte'
   import NavBar from '@/components/navigation/components/NavBar.svelte'
   import { page, drawerOpen } from '@/modules/navigation.js'
-  import { ELECTRON, COMMON } from '@/modules/bridge.js'
+  import { DESKTOP, COMMON } from '@/modules/bridge.js'
   import { fadeIn, fadeOut } from '@/modules/util.js'
   import { MoveLeft, MoveRight } from 'lucide-svelte'
   import { settings } from '@/modules/settings.js'
@@ -37,9 +37,9 @@
 
   /** @type {boolean} */
   let fullScreen = false
-  ELECTRON.isFullScreen().then(isFullScreen => {
+  DESKTOP.isFullScreen().then(isFullScreen => {
     fullScreen = isFullScreen
-    ELECTRON.onFullScreen((isFullScreen) => fullScreen = isFullScreen)
+    DESKTOP.onFullScreen((isFullScreen) => fullScreen = isFullScreen)
   })
 
   /** Closes the overflow drawer */
