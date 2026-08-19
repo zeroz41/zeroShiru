@@ -2,6 +2,8 @@
 # Builds the shared Rust core for the TV hosts: wasm32 + wasm-bindgen web glue.
 # Baseline WebAssembly only (no SIMD/threads) — migration report section 55.
 set -euo pipefail
+PATH="$HOME/.cargo/bin:$PATH"
+export PATH
 cd "$(dirname "$0")/.."
 cargo build -p shiru-wasm-bridge --target wasm32-unknown-unknown --release
 mkdir -p dist/tv-core

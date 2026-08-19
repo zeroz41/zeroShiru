@@ -52,14 +52,14 @@ async function range (headerValue) {
   return { status: res.status, contentRange: res.headers.get('content-range'), length: body.length, body }
 }
 
-test('the head of the file serves with a correct 206, which playback start needs', { skip, timeout: 120_000 }, async () => {
+test.skipIf(Boolean(skip))('the head of the file serves with a correct 206, which playback start needs', async () => {
   const res = await range('bytes=0-1023')
   assert.equal(res.status, 206, 'a 200 here means the server ignores ranges and seeking is broken')
   assert.equal(res.length, 1024, 'exactly the bytes asked for')
   assert.match(res.contentRange || '', new RegExp(`bytes 0-1023/${video.size}`), 'Content-Range must carry the real file size, the player sizes its seek bar from it')
-})
+}, 120_000)
 
-test('a seek lands mid-file: ranges at arbitrary offsets serve correctly', { skip, timeout: 120_000 }, async () => {
+test.skipIf(Boolean(skip))('a seek lands mid-file: ranges at arbitrary offsets serve correctly', async () => {
   // the offsets a real seek bar produces: nowhere near cluster or chunk boundaries
   for (const fraction of [0.25, 0.5, 0.75]) {
     const start = Math.floor(video.size * fraction) + 12_345
@@ -68,9 +68,9 @@ test('a seek lands mid-file: ranges at arbitrary offsets serve correctly', { ski
     assert.equal(res.length, 4_096)
     assert.match(res.contentRange || '', new RegExp(`bytes ${start}-${start + 4095}/${video.size}`))
   }
-})
+}, 120_000)
 
-test('an open-ended range from a seek point streams, the way <video> requests it', { skip, timeout: 120_000 }, async () => {
+test.skipIf(Boolean(skip))('an open-ended range from a seek point streams, the way <video> requests it', async () => {
   const start = Math.floor(video.size * 0.6)
   const res = await fetch(video.url, { headers: { Range: `bytes=${start}-` } })
   assert.equal(res.status, 206)
@@ -78,25 +78,25 @@ test('an open-ended range from a seek point streams, the way <video> requests it
   const { value } = await reader.read()
   await reader.cancel()
   assert.ok(value?.length > 0, 'bytes must flow from the seek point without buffering the whole tail')
-})
+}, 120_000)
 
-test('the very end of the file serves, which MKV metadata (cues, attachments) often needs', { skip, timeout: 120_000 }, async () => {
+test.skipIf(Boolean(skip))('the very end of the file serves, which MKV metadata (cues, attachments) often needs', async () => {
   const start = video.size - 1024
   const res = await range(`bytes=${start}-${video.size - 1}`)
   assert.equal(res.status, 206, 'seek-to-end and duration probing read here')
   assert.equal(res.length, 1024)
-})
+}, 120_000)
 
-test('two overlapping ranges stream concurrently, as video playback plus subtitle parsing do', { skip, timeout: 120_000 }, async () => {
+test.skipIf(Boolean(skip))('two overlapping ranges stream concurrently, as video playback plus subtitle parsing do', async () => {
   // during playback the <video> element holds one connection and DebridMetadata a second
   const [head, tail] = await Promise.all([range('bytes=0-65535'), range(`bytes=${Math.floor(video.size / 2)}-${Math.floor(video.size / 2) + 65_535}`)])
   assert.equal(head.status, 206)
   assert.equal(tail.status, 206)
   assert.equal(head.length, 65_536)
   assert.equal(tail.length, 65_536)
-})
+}, 120_000)
 
-test('seek latency: first byte from a cold mid-file offset arrives fast enough to not stall', { skip, timeout: 120_000 }, async () => {
+test.skipIf(Boolean(skip))('seek latency: first byte from a cold mid-file offset arrives fast enough to not stall', async () => {
   const start = Math.floor(video.size * 0.8) + 7
   const began = Date.now()
   const res = await fetch(video.url, { headers: { Range: `bytes=${start}-` } })
@@ -107,18 +107,18 @@ test('seek latency: first byte from a cold mid-file offset arrives fast enough t
   console.log(`  first byte after a cold 80% seek: ${firstByte}ms`)
   assert.ok(value?.length > 0)
   assert.ok(firstByte < 15_000, `a seek that takes ${firstByte}ms reads as a hung player`)
-})
+}, 120_000)
 
-test('ranged reads agree with each other byte for byte', { skip, timeout: 120_000 }, async () => {
+test.skipIf(Boolean(skip))('ranged reads agree with each other byte for byte', async () => {
   // a CDN edge serving different bytes for the same range corrupts playback undetectably
   const start = Math.floor(video.size * 0.3)
   const [a, b] = await Promise.all([range(`bytes=${start}-${start + 2_047}`), range(`bytes=${start}-${start + 2_047}`)])
   assert.deepEqual(a.body, b.body)
   const inner = await range(`bytes=${start + 512}-${start + 1_023}`)
   assert.deepEqual(inner.body, a.body.slice(512, 1_024), 'a sub-range must be a slice of the larger read')
-})
+}, 120_000)
 
-test('DebridMetadata streams real subtitle metadata from the live link where the container has any', { skip, timeout: 180_000 }, async () => {
+test.skipIf(Boolean(skip))('DebridMetadata streams real subtitle metadata from the live link where the container has any', async () => {
   if (!/\.mkv$/i.test(video.name)) return skipped(`fixture resolves to ${video.name}, no Matroska metadata to stream`)
   const seen = { tracks: [], subtitles: [], fonts: [], files: [] }
   const spy = {
@@ -132,4 +132,4 @@ test('DebridMetadata streams real subtitle metadata from the live link where the
   metadata.destroy()
   assert.equal(seen.files.length, matchSubtitleFiles(resolved.files, video.name).length, 'external subs must match the shared matcher')
   console.log(`  ${tracks.length} embedded subtitle tracks in the live fixture`)
-})
+}, 180_000)

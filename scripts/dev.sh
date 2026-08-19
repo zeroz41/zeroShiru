@@ -6,7 +6,11 @@
 set -e
 cd "$(dirname "$0")/../frontend"
 
-vite common &
+# bun and cargo are often installed without touching the shell PATH
+PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$PATH"
+export PATH
+
+bun x --bun vite common &
 VITE=$!
 # whatever ends the window ends the dev server with it, including Ctrl-C
 trap 'kill $VITE 2>/dev/null || true' EXIT INT TERM

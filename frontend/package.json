@@ -14,11 +14,11 @@
     "test:rust": "cargo test --workspace",
     "test:rust:live": "cargo test -p shiru-debrid --features native --test live -- --ignored --nocapture",
     "test:torrent": "cargo run -p shiru-torrent --features native --example smoke",
-    "build": "vite build common",
+    "build": "bun x --bun vite build common",
     "tauri:dev": "../scripts/dev.sh",
-    "tauri:build": "vite build common && cargo build --release -p shiru-tauri",
-    "tauri:bundle": "vite build common && cd ../hosts/tauri && cargo tauri build",
-    "android:build": "vite build common && cd ../hosts/tauri && cargo tauri android build --apk",
+    "tauri:build": "bun x --bun vite build common && cargo build --release -p shiru-tauri",
+    "tauri:bundle": "bun x --bun vite build common && cd ../hosts/tauri && cargo tauri build",
+    "android:build": "bun x --bun vite build common && cd ../hosts/tauri && cargo tauri android build --apk",
     "tv:core": "../scripts/build-tv-core.sh"
   },
   "devDependencies": {

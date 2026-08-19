@@ -59,7 +59,7 @@ const isNetworkError = error => {
   return false
 }
 
-test('parses tracks, chapters and subtitles from a remote MKV over HTTP ranges', { timeout: 180_000 }, async () => {
+test('parses tracks, chapters and subtitles from a remote MKV over HTTP ranges', async () => {
   if (!await reachable(URL8)) return skipped(`${new URL(URL8).host} unreachable, this test needs network`)
 
   const file = remoteFile(URL8, 'test5.mkv')
@@ -90,4 +90,4 @@ test('parses tracks, chapters and subtitles from a remote MKV over HTTP ranges',
     metadata.destroy()
     file.destroy()
   }
-})
+}, 180_000)

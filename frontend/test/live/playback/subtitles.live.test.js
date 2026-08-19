@@ -45,7 +45,7 @@ function subtitleSpy () {
   }
 }
 
-test('a debrid stream feeds the player the same subtitle data a torrent would', { skip, timeout: 300_000 }, async () => {
+test.skipIf(Boolean(skip))('a debrid stream feeds the player the same subtitle data a torrent would', async () => {
   const resolved = await resolveTorBox(HASH, { filter: name => /\.(mkv|mp4|ass|srt)$/i.test(name) })
   const videos = resolved.files.filter(file => /\.mkv$/i.test(file.name))
   // play the episode that was asked for, not merely the first file of a pack
@@ -103,9 +103,9 @@ test('a debrid stream feeds the player the same subtitle data a torrent would', 
     console.log(`  First cue: "${String(spy.seen.subtitles[0].subtitle.text).slice(0, 60)}"`)
   }
 
-})
+}, 300_000)
 
-test('a seek far into the file restarts the subtitle stream near the seek', { skip, timeout: 300_000 }, async () => {
+test.skipIf(Boolean(skip))('a seek far into the file restarts the subtitle stream near the seek', async () => {
   const resolved = await resolveTorBox(HASH, { filter: name => /\.mkv$/i.test(name) })
   const video = resolved.files[0]
   if (!video) {
@@ -161,4 +161,4 @@ test('a seek far into the file restarts the subtitle stream near the seek', { sk
     metadata.destroy()
     globalThis.fetch = realFetch
   }
-})
+}, 300_000)
