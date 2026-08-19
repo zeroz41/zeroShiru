@@ -530,7 +530,8 @@
   })
 
   function setMediaSession (nowPlaying) {
-    if (typeof MediaMetadata === 'undefined') return
+    // both are absent on some engines, and writing to the missing one throws mid-playback
+    if (typeof MediaMetadata === 'undefined' || !navigator.mediaSession) return
     const name = [nowPlaying.title, nowPlaying.episode, nowPlaying.episodeTitle, 'zeroShiru'].filter(i => i).join(' - ')
 
     navigator.mediaSession.metadata = nowPlaying.thumbnail

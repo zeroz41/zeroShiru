@@ -1,3 +1,4 @@
+import { tap } from '@/modules/lib/haptics.js'
 import { SUPPORTS } from '@/modules/support.js'
 import { ANDROID } from '@/modules/bridge.js'
 
@@ -63,7 +64,7 @@ export function click(node, cb = noop) {
   node.role = 'button'
   node.addEventListener('click', e => {
     e.stopPropagation()
-    navigator.vibrate(15)
+    tap()
     cb(e)
   })
   node.addEventListener('pointerup', e => {
@@ -246,7 +247,7 @@ export function hoverClick(node, [cb = noop, hoverUpdate = noop, rcb = noop]) {
     lastTapElement?.(false)
     if (lastTapElement === hoverUpdate) {
       lastTapElement = null
-      navigator.vibrate(15)
+      tap()
       hoverUpdate(false)
       document.removeEventListener('pointerup', handleOutsideClick)
       cb(e)
