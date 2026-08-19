@@ -25,7 +25,7 @@ it renders, and asks the core.
 | Android | Tauri Android APK assembles from the same core; Kotlin adapters (Media3, PiP, foreground service, SAF) not started |
 | TV | 160KB WASM core builds; `hosts/tizen` + `hosts/webos` scaffolds, hardware-gated |
 | Packaging | `release.yml` builds AppImage + deb, MSI + NSIS, universal DMG and both Android ABIs from the Tauri CLI |
-| Tests | 128 JS (`bun run test`) + 200+ Rust (`cargo test --workspace`), all green. Live suites are opt-in: `test:rust:live` (debrid, real account), `test:live` (playback, real stream), `test:torrent` (one real swarm) |
+| Tests | 145 JS (`bun run test`) + 209 Rust (`cargo test --workspace`), all green. Live suites are opt-in: `test:rust:live` (debrid, real account), `test:live` (playback, real stream), `test:torrent` (one real swarm) |
 
 ## What has been proven live
 
@@ -88,7 +88,7 @@ and `manager.rs` hold these to it.
 ## Running things
 
 ```
-bun run test                # 128 JS unit tests
+bun run test                # 145 JS unit tests
 bun run test:rust           # cargo test --workspace
 bun run tauri:dev           # Vite :5173 + Tauri window (SHIRU_GRAPHICS=safe if needed)
 bun run build               # production frontend → dist/web

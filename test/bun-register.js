@@ -26,6 +26,10 @@ const appStubs = {
   '@/modules/settings.js': `
     import { writable } from 'simple-store-svelte'
     export const settings = writable({
+      debridService: '',
+      debridApiKeys: {},
+      debridMode: 'prefer',
+      debridCacheCheck: true,
       font: null,
       subtitleLanguage: 'eng',
       subtitleRenderHeight: '0',
@@ -47,6 +51,30 @@ const appStubs = {
     export const COMMON = new Proxy({}, handler)
     export const ANDROID = new Proxy({}, handler)
     export const DESKTOP = new Proxy({}, handler)
+    // the debrid core, as the host injects it. Mutable so a test can answer for it:
+    // the shape here is the contract crates/debrid serves over IPC
+    export const DEBRID = {
+      services: [
+        { id: 'torbox', title: 'TorBox', check_adds_magnets: false, max_files: 12 },
+        { id: 'realdebrid', title: 'Real-Debrid', check_adds_magnets: true, max_files: 60 }
+      ],
+      validate: async () => ({ username: 'tester' }),
+      listAvailability: async () => ({ answers: {}, names: {} }),
+      checkAvailability: async () => ({ answers: {}, names: {}, busy: false }),
+      unknownHashes: async (service, apiKey, hashes) => hashes,
+      remember: async () => {},
+      resolve: async () => ({ hash: '', name: '', files: [] }),
+      onAvailability: (callback) => { DEBRID.publishAvailability = callback }
+    }
+  `,
+  '@/components/MediaHandler.svelte': `
+    import { writable } from 'simple-store-svelte'
+    export const files = writable([])
+    export default {}
+  `,
+  '@/modules/networking.js': `
+    import { writable } from 'simple-store-svelte'
+    export const status = writable('online')
   `
 }
 
@@ -54,6 +82,15 @@ const stubs = {
   'simple-store-svelte': 'export const writable = value => { let v = value; const subs = new Set(); const store = { get value () { return v }, set value (n) { v = n; subs.forEach(fn => fn(v)) }, set (n) { store.value = n }, update (fn) { store.value = fn(v) }, subscribe (fn) { subs.add(fn); fn(v); return () => subs.delete(fn) } }; return store }',
   'svelte/easing': 'export const cubicOut = t => t\nexport const cubicIn = t => t',
   'js-levenshtein': 'export default () => 0',
+  'svelte-sonner': `
+    const record = (type) => (title, options) => { toast.shown.push({ type, title, ...options }) }
+    export const toast = Object.assign(record('info'), {
+      shown: [],
+      error: record('error'),
+      warning: record('warning'),
+      success: record('success')
+    })
+  `,
   'fuse.js': 'export default class Fuse { search () { return [] } }',
   jassub: `
     export default class JASSUB {
@@ -88,7 +125,7 @@ const anitomyGlueRx = /anitomyscript[\\/]dist[\\/]anitomyscript\.js$/
 const appStubFiles = Object.fromEntries(
   Object.entries(appStubs).map(([specifier, contents]) => [join(repo, 'common', specifier.slice(2)), contents])
 )
-const appStubRx = /common[\\/]modules[\\/](settings\.js|bridge\.js|lib[\\/]clipboard\.js)$/
+const appStubRx = /common[\\/](modules[\\/](settings\.js|bridge\.js|networking\.js|lib[\\/]clipboard\.js)|components[\\/]MediaHandler\.svelte)$/
 
 plugin({
   name: 'shiru-test-harness',
