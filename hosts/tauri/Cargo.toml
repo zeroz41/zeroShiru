@@ -38,3 +38,8 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 [features]
 default = []
+# `cargo tauri build` turns this on for bundles. A plain `cargo build` without it
+# is a DEV binary: it renders the Vite dev server on :5173 (what scripts/dev.sh
+# wants), not the embedded frontend. Building a standalone production binary by
+# hand therefore needs `--features custom-protocol`.
+custom-protocol = ["tauri/custom-protocol"]

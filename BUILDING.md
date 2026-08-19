@@ -75,8 +75,13 @@ To run the built desktop binary directly, without the dev server:
 
 ```bash
 cd frontend && bun run build     # frontend must exist first
-cd .. && cargo run -p shiru-tauri
+cd .. && cargo run -p shiru-tauri --features custom-protocol
 ```
+
+The feature flag matters: without it Cargo builds the *dev* binary, which
+renders the Vite dev server on `:5173` — a window saying "Could not connect to
+localhost" if no dev server is running. `custom-protocol` embeds `dist/web`
+instead; it is what `cargo tauri build` turns on for bundles.
 
 If graphics act up on Linux (a black window, or none at all), start once with
 `SHIRU_GRAPHICS=safe bun run tauri:dev`, then pick a mode in Settings →
@@ -148,7 +153,7 @@ Build the app and run it — three commands from the repository root:
 
 ```bash
 cd frontend && bun run build                     # 1. frontend -> dist/web
-cd .. && cargo build --release -p shiru-tauri    # 2. the app  -> target/release/shiru-tauri
+cd .. && cargo build --release -p shiru-tauri --features custom-protocol   # 2. the app
 ./target/release/shiru-tauri                     # 3. run it
 ```
 
