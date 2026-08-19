@@ -1,6 +1,7 @@
 <script>
   import SearchBar, { searchCleanup } from '@/routes/search/components/SearchBar.svelte'
   import { debounce, resizeObserver, mutationObserver } from '@/modules/util.js'
+  import { pageThreshold } from '@/modules/preload.js'
   import Card from '@/components/cards/Card.svelte'
   import { hasNextPage } from '@/modules/sections.js'
   import { status } from '@/modules/networking.js'
@@ -28,8 +29,10 @@
   let initialResize = true
   /** @type {import('simple-store-svelte').Writable<Array>} List of loaded card data items */
   const items = writable([])
-  /** @type {number} Distance from bottom (px) at which the next page load is triggered */
-  const scrollThreshold = 500
+  /** @type {number} Distance from bottom (px) at which the next page load is triggered.
+   * Viewport-relative: a fixed 500px is most of a phone screen and a sliver of a television,
+   * so on a large screen the next page only ever started once the user was already there. */
+  $: scrollThreshold = pageThreshold(container)
 
   $: if ($key) $items = []
   $: $clearNow = $search.clearNow

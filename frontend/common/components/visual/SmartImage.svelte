@@ -1,10 +1,15 @@
 <script>
+  import { nearViewport } from '@/modules/preload.js'
+
   export let images = []
+  /** Skip the wait: for art that is on screen from the start, like the home banner. */
+  export let eager = false
   export let hidden = false
   export let style = null
   export let color = null
   export let title = ''
 
+  let near = eager
   let index = 0
   let resolvedImages = []
   let failed = false
@@ -41,12 +46,13 @@
     class={($$restProps.class ? $$restProps.class.split(' ').filter(_class => (_class !== 'cover-rotated' && _class !== 'cr-380' && _class !== 'cr-400') || !resolvedImages[index]?.includes('404')).join(' ') : '') + (color ? ' cover-color' : '')}
     style={(color ? `--color: ${color};` : '') + (style ? `${style}` : '')}
     class:d-none={hidden || failed}
+    use:nearViewport={{ near: () => { near = true }, skip: eager }}
     on:error={handleError}
     on:load={validate}
     alt='preview'
     title={title}
     draggable='false'
-    loading='lazy'
+    loading='eager'
     referrerpolicy='no-referrer'
-    src={(!hidden && !failed) ? (loading ? 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' : resolvedImages[index] || `${index}_404.jpg`) : ''}
+    src={(!hidden && !failed) ? ((loading || !near) ? 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' : resolvedImages[index] || `${index}_404.jpg`) : ''}
 />

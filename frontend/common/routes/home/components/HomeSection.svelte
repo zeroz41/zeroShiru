@@ -14,6 +14,7 @@
   import { SUPPORTS } from '@/modules/support.js'
   import { settings } from '@/modules/settings.js'
   import { resizeObserver, baseFontSize } from '@/modules/util.js'
+  import { AHEAD_SECTIONS, nearViewport } from '@/modules/preload.js'
   import { onMount, onDestroy } from 'svelte'
   import { ChevronLeft, ChevronRight } from 'lucide-svelte'
 
@@ -33,17 +34,15 @@
   let sectionVisible = index < 5
   let visibleLength = 0
 
-  function deferredLoad (element) {
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) {
-        sectionVisible = true
-        if (!opts.preview.value) opts.preview.value = opts.load(1, loadableLength, { ...opts.variables })
-        observer.unobserve(element)
-      }
-    }, { threshold: 0, rootMargin: '200px' })
-    observer.observe(element)
-    return { destroy () { observer.unobserve(element) } }
-  }
+  // Starts the row's media query well before the row is reached, rooted at the page scroller
+  // so the distance counts for anything at all — see modules/preload.js.
+  const deferredLoad = (element) => nearViewport(element, {
+    margin: AHEAD_SECTIONS,
+    near () {
+      sectionVisible = true
+      if (!opts.preview.value) opts.preview.value = opts.load(1, loadableLength, { ...opts.variables })
+    }
+  })
 
   function _click () {
     $search = { ...opts.variables, load: opts.load, title: opts.title, clearNext: true }
