@@ -3,6 +3,7 @@
 // Needs network but no API key. Uses the official Matroska test files.
 import { test } from 'bun:test'
 import assert from 'node:assert/strict'
+import { skipped } from '../../tools/skip.js'
 import Metadata from 'matroska-metadata'
 
 const URL8 = 'https://github.com/ietf-wg-cellar/matroska-test-files/raw/master/test_files/test5.mkv'
@@ -58,8 +59,8 @@ const isNetworkError = error => {
   return false
 }
 
-test('parses tracks, chapters and subtitles from a remote MKV over HTTP ranges', { timeout: 180_000 }, async t => {
-  if (!await reachable(URL8)) return t.skip(`${new URL(URL8).host} unreachable, this test needs network`)
+test('parses tracks, chapters and subtitles from a remote MKV over HTTP ranges', { timeout: 180_000 }, async () => {
+  if (!await reachable(URL8)) return skipped(`${new URL(URL8).host} unreachable, this test needs network`)
 
   const file = remoteFile(URL8, 'test5.mkv')
   const metadata = new Metadata(file)
@@ -83,7 +84,7 @@ test('parses tracks, chapters and subtitles from a remote MKV over HTTP ranges',
     console.log(`  ${subtitles.length} subtitle events streamed`)
     assert.ok(subtitles.length > 0, 'subtitle events must stream from the remote file')
   } catch (error) {
-    if (isNetworkError(error)) return t.skip(`lost the connection to ${new URL(URL8).host} mid-read, this test needs a stable link`)
+    if (isNetworkError(error)) return skipped(`lost the connection to ${new URL(URL8).host} mid-read, this test needs a stable link`)
     throw error
   } finally {
     metadata.destroy()

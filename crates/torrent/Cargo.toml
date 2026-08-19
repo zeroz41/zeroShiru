@@ -41,3 +41,8 @@ shiru-domain = { path = "../domain" }
 reqwest = { workspace = true }
 shiru-domain = { path = "../domain" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+# the manual live smoke test: needs the real engine, so it only builds with it
+[[example]]
+name = "smoke"
+required-features = ["native"]

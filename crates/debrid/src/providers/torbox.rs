@@ -310,12 +310,12 @@ impl TorBox {
     }
 
     /// Best-effort removal of a torrent this call created, never surfacing its own failure.
-    ///
-    /// TODO(manager port): the JS release() remembers a failed removal and retries it later
-    /// (the orphan layer); that arrives with the manager port, so for now this is one attempt.
+    /// A removal that fails is remembered by the client and retried before the next check
+    /// adds anything, so a dropped link cannot leave a torrent on the account.
     async fn delete(&self, id: &Value) {
-        let _ = self
-            .request(
+        self.client
+            .release(
+                &TorBoxDialect,
                 &format!("{API}/torrents/controltorrent"),
                 RequestOpts {
                     method: Some(Method::Post),
@@ -390,7 +390,7 @@ impl TorBox {
         let candidates: Vec<(u64, String, u64)> =
             wanted.iter().map(|file| (file.id, file.path.clone(), file.size)).collect();
         let target = match &opts.pick_file {
-            Some(pick) => pick(&candidates),
+            Some(pick) => pick(&candidates)?,
             // largest file, first on a tie, like the JS stable size sort
             None => {
                 let mut best = 0;
@@ -538,6 +538,11 @@ impl DebridProvider for TorBox {
         }
         result
     }
+
+    async fn retry_cleanup(&self) {
+        self.client.retry_cleanup(&TorBoxDialect).await;
+    }
+
 }
 
 /// What the account says about one of its torrents. `download_present` means the data really
@@ -982,7 +987,7 @@ mod tests {
         let opts = ResolveOptions {
             file_filter: video_filter().file_filter,
             pick_file: Some(Box::new(|candidates| {
-                candidates.iter().position(|(_, path, _)| path == "/Pack/Episode 100.mkv")
+                Ok(candidates.iter().position(|(_, path, _)| path == "/Pack/Episode 100.mkv"))
             })),
             max_files: None,
         };

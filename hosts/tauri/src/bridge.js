@@ -14,7 +14,7 @@
     isWindowVisible: async () => true,
     openURI: (uri) => invoke('open_uri', { uri }).catch(() => {}),
     windowReady: () => invoke('window_ready'),
-    notify: (opts) => invoke('notify', { title: opts?.title || 'Shiru', body: opts?.message || opts?.body }),
+    notify: (opts) => invoke('notify', { title: opts?.title || 'zeroShiru', body: opts?.message || opts?.body }),
     pickFile: async (filters) => (await invoke('pick_file', { filters })) || '',
     pickFolder: async () => (await invoke('pick_folder')) || '',
     // deep links (shiru://, magnet:) as raw URLs; routing lives in the renderer
@@ -51,12 +51,25 @@
     toggleMaximize: () => invoke('window_toggle_maximize')
   }
 
+  // answers from a running availability check, pushed as each one lands
+  const availabilityListeners = new Set()
+  listen('shiru://debrid', (event) => {
+    const { type, data } = event.payload || {}
+    if (type === 'availability') for (const callback of availabilityListeners) callback(data.hash, data.state)
+  })
+
   window.shiru = {
     routePlayback: (request) => invoke('route_playback', { request }),
     debrid: {
+      // inlined at build time by the host, so the settings menu reads the registry synchronously
+      services: __SHIRU_DEBRID_SERVICES__,
       validate: (service, apiKey) => invoke('debrid_validate', { service, apiKey }),
+      listAvailability: (service, apiKey) => invoke('debrid_list_availability', { service, apiKey }),
       checkAvailability: (service, apiKey, hashes) => invoke('debrid_check_availability', { service, apiKey, hashes }),
-      resolve: (service, apiKey, magnet) => invoke('debrid_resolve', { service, apiKey, magnet })
+      unknownHashes: (service, apiKey, hashes) => invoke('debrid_unknown_hashes', { service, apiKey, hashes }),
+      remember: (service, apiKey, hash, state) => invoke('debrid_remember', { service, apiKey, hash, stateValue: state }),
+      resolve: (service, apiKey, magnet, episode) => invoke('debrid_resolve', { service, apiKey, magnet, episode: Number.isFinite(episode) ? episode : null }),
+      onAvailability: (callback) => { availabilityListeners.add(callback) }
     }
   }
 

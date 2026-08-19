@@ -19,6 +19,10 @@ use std::sync::{Arc, Mutex};
 /// How far a poll budget may stretch on a slow link.
 const MAX_STRETCH: f64 = 3.0;
 
+/// How many times a removal this client owes the account is retried before it is
+/// written off. A service that will not take the removal is not worth asking forever.
+const MAX_CLEANUP_ATTEMPTS: usize = 3;
+
 /// Per-request overrides, mirroring the JS request options object.
 #[derive(Default, Clone)]
 pub struct RequestOpts {
@@ -72,6 +76,9 @@ pub struct DebridClient {
     availability: Mutex<HashMap<String, (Availability, u64)>>,
     /// The real release name behind a hash, as the service knows it.
     release_names: Mutex<HashMap<String, String>>,
+    /// Removals that failed, to try again. Keyed by the whole request, since services
+    /// that name the torrent in the body would otherwise all collide on one url.
+    orphans: Mutex<HashMap<String, (String, RequestOpts, usize)>>,
 }
 
 impl DebridClient {
@@ -89,6 +96,7 @@ impl DebridClient {
             latency: AtomicU64::new(0),
             availability: Mutex::new(HashMap::new()),
             release_names: Mutex::new(HashMap::new()),
+            orphans: Mutex::new(HashMap::new()),
         }
     }
 
@@ -190,6 +198,60 @@ impl DebridClient {
         dialect.unwrap(json)
     }
 
+    /// Undoes something this client created on the account. Never fails: it runs from
+    /// error paths, where it would mask the real failure. A removal that fails is
+    /// remembered and retried, because the likeliest cause is the link dropping — and a
+    /// magnet left behind is the one trace an availability check can leave on an account.
+    pub async fn release(&self, dialect: &dyn Dialect, url: &str, opts: RequestOpts) {
+        let key = Self::request_key(url, &opts);
+        let outcome = self.request(dialect, url, opts.clone()).await;
+        let mut orphans = self.orphans.lock().unwrap();
+        match outcome {
+            // gone is what we wanted, however it got that way
+            Ok(_) => {
+                orphans.remove(&key);
+            }
+            Err(error) if error.status() == Some(404) => {
+                orphans.remove(&key);
+            }
+            Err(_) => {
+                let attempts = orphans.get(&key).map(|(_, _, tries)| *tries).unwrap_or(0) + 1;
+                if attempts < MAX_CLEANUP_ATTEMPTS {
+                    orphans.insert(key, (url.to_string(), opts, attempts));
+                } else {
+                    orphans.remove(&key);
+                }
+            }
+        }
+    }
+
+    /// Identifies one removal: services name the torrent in the url or in the body,
+    /// and two different torrents must never look like the same outstanding removal.
+    fn request_key(url: &str, opts: &RequestOpts) -> String {
+        match &opts.body {
+            Some(fields) => format!("{url}|{fields:?}"),
+            None => url.to_string(),
+        }
+    }
+
+    /// How many removals are still outstanding.
+    pub fn orphaned(&self) -> usize {
+        self.orphans.lock().unwrap().len()
+    }
+
+    /// Retries removals that failed earlier. Only ever replays a removal `release` was
+    /// already asked to make, so it can no more reach a torrent the user wanted than the
+    /// original call could. Never persisted: a stale id would eventually name something else.
+    pub async fn retry_cleanup(&self, dialect: &dyn Dialect) {
+        let pending: Vec<(String, RequestOpts)> = {
+            let orphans = self.orphans.lock().unwrap();
+            orphans.values().map(|(url, opts, _)| (url.clone(), opts.clone())).collect()
+        };
+        for (url, opts) in pending {
+            self.release(dialect, &url, opts).await;
+        }
+    }
+
     /// Folds one round trip into the latency estimate, weighted towards recent requests.
     fn observe_latency(&self, ms: u64) {
         let known = self.latency.load(Ordering::Relaxed);
@@ -239,6 +301,12 @@ impl DebridClient {
         if let Some(hash) = parse_hash(magnet_or_hash) {
             self.release_names.lock().unwrap().insert(hash, name.to_string());
         }
+    }
+
+    /// Every release name the service has mentioned so far, keyed by info hash.
+    /// Free information: it rides along on answers the client already asks for.
+    pub fn release_names(&self) -> HashMap<String, String> {
+        self.release_names.lock().unwrap().clone()
     }
 
     /// The service's own name for a release, or `None` when it has never mentioned one.
@@ -297,4 +365,183 @@ fn urlencode(value: &str) -> String {
         }
     }
     out
+}
+
+/// What the client does on a bad connection — the case the JS layer was getting wrong.
+///
+/// Measured on a satellite link, one request took about a second, so a probe cost five or
+/// six seconds and a torrent whose metadata the service did not already hold burned the
+/// whole budget and reported no answer. Three of those in a row ended a sweep and nothing
+/// asked again, which left results lists with two badges on them. The fixes pinned here:
+/// time limits that follow the connection rather than assuming one, and a link failure that
+/// never turns into an answer about a release.
+#[cfg(test)]
+mod connection {
+    use super::*;
+    use crate::testing::{ManualClock, MockTransport, Route};
+    use crate::providers::torbox::TorBox;
+    use crate::{DebridProvider, Timeouts};
+
+    fn client() -> DebridClient {
+        let config = crate::ProviderConfig {
+            id: "test",
+            title: "Test",
+            auth: AuthScheme::Bearer,
+            auth_param: "apikey",
+            encoding: BodyEncoding::Form,
+            timeouts: Timeouts::default(),
+            nominal_latency: 300,
+            max_files: 60,
+            availability_check: crate::AvailabilityCheck::None,
+            check_adds_magnets: false,
+            max_batch: 100,
+            max_probes: 10,
+            max_concurrent: 4,
+            min_time_ms: 250,
+        };
+        DebridClient::new(
+            config,
+            "key".into(),
+            Arc::new(MockTransport::new(vec![])),
+            Arc::new(ManualClock::new()),
+        )
+    }
+
+    const READY: u64 = 5_000; // Timeouts::default().ready
+
+    #[test]
+    fn a_healthy_link_gets_the_time_limits_as_written() {
+        let client = client();
+        assert_eq!(client.budget(READY), READY, "nothing measured yet, so nothing to correct for");
+        client.observe_latency(300);
+        assert_eq!(client.budget(READY), READY);
+        client.observe_latency(10);
+        assert_eq!(client.budget(READY), READY, "a fast link is not given a shorter budget than the default");
+    }
+
+    #[test]
+    fn a_slow_link_stretches_them_so_a_poll_loop_still_gets_its_turns() {
+        let client = client();
+        for _ in 0..20 {
+            client.observe_latency(900); // three times what the defaults assume
+        }
+        assert!(
+            client.budget(READY) > READY * 2,
+            "900ms round trips must buy more than double, got {}ms",
+            client.budget(READY)
+        );
+    }
+
+    #[test]
+    fn but_only_so_far_since_a_link_that_slow_is_not_one_to_keep_waiting_on() {
+        let client = client();
+        for _ in 0..40 {
+            client.observe_latency(30_000);
+        }
+        assert!(client.budget(READY) <= READY * 3, "the stretch is capped");
+    }
+
+    #[test]
+    fn the_estimate_follows_the_link_rather_than_the_worst_moment_it_ever_had() {
+        let client = client();
+        client.observe_latency(200);
+        client.observe_latency(5_000); // one bad request
+        let spike = client.latency.load(Ordering::Relaxed);
+        for _ in 0..10 {
+            client.observe_latency(200);
+        }
+        assert!(
+            client.latency.load(Ordering::Relaxed) < spike / 2,
+            "a recovered link is noticed within a few requests"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_that_never_came_back_does_not_inflate_the_estimate() {
+        let clock = Arc::new(ManualClock::new());
+        let transport = Arc::new(MockTransport::new(vec![Route::timeout("slow", 30_000)]));
+        let client = DebridClient::new(client().config, "key".into(), transport, clock);
+        let error = client.request(&PlainDialect, "https://api/slow", RequestOpts::default()).await.unwrap_err();
+        assert!(matches!(error, DebridError::Timeout { .. }));
+        assert_eq!(client.budget(READY), READY, "a timeout is not a measurement of the link");
+    }
+
+    #[tokio::test]
+    async fn a_dropped_link_is_a_network_error_not_a_verdict_on_the_release() {
+        let transport = Arc::new(MockTransport::new(vec![Route::offline("anything")]));
+        let client = DebridClient::new(client().config, "key".into(), transport, Arc::new(ManualClock::new()));
+        let error = client.request(&PlainDialect, "https://api/anything", RequestOpts::default()).await.unwrap_err();
+        assert!(matches!(error, DebridError::Network { .. }));
+        assert_eq!(error.proven_availability(), None, "an unreachable service has said nothing about the release");
+    }
+
+    #[tokio::test]
+    async fn a_removal_that_failed_is_remembered_and_retried_once_the_link_is_back() {
+        let transport = Arc::new(MockTransport::new(vec![Route::offline("delete")]));
+        let client = DebridClient::new(client().config, "key".into(), transport.clone(), Arc::new(ManualClock::new()));
+        let opts = RequestOpts { method: Some(Method::Delete), ..Default::default() };
+
+        client.release(&PlainDialect, "https://api/delete/abc", opts.clone()).await;
+        assert_eq!(client.orphaned(), 1, "a torrent this client added and could not remove must be remembered");
+
+        transport.rescript(vec![Route::json("delete", 200, "{}")]);
+        client.retry_cleanup(&PlainDialect).await;
+        assert_eq!(client.orphaned(), 0, "and taken off the account once the link is back");
+        assert!(transport.urls().len() > 1, "which means it really was asked again");
+    }
+
+    #[tokio::test]
+    async fn a_removal_the_service_says_is_already_gone_is_not_retried() {
+        let transport = Arc::new(MockTransport::new(vec![Route::json("delete", 404, r#"{"error":"unknown"}"#)]));
+        let client = DebridClient::new(client().config, "key".into(), transport, Arc::new(ManualClock::new()));
+        let opts = RequestOpts { method: Some(Method::Delete), ..Default::default() };
+        client.release(&PlainDialect, "https://api/delete/abc", opts).await;
+        assert_eq!(client.orphaned(), 0, "gone is what was wanted, however it got that way");
+    }
+
+    #[tokio::test]
+    async fn a_removal_that_keeps_being_refused_is_eventually_written_off() {
+        let transport = Arc::new(MockTransport::new(vec![Route::json("delete", 500, r#"{"error":"server"}"#)]));
+        let client = DebridClient::new(client().config, "key".into(), transport, Arc::new(ManualClock::new()));
+        let opts = RequestOpts { method: Some(Method::Delete), ..Default::default() };
+        client.release(&PlainDialect, "https://api/delete/abc", opts).await;
+        for _ in 0..5 {
+            client.retry_cleanup(&PlainDialect).await;
+        }
+        assert_eq!(client.orphaned(), 0, "a service that will not take the removal is not worth asking forever");
+    }
+
+    #[tokio::test]
+    async fn two_removals_at_the_same_endpoint_are_two_debts_not_one() {
+        // services that name the torrent in the body all share one url
+        let transport = Arc::new(MockTransport::new(vec![Route::offline("control")]));
+        let client = DebridClient::new(client().config, "key".into(), transport, Arc::new(ManualClock::new()));
+        for id in ["one", "two"] {
+            let opts = RequestOpts {
+                method: Some(Method::Post),
+                body: Some(vec![("torrent_id".into(), Value::String(id.into()))]),
+                ..Default::default()
+            };
+            client.release(&PlainDialect, "https://api/control", opts).await;
+        }
+        assert_eq!(client.orphaned(), 2);
+    }
+
+    #[tokio::test]
+    async fn poll_budgets_grow_with_the_link_a_provider_is_actually_on() {
+        // the same provider, one on a healthy link and one on a slow one
+        let clock = Arc::new(ManualClock::new());
+        let transport = Arc::new(
+            MockTransport::new(vec![Route::json("torrents", 200, r#"{"success":true,"data":[]}"#)])
+                .on_link(clock.clone(), 1_200),
+        );
+        let torbox = TorBox::new("key".into(), transport, clock);
+        let before = torbox.client().budget(READY);
+        for _ in 0..10 {
+            let _ = torbox.list_availability().await;
+        }
+        let after = torbox.client().budget(READY);
+        assert!(after > before, "a slow link buys more time, {before}ms -> {after}ms");
+        assert!(after <= READY * 3, "but never more than the cap");
+    }
 }

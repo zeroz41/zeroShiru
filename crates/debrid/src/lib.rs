@@ -113,14 +113,18 @@ impl ProviderConfig {
     }
 }
 
+/// Chooses the file playback wants out of a pack's (id, path, size) list.
+/// `Ok(None)` means "no opinion, window from the front"; an error refuses the
+/// release outright, which is how "this pack does not hold that episode" travels.
+pub type PickFile = Box<dyn Fn(&[(u64, String, u64)]) -> Result<Option<usize>, DebridError> + Send + Sync>;
+
 /// Options for a resolve call.
 #[derive(Default)]
 pub struct ResolveOptions {
     /// Keeps only files playback can use (video/subtitle/font names).
     pub file_filter: Option<Box<dyn Fn(&str) -> bool + Send + Sync>>,
     /// Picks the file playback wants out of a pack's file list.
-    #[allow(clippy::type_complexity)]
-    pub pick_file: Option<Box<dyn Fn(&[(u64, String, u64)]) -> Option<usize> + Send + Sync>>,
+    pub pick_file: Option<PickFile>,
     pub max_files: Option<usize>,
 }
 
@@ -152,6 +156,11 @@ pub trait DebridProvider: Send + Sync {
 
     /// Resolves a magnet to direct stream URLs. URLs must be HTTPS.
     async fn resolve(&self, magnet: &str, opts: &ResolveOptions) -> Result<DebridResolved, DebridError>;
+
+    /// Retries removals this client owes the account. Providers that put magnets on the
+    /// account while answering implement it; the rest have nothing to undo. The manager
+    /// calls it before a check adds anything new.
+    async fn retry_cleanup(&self) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

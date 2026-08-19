@@ -370,11 +370,12 @@ impl AllDebrid {
     }
 
     /// Best-effort removal, never failing the caller: it runs where an error would mask the
-    /// real failure. TODO(manager): the orphan-retry manager layer should remember removals
-    /// that failed (the JS base's release()/retryCleanup) and try them again later.
+    /// real failure. A removal that fails is remembered by the client and retried before the
+    /// next check adds anything, so a dropped link cannot leave a magnet on the account.
     async fn delete(&self, id: &str) {
-        let _ = self
-            .request(
+        self.client
+            .release(
+                &AllDebridDialect,
                 &format!("{V4}/magnet/delete"),
                 RequestOpts {
                     method: Some(Method::Post),
@@ -443,7 +444,7 @@ impl AllDebrid {
                     .enumerate()
                     .map(|(index, file)| (index as u64, file.path.clone(), file.size))
                     .collect();
-                pick(&tuples)
+                pick(&tuples)?
             }
             None => wanted
                 .iter()
@@ -594,6 +595,11 @@ impl DebridProvider for AllDebrid {
         }
         resolved
     }
+
+    async fn retry_cleanup(&self) {
+        self.client.retry_cleanup(&AllDebridDialect).await;
+    }
+
 }
 
 /// `premiumUntil` epoch seconds as the ISO string the UI expects, matching JS toISOString.
@@ -1050,7 +1056,7 @@ mod tests {
         ]);
         let opts = ResolveOptions {
             pick_file: Some(Box::new(|files| {
-                files.iter().position(|(_, path, _)| path.ends_with("Episode 07.mkv"))
+                Ok(files.iter().position(|(_, path, _)| path.ends_with("Episode 07.mkv")))
             })),
             max_files: Some(3),
             ..Default::default()

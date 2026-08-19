@@ -13,6 +13,15 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// Every service the app can be configured to use, in the order the settings menu
+/// offers them. The one list; hosts enumerate it rather than naming services.
+pub const PROVIDER_IDS: [&str; 4] = ["alldebrid", "premiumize", "realdebrid", "torbox"];
+
+/// How long the account listing is reused. Matched to the badge refresh interval:
+/// both the badge sweep and every resolve want it, and reading it per play put a
+/// full listing on the play path.
+const LISTING_TTL_MS: u64 = 60_000;
+
 /// Consecutive unanswered probes before a sweep gives up.
 const MAX_PROBE_FAILURES: usize = 3;
 /// Probes running at once. Small, since each briefly owns a torrent on the account.
@@ -43,19 +52,57 @@ pub struct ManagedProvider {
     /// Hashes being probed right now. The JS shares the pending promise; here a
     /// second asker simply skips the hash — it stays unknown and re-checkable.
     in_flight: Mutex<std::collections::HashSet<String>>,
+    /// The account listing and when it was read, reused for LISTING_TTL_MS.
+    listing: Mutex<Option<(u64, HashMap<String, Availability>)>>,
 }
 
 impl ManagedProvider {
     pub fn new(provider: Arc<dyn DebridProvider>) -> Self {
-        ManagedProvider { provider, sweeping: AtomicBool::new(false), in_flight: Mutex::new(Default::default()) }
+        ManagedProvider {
+            provider,
+            sweeping: AtomicBool::new(false),
+            in_flight: Mutex::new(Default::default()),
+            listing: Mutex::new(None),
+        }
     }
 
     pub fn provider(&self) -> &Arc<dyn DebridProvider> {
         &self.provider
     }
 
-    fn client(&self) -> &DebridClient {
+    pub fn client(&self) -> &DebridClient {
         self.provider.client()
+    }
+
+    /// Whether a check that owns the account is running right now. A caller that
+    /// finds one running knows its own answers were only read from memory.
+    pub fn sweeping(&self) -> bool {
+        self.sweeping.load(Ordering::SeqCst)
+    }
+
+    /// What the account itself says: the free badge source. Read at most once per
+    /// TTL and shared by every caller — the badge refresh and every resolve both
+    /// want it, and reading it per play would put a full listing on the play path.
+    /// Answers land in the availability memory, so later checks are free.
+    pub async fn list_availability(&self) -> Result<HashMap<String, Availability>, DebridError> {
+        let now = self.client().platform().now_ms();
+        if let Some((at, known)) = self.listing.lock().unwrap().as_ref() {
+            if now.saturating_sub(*at) < LISTING_TTL_MS {
+                return Ok(known.clone());
+            }
+        }
+        // a failed read is never remembered: the next caller asks again
+        let known = self.provider.list_availability().await?;
+        for (hash, state) in &known {
+            self.client().remember(hash, *state);
+        }
+        *self.listing.lock().unwrap() = Some((now, known.clone()));
+        Ok(known)
+    }
+
+    /// Drops the remembered listing, because the account just changed.
+    pub fn forget_listing(&self) {
+        *self.listing.lock().unwrap() = None;
     }
 
     /// The given hashes nothing is known about yet, in the order supplied. Callers
@@ -98,6 +145,11 @@ impl ManagedProvider {
         let guarded = config.check_adds_magnets;
         if guarded && self.sweeping.swap(true, Ordering::SeqCst) {
             return Ok(answers);
+        }
+        // clear our own leftovers before adding more: a check that dropped mid-probe owes
+        // the account a removal, and asking again would stack a second one on top of it
+        if self.client().orphaned() > 0 {
+            self.provider.retry_cleanup().await;
         }
         let result = match config.availability_check {
             AvailabilityCheck::Batch => {
@@ -296,6 +348,120 @@ mod tests {
         let answers = managed.check_availability(&asked, |_, _| {}).await.unwrap();
         assert_eq!(answers.len(), 80);
         assert!(answers.values().all(|state| *state == Availability::Available));
+    }
+
+    #[tokio::test]
+    async fn the_account_listing_is_read_once_per_ttl_and_feeds_the_memory() {
+        let transport = Arc::new(MockTransport::new(vec![Route::json(
+            "torrents/mylist",
+            200,
+            &format!(
+                r#"{{"success":true,"data":[{{"hash":"{}","name":"A pack","download_finished":true,"download_present":true}}]}}"#,
+                HASHES[0]
+            ),
+        )]));
+        let platform = Arc::new(ManualClock::new());
+        let managed = ManagedProvider::new(
+            create_provider("torbox", "key".into(), transport.clone(), platform.clone()).unwrap(),
+        );
+
+        let first = managed.list_availability().await.unwrap();
+        assert_eq!(first.get(HASHES[0]), Some(&Availability::Cached));
+        // what the account holds is remembered, so the badge check asks about nothing
+        assert!(!managed.unknown_hashes(&[HASHES[0].to_string()]).contains(&HASHES[0].to_string()));
+
+        managed.list_availability().await.unwrap();
+        assert_eq!(transport.urls().len(), 1, "a second read inside the TTL costs no request");
+
+        platform.advance(61_000);
+        managed.list_availability().await.unwrap();
+        assert_eq!(transport.urls().len(), 2, "and one after it does");
+
+        managed.forget_listing();
+        managed.list_availability().await.unwrap();
+        assert_eq!(transport.urls().len(), 3, "an account that just changed is read again");
+    }
+
+    #[tokio::test]
+    async fn a_failed_listing_is_never_remembered() {
+        let transport = Arc::new(MockTransport::new(vec![Route::json("torrents/mylist", 500, "{}")]));
+        let platform = Arc::new(ManualClock::new());
+        let managed = ManagedProvider::new(
+            create_provider("torbox", "key".into(), transport.clone(), platform).unwrap(),
+        );
+        assert!(managed.list_availability().await.is_err());
+        assert!(managed.list_availability().await.is_err());
+        assert_eq!(transport.urls().len(), 2, "the next caller asks again rather than reusing a failure");
+    }
+
+    // giving up on a check has to be temporary: a bad minute must not cost the whole
+    // results list until the user changes the sort order
+    #[tokio::test]
+    async fn a_link_that_answers_nothing_badges_nothing_and_leaves_everything_askable() {
+        let transport = Arc::new(MockTransport::new(vec![Route::offline("checkcached")]));
+        let platform = Arc::new(ManualClock::new());
+        let managed = ManagedProvider::new(
+            create_provider("torbox", "key".into(), transport.clone(), platform).unwrap(),
+        );
+        let asked: Vec<String> = HASHES.iter().map(|h| h.to_string()).collect();
+
+        let failed = managed.check_availability(&asked, |_, _| {}).await;
+        assert!(matches!(failed, Err(DebridError::Network { .. })));
+        assert_eq!(
+            managed.unknown_hashes(&asked).len(),
+            3,
+            "a release the link could not be asked about is unanswered, never 'not cached'"
+        );
+
+        // the retry the UI schedules, once the link is back
+        transport.rescript(vec![Route::json(
+            "checkcached",
+            200,
+            &format!(r#"{{"success":true,"data":[{{"hash":"{}","name":"A"}}]}}"#, HASHES[0]),
+        )]);
+        let answers = managed.check_availability(&asked, |_, _| {}).await.unwrap();
+        assert_eq!(answers.len(), 3, "the same list answers in full on a later attempt");
+        assert_eq!(answers.get(HASHES[0]), Some(&Availability::Cached));
+        assert!(managed.unknown_hashes(&asked).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_timeout_says_nothing_about_a_release_so_it_stays_re_checkable() {
+        let transport = Arc::new(MockTransport::new(vec![Route::timeout("checkcached", 30_000)]));
+        let platform = Arc::new(ManualClock::new());
+        let managed = ManagedProvider::new(
+            create_provider("torbox", "key".into(), transport, platform).unwrap(),
+        );
+        let asked: Vec<String> = HASHES[..1].iter().map(|h| h.to_string()).collect();
+        let failed = managed.check_availability(&asked, |_, _| {}).await;
+        assert!(matches!(failed, Err(DebridError::Timeout { .. })));
+        assert_eq!(managed.unknown_hashes(&asked).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn what_a_check_owes_the_account_is_cleared_before_it_adds_anything() {
+        // a probe that dropped mid-flight left a removal outstanding
+        let transport = Arc::new(MockTransport::new(vec![Route::offline("delete")]));
+        let platform = Arc::new(ManualClock::new());
+        let managed = ManagedProvider::new(
+            create_provider("realdebrid", "key".into(), transport.clone(), platform).unwrap(),
+        );
+        managed
+            .client()
+            .release(
+                &crate::PlainDialect,
+                "https://api.real-debrid.com/rest/1.0/torrents/delete/abc",
+                crate::RequestOpts { method: Some(shiru_networking::Method::Delete), ..Default::default() },
+            )
+            .await;
+        assert_eq!(managed.client().orphaned(), 1);
+
+        transport.rescript(vec![
+            Route::json("torrents/delete", 200, "{}"),
+            Route::offline("torrents"), // the check itself still cannot get through
+        ]);
+        let _ = managed.check_availability(&[HASHES[0].to_string()], |_, _| {}).await;
+        assert_eq!(managed.client().orphaned(), 0, "the leftover is taken off the account first");
     }
 
     #[tokio::test]

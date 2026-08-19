@@ -1,8 +1,11 @@
-//! Episode picking for season packs. Port of common/modules/debrid/pick.js;
-//! test/unit/debrid/pick.test.js is the behavioural reference (its parser-dependent
-//! cases stay in JS until the anitomy port — these tests inject parse results).
+//! Episode picking for season packs: which file of a pack the player actually gets.
+//!
+//! The parser is injected so callers can supply their own, but nobody has to —
+//! `pick_pack` reads names with the shared `shiru_media::filename` recognizer, so
+//! picking is one call with no JS, no WASM parser and no host round trip.
 
-use shiru_media::is_video_path;
+use shiru_media::{is_video_path, parse_filename};
+use std::convert::Infallible;
 
 /// What the injected parser said about one file name. `episode_numbers` holds every
 /// finite number the name answers to ("01-12" parses to [1, 12]); `is_extra` is the
@@ -154,6 +157,33 @@ pub fn pick_pack_file<E>(
     }
 }
 
+/// Reads names with the shared recognizer. The picker's own contract applies: a
+/// name the recognizer cannot number comes back as `None`, which keeps a
+/// mismatch unproven and the fallbacks in play.
+pub fn parse_names(names: &[String]) -> Result<Vec<Option<ParsedName>>, Infallible> {
+    Ok(names
+        .iter()
+        .map(|name| {
+            let parsed = parse_filename(name);
+            if parsed.episode_numbers.is_empty() && parsed.kind.is_none() {
+                return None;
+            }
+            let is_extra = parsed.is_extra();
+            Some(ParsedName { episode_numbers: parsed.episode_numbers, is_extra })
+        })
+        .collect())
+}
+
+/// Picks the episode out of a pack using the shared recognizer — the call every
+/// host makes. `Ok(None)` hands the choice to the player.
+pub fn pick_pack(
+    files: &[(String, u64)],
+    episode: f64,
+    max_files: usize,
+) -> Result<Option<usize>, EpisodeNotInPack> {
+    pick_pack_file(files, episode, parse_names, max_files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,5 +330,178 @@ mod tests {
         assert_eq!(pick_pack_file(&files, 1.0, ok_parse(parsed.clone()), usize::MAX).unwrap(), None);
         // too big to hand over whole: still refused rather than windowed blindly
         assert!(pick_pack_file(&files, 1.0, ok_parse(parsed), 5).is_err());
+    }
+}
+
+/// The picker driven by the real recognizer rather than injected parse results:
+/// every case here is a way playback silently plays the wrong episode when the
+/// recognizer regresses. These mirror test/unit/debrid/pick.test.js, which drove
+/// the same cases through the JS anitomy build before picking moved to Rust.
+#[cfg(test)]
+mod real_names {
+    use super::*;
+
+    fn file(path: &str, size: u64) -> (String, u64) {
+        (path.to_string(), size)
+    }
+
+    fn pick(files: &[(String, u64)], episode: f64) -> Option<&str> {
+        pick_episode_file(files, episode, parse_names).unwrap().map(|index| files[index].0.as_str())
+    }
+
+    #[test]
+    fn a_large_pack_yields_exactly_the_requested_episode() {
+        let files: Vec<_> = (1..=150)
+            .map(|n| file(&format!("/Pack/[Group] Show - {n:03} [1080p].mkv"), 1000))
+            .collect();
+        assert_eq!(pick(&files, 1.0), Some("/Pack/[Group] Show - 001 [1080p].mkv"));
+        assert_eq!(pick(&files, 100.0), Some("/Pack/[Group] Show - 100 [1080p].mkv"));
+        assert_eq!(pick(&files, 150.0), Some("/Pack/[Group] Show - 150 [1080p].mkv"));
+    }
+
+    #[test]
+    fn padding_never_matters() {
+        for name in ["/Show - 05.mkv", "/Show - 005.mkv", "/Show S01E05.mkv", "/Show.S01.E05.1080p.mkv"] {
+            let files = vec![file("/Show - 04.mkv", 1000), file(name, 1000), file("/Show - 06.mkv", 1000)];
+            assert_eq!(pick(&files, 5.0), Some(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_half_episode_is_not_the_episode_before_it() {
+        let files = vec![file("/Show - 12.mkv", 1), file("/Show - 12.5.mkv", 1), file("/Show - 13.mkv", 1)];
+        assert_eq!(pick(&files, 12.0), Some("/Show - 12.mkv"));
+        assert_eq!(pick(&files, 12.5), Some("/Show - 12.5.mkv"));
+    }
+
+    #[test]
+    fn a_v2_release_still_matches_its_episode_number() {
+        let files = vec![file("/Show - 04.mkv", 1), file("/Show - 05v2.mkv", 1), file("/Show - 06.mkv", 1)];
+        assert_eq!(pick(&files, 5.0), Some("/Show - 05v2.mkv"));
+    }
+
+    #[test]
+    fn creditless_openings_never_shadow_the_real_episode() {
+        let files = vec![
+            file("/Extras/[Group] Show - NCOP1.mkv", 300),
+            file("/Extras/[Group] Show - NCED1.mkv", 300),
+            file("/[Group] Show - 01.mkv", 900),
+            file("/[Group] Show - 02.mkv", 900),
+        ];
+        assert_eq!(pick(&files, 1.0), Some("/[Group] Show - 01.mkv"));
+        assert_eq!(pick(&files, 2.0), Some("/[Group] Show - 02.mkv"));
+    }
+
+    #[test]
+    fn specials_and_ovas_do_not_shadow_same_numbered_episodes() {
+        let files = vec![
+            file("/Specials/[Group] Show - SP01.mkv", 1),
+            file("/Specials/[Group] Show - OVA 02.mkv", 1),
+            file("/[Group] Show - 01.mkv", 1),
+            file("/[Group] Show - 02.mkv", 1),
+        ];
+        assert_eq!(pick(&files, 1.0), Some("/[Group] Show - 01.mkv"));
+        assert_eq!(pick(&files, 2.0), Some("/[Group] Show - 02.mkv"));
+    }
+
+    #[test]
+    fn a_pack_of_only_extras_can_still_serve_them_by_number() {
+        let files = vec![file("/[Group] Show - NCOP1.mkv", 1), file("/[Group] Show - NCOP2.mkv", 1)];
+        assert_eq!(pick(&files, 2.0), Some("/[Group] Show - NCOP2.mkv"));
+    }
+
+    #[test]
+    fn a_batch_file_covers_the_episodes_it_spans() {
+        let files = vec![file("/[Group] Show - 01-12 [Batch].mkv", 5000), file("/[Group] Show - 13.mkv", 900)];
+        assert_eq!(pick(&files, 5.0), Some("/[Group] Show - 01-12 [Batch].mkv"));
+        assert_eq!(pick(&files, 13.0), Some("/[Group] Show - 13.mkv"));
+        // and a dedicated file beats the batch around it
+        let with_single = vec![
+            file("/[Group] Show - 01-12 [Batch].mkv", 5000),
+            file("/[Group] Show - 05.mkv", 900),
+        ];
+        assert_eq!(pick(&with_single, 5.0), Some("/[Group] Show - 05.mkv"));
+    }
+
+    #[test]
+    fn the_first_match_in_torrent_order_wins_when_a_pack_ships_duplicates() {
+        let files = vec![file("/1080p/Show - 05.mkv", 2000), file("/720p/Show - 05.mkv", 900)];
+        assert_eq!(pick(&files, 5.0), Some("/1080p/Show - 05.mkv"));
+    }
+
+    #[test]
+    fn subtitles_and_junk_beside_the_videos_are_never_the_pick() {
+        let files = vec![
+            file("/Show - 05.ass", 30),
+            file("/readme.txt", 999_999),
+            file("/Show - 05.mkv", 900),
+        ];
+        assert_eq!(pick(&files, 5.0), Some("/Show - 05.mkv"));
+    }
+
+    // the reported bug: a 459-516 One Piece pack asked for episode 23 played
+    // episode 475 - the largest file - because "no match" fell back to "largest
+    // video". This is the real file list of that release, scraped from the tracker.
+    #[test]
+    fn a_partial_pack_asked_for_an_episode_it_lacks_refuses_instead_of_guessing() {
+        let fixture = include_str!("../../../test/fixtures/fr-one-piece-459-516.json");
+        let entries: Vec<serde_json::Value> = serde_json::from_str(fixture).unwrap();
+        let files: Vec<(String, u64)> = entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry["path"].as_str().unwrap().to_string(),
+                    entry["size"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+
+        let error = pick_episode_file(&files, 23.0, parse_names).unwrap_err();
+        assert_eq!(error.first, 459.0, "the message must say what the release really holds");
+        assert_eq!(error.last, 516.0);
+        assert!(error.to_string().contains("459-516"));
+        assert!(error.to_string().contains("episode 23"));
+
+        // and the same pack still serves what it does hold
+        assert_eq!(pick(&files, 475.0), Some("/One Piece - 475 v2 [F-R][b1929031].mkv"));
+        assert_eq!(pick(&files, 459.0), Some("/One Piece - 459 v2 [F-R][9d4e6bc5].mkv"));
+        assert_eq!(pick(&files, 516.0), Some("/One Piece - 516 v2 [F-R][54ce21cf].mkv"));
+    }
+
+    #[test]
+    fn extras_in_a_partial_pack_do_not_stretch_the_span_the_error_reports() {
+        let files = vec![
+            file("/Extras/Show - NCOP1.mkv", 5000),
+            file("/Show - 40.mkv", 900),
+            file("/Show - 41.mkv", 950),
+        ];
+        let error = pick_episode_file(&files, 3.0, parse_names).unwrap_err();
+        assert_eq!(error.first, 40.0, "the NCOP parsing as episode 1 must not make the pack claim to start at 1");
+        assert_eq!(error.last, 41.0);
+    }
+
+    #[test]
+    fn an_unproven_mismatch_falls_back_to_the_largest_real_episode_never_an_extra() {
+        let files = vec![
+            file("/Extras/Show - NCOP1.mkv", 5000),
+            file("/Show - 01.mkv", 900),
+            file("/Show - 02.mkv", 950),
+            file("/Show - Unnumbered Special.mkv", 800),
+        ];
+        assert_eq!(pick(&files, 40.0), Some("/Show - 02.mkv"));
+    }
+
+    #[test]
+    fn a_small_release_the_picker_cannot_match_is_handed_to_the_player() {
+        let files: Vec<_> = (13..=24).map(|n| file(&format!("/[Group] Show - {n}.mkv"), 1000)).collect();
+        assert_eq!(pick_pack(&files, 1.0, 12).unwrap(), None, "no pick means the player decides");
+        assert!(pick_episode_file(&files, 1.0, parse_names).is_err(), "the strict picker still says what it knows");
+    }
+
+    #[test]
+    fn a_release_too_big_to_hand_over_whole_is_still_refused() {
+        let files: Vec<_> = (459..=516).map(|n| file(&format!("/One Piece - {n}.mkv"), 1000)).collect();
+        assert!(pick_pack(&files, 23.0, 12).is_err(), "windowing this would play an arbitrary episode");
+        assert_eq!(pick_pack(&files, 475.0, 12).unwrap(), Some(16));
     }
 }

@@ -237,13 +237,13 @@ impl RealDebrid {
     }
 
     /// Undoes a torrent this client put on the account. Never fails: it runs from error paths
-    /// where a failure would mask the real one.
-    /// TODO(manager): port the JS orphan bookkeeping (`release`/`retryCleanup`) so a removal
-    /// that fails while offline is remembered and retried instead of leaking.
+    /// where a failure would mask the real one. A removal that fails is remembered by the
+    /// client and retried before the next check adds anything — the likeliest cause is the
+    /// link dropping mid-probe, and a magnet left behind is the one trace a check can leave.
     async fn release(&self, torrent_id: &str) {
         let url = format!("{API}/torrents/delete/{torrent_id}");
         let opts = RequestOpts { method: Some(Method::Delete), ..Default::default() };
-        let _ = self.client.request(&RdDialect, &url, opts).await;
+        self.client.release(&RdDialect, &url, opts).await;
     }
 
     /// The account's torrent listing, the whole account in one request.
@@ -528,7 +528,7 @@ impl RealDebrid {
         } else if let Some(pick) = &opts.pick_file {
             let choices: Vec<(u64, String, u64)> =
                 wanted.iter().map(|file| (file.id, file.path.clone(), file.size)).collect();
-            pick(&choices).and_then(|index| wanted.get(index)).cloned()
+            pick(&choices)?.and_then(|index| wanted.get(index)).cloned()
         } else {
             // no picker means the caller wants the main file: the largest one
             wanted.iter().reduce(|best, file| if file.size > best.size { file } else { best }).cloned()
@@ -667,6 +667,11 @@ impl DebridProvider for RealDebrid {
             }
         }
     }
+
+    async fn retry_cleanup(&self) {
+        self.client.retry_cleanup(&RdDialect).await;
+    }
+
 }
 
 #[cfg(test)]
@@ -1145,7 +1150,7 @@ mod tests {
         ]));
         let opts = ResolveOptions {
             file_filter: Some(video_filter()),
-            pick_file: Some(Box::new(|files| files.iter().position(|(_, path, _)| path == "/Pack/Episode 100.mkv"))),
+            pick_file: Some(Box::new(|files| Ok(files.iter().position(|(_, path, _)| path == "/Pack/Episode 100.mkv")))),
             max_files: Some(60),
         };
         let resolved = rd(&transport).resolve(&magnet(), &opts).await.unwrap();
@@ -1194,7 +1199,7 @@ mod tests {
         ]);
         let opts = ResolveOptions {
             file_filter: Some(video_filter()),
-            pick_file: Some(Box::new(|files| files.iter().position(|(_, path, _)| path.contains("Episode 01")))),
+            pick_file: Some(Box::new(|files| Ok(files.iter().position(|(_, path, _)| path.contains("Episode 01"))))),
             max_files: None,
         };
         let resolved = rd(&transport).resolve(&magnet(), &opts).await.unwrap();

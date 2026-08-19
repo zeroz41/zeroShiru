@@ -3,60 +3,45 @@
 // arbitrary offsets with 206 + Content-Range — a server that answers 200 with the whole file
 // makes every seek re-download from zero and stalls the player. Opt-in:
 //
-//   TORBOX_API_KEY=<key> npm run test:live
+//   TORBOX_API_KEY=<key> bun run test:live
 //
 // Uses the same public-domain fixture as the TorBox suite, resolves it once, and probes the
 // link the way the <video> element and DebridMetadata do. Leaves the account as the other
 // TorBox live file does: anything this file adds is removed again afterwards.
 import { test, beforeAll, afterAll } from 'bun:test'
 import assert from 'node:assert/strict'
-import TorBox from '../../../common/modules/debrid/torbox.js'
 import DebridMetadata from '../../../common/modules/debrid/metadata.js'
 import { matchSubtitleFiles } from '../../../common/modules/util.js'
+import { resolveTorBox, accountTorrents, deleteTorrent } from '../../tools/live-link.js'
+import { skipped } from '../../tools/skip.js'
 
 const KEY = process.env.TORBOX_API_KEY
 const skip = KEY ? false : 'TORBOX_API_KEY not set'
-const API = 'https://api.torbox.app/v1/api'
 
 // public domain, and cached on TorBox, so it exercises the whole path without a real download
 const CACHED = process.env.TORBOX_TEST_HASH || 'dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c'
 
-const service = KEY ? new TorBox(KEY) : null
-
-async function accountTorrents () {
-  const res = await fetch(`${API}/torrents/mylist?bypass_cache=true&limit=1000`, { headers: { Authorization: `Bearer ${KEY}` } })
-  const body = await res.json()
-  return new Map((body?.data || []).map(torrent => [torrent.id, String(torrent.hash).toLowerCase()]))
-}
-
 let before_ = null
-/** @type {import('../../../common/modules/debrid/service.js').DebridResolved} */
+/** @type {{ hash: string, name: string, files: { name: string, path: string, size: number, url: string }[] } | null} */
 let resolved = null
 let video = null
 
 beforeAll(async () => {
-  if (!service) return
+  if (skip) return
   before_ = await accountTorrents()
-  resolved = await service.resolve(CACHED, { fileFilter: name => /\.(mp4|mkv|avi)$/i.test(name) })
+  resolved = await resolveTorBox(CACHED, { filter: name => /\.(mp4|mkv|avi)$/i.test(name) })
   video = resolved.files.sort((a, b) => b.size - a.size)[0]
   console.log(`  streaming "${video.name}" (${(video.size / 1e6).toFixed(1)} MB)`)
 })
 
 afterAll(async () => {
-  if (!service) return
-  service.destroy()
+  if (skip) return
   await new Promise(resolve => setTimeout(resolve, 2_000))
   const after_ = await accountTorrents()
   const removed = [...before_].filter(([id]) => !after_.has(id)).map(([id]) => id)
   assert.deepEqual(removed, [], 'nothing here may delete a torrent the account already had')
   const added = [...after_].filter(([id]) => !before_.has(id)).map(([id]) => id)
-  for (const id of added) {
-    await fetch(`${API}/torrents/controltorrent`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ torrent_id: id, operation: 'delete' })
-    }).catch(() => {})
-  }
+  for (const id of added) await deleteTorrent(id)
   if (added.length) console.log(`  cleaned up ${added.length} torrent(s) added by this file`)
 })
 
@@ -133,8 +118,8 @@ test('ranged reads agree with each other byte for byte', { skip, timeout: 120_00
   assert.deepEqual(inner.body, a.body.slice(512, 1_024), 'a sub-range must be a slice of the larger read')
 })
 
-test('DebridMetadata streams real subtitle metadata from the live link where the container has any', { skip, timeout: 180_000 }, async t => {
-  if (!/\.mkv$/i.test(video.name)) return t.skip(`fixture resolves to ${video.name}, no Matroska metadata to stream`)
+test('DebridMetadata streams real subtitle metadata from the live link where the container has any', { skip, timeout: 180_000 }, async () => {
+  if (!/\.mkv$/i.test(video.name)) return skipped(`fixture resolves to ${video.name}, no Matroska metadata to stream`)
   const seen = { tracks: [], subtitles: [], fonts: [], files: [] }
   const spy = {
     handleTracks: tracks => seen.tracks.push(...tracks),

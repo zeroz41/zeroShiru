@@ -29,6 +29,12 @@ pub enum DebridError {
     #[error("{message}")]
     Unavailable { message: String },
 
+    /// The caller's file chooser refused this release — the episode asked for is
+    /// provably not in it. Nothing is wrong with the service or the account, so
+    /// this must not be retried or read as an availability answer.
+    #[error("{message}")]
+    Rejected { message: String },
+
     /// Any other API failure, with whatever the service said about it.
     #[error("{message}")]
     Service { message: String, status: Option<u16>, code: Option<String> },

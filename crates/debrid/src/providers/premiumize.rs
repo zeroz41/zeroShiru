@@ -312,7 +312,7 @@ impl DebridProvider for Premiumize {
                     .enumerate()
                     .map(|(index, file)| (index as u64, file.path.clone(), file.size))
                     .collect();
-                pick(&choices)
+                pick(&choices)?
             }
             // largest file, first on ties, like the JS stable sort
             None => Some(
@@ -598,7 +598,7 @@ mod tests {
         let (premiumize, _) = service(vec![Route::json("/transfer/directdl", 200, CONTENT)]);
         let opts = ResolveOptions {
             pick_file: Some(Box::new(|files| {
-                files.iter().position(|(_, path, _)| path.contains("01"))
+                Ok(files.iter().position(|(_, path, _)| path.contains("01")))
             })),
             ..video_filter()
         };

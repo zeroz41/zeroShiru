@@ -4,5 +4,5 @@
 pub mod pick;
 pub mod route;
 
-pub use pick::{pick_episode_file, pick_pack_file, EpisodeNotInPack, ParsedName};
+pub use pick::{parse_names, pick_episode_file, pick_pack, pick_pack_file, EpisodeNotInPack, ParsedName};
 pub use route::{route_debrid, DebridMode, RouteDecision, RouteInput, BlockReason};

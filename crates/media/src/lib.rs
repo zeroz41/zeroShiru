@@ -4,7 +4,9 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod filename;
 pub mod matroska;
+pub use filename::{parse_filename, parse_filenames, ParsedFilename, ReleaseKind};
 pub use matroska::{parse_matroska_head, MatroskaError, MatroskaInfo, Track, TrackKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +71,12 @@ pub const VIDEO_EXTENSIONS: &[&str] = &[
 
 pub const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt", "ass", "ssa", "sub", "txt"];
 
+/// Fonts an ASS subtitle track may need to render as its author meant it.
+pub const FONT_EXTENSIONS: &[&str] = &[
+    "ttf", "ttc", "woff", "woff2", "otf", "cff", "otc", "pfa", "pfb", "pcf", "fnt", "bdf", "pfr",
+    "eot",
+];
+
 fn has_extension(path: &str, extensions: &[&str]) -> bool {
     let Some((_, ext)) = path.rsplit_once('.') else { return false };
     extensions.iter().any(|known| known.eq_ignore_ascii_case(ext))
@@ -80,6 +88,16 @@ pub fn is_video_path(path: &str) -> bool {
 
 pub fn is_subtitle_path(path: &str) -> bool {
     has_extension(path, SUBTITLE_EXTENSIONS)
+}
+
+pub fn is_font_path(path: &str) -> bool {
+    has_extension(path, FONT_EXTENSIONS)
+}
+
+/// Everything playback can use: the video, its subtitles, and the fonts those
+/// subtitles need. The filter every resolve applies.
+pub fn is_playback_path(path: &str) -> bool {
+    is_video_path(path) || is_subtitle_path(path) || is_font_path(path)
 }
 
 #[cfg(test)]
@@ -94,5 +112,12 @@ mod path_tests {
         assert!(!is_video_path("no-extension"));
         assert!(is_subtitle_path("/subs/ep1.ASS"));
         assert!(!is_subtitle_path("/ep1.mkv"));
+        assert!(is_font_path("/fonts/Roboto.otf"));
+        assert!(!is_font_path("/ep1.mkv"));
+        // ASS subtitles render wrong without the pack's fonts, so playback wants all three
+        for path in ["/ep1.mkv", "/subs/ep1.ass", "/fonts/Roboto.ttf"] {
+            assert!(is_playback_path(path), "{path}");
+        }
+        assert!(!is_playback_path("/readme.nfo"));
     }
 }

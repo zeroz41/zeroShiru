@@ -10,7 +10,6 @@ use crate::{RqbitEngine, TorrentEngine, TorrentError};
 use librqbit::api::TorrentIdOrHash;
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, Session};
 use serde::{Deserialize, Serialize};
-use sha1::{Digest, Sha1};
 use shiru_domain::{parse_hash, to_magnet};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -854,11 +853,11 @@ impl TorrentSession {
 fn shape_player_file(info_hash: &str, torrent_name: &str, path: &str, size: u64, url: String) -> PlayerFile {
     let relative = path.trim_start_matches('/');
     let name = relative.rsplit('/').next().unwrap_or(relative).to_string();
-    let mut sha = Sha1::new();
-    sha.update(format!("{info_hash}:{name}:{size}").as_bytes());
     PlayerFile {
         info_hash: info_hash.to_string(),
-        file_hash: hex::encode(sha.finalize()),
+        // one implementation for both lanes, so a debrid play and a torrent play of the
+        // same file can never end up under different watch keys
+        file_hash: shiru_domain::watch_key(info_hash, &name, size),
         torrent_name: torrent_name.to_string(),
         mime: mime_for(&name),
         name,
@@ -1077,10 +1076,12 @@ mod tests {
         assert_eq!(file.name, "Episode 1.mkv");
         assert_eq!(file.path, "Season 1/Episode 1.mkv");
         assert_eq!(file.mime, "video/x-matroska");
-        // sha1("cab1…:Episode 1.mkv:123456") — pinned so watch progress keys never drift
-        let mut sha = Sha1::new();
-        sha.update(b"cab1a8cd6ea5d193fd4ea88b8e02b3e5e53e0dcb:Episode 1.mkv:123456");
-        assert_eq!(file.file_hash, hex::encode(sha.finalize()));
+        // pinned so watch progress keys never drift; the debrid lane calls the same
+        // shiru_domain::watch_key, and crates/domain pins this exact vector too
+        assert_eq!(
+            file.file_hash,
+            shiru_domain::watch_key("cab1a8cd6ea5d193fd4ea88b8e02b3e5e53e0dcb", "Episode 1.mkv", 123_456)
+        );
         let json = serde_json::to_value(&file).unwrap();
         for key in ["infoHash", "fileHash", "torrent_name", "name", "type", "size", "path", "url"] {
             assert!(json.get(key).is_some(), "missing wire field {key}");

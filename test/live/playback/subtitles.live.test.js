@@ -5,17 +5,18 @@
 // the player: embedded tracks, streamed subtitle events, embedded fonts, chapters, and
 // external subtitle files matched to the playing episode.
 //
-//   REAL_DEBRID_API_KEY=<key> RD_TEST_MAGNET=<hash of a cached MKV> npm run test:live
+//   TORBOX_API_KEY=<key> TB_TEST_PACK_HASH=<hash of a cached MKV> bun run test:live
 import { test } from 'bun:test'
 import assert from 'node:assert/strict'
-import RealDebrid from '../../../common/modules/debrid/realdebrid.js'
 import DebridMetadata from '../../../common/modules/debrid/metadata.js'
 import { matchSubtitleFiles } from '../../../common/modules/util.js'
+import { resolveTorBox } from '../../tools/live-link.js'
+import { skipped } from '../../tools/skip.js'
 
-const KEY = process.env.REAL_DEBRID_API_KEY
-const MAGNET = process.env.RD_TEST_MAGNET
-const EPISODE = process.env.RD_TEST_PACK_EPISODE
-const skip = !KEY ? 'REAL_DEBRID_API_KEY not set' : (!MAGNET ? 'RD_TEST_MAGNET not set' : false)
+const KEY = process.env.TORBOX_API_KEY
+const HASH = process.env.TB_TEST_PACK_HASH || process.env.TORBOX_TEST_HASH
+const EPISODE = process.env.TB_TEST_PACK_EPISODE
+const skip = !KEY ? 'TORBOX_API_KEY not set' : (!HASH ? 'TB_TEST_PACK_HASH not set (a cached MKV release)' : false)
 // enough of the file to prove subtitle events actually stream, without pulling the whole MKV
 const STREAM_BUDGET_MS = 120_000
 
@@ -44,18 +45,13 @@ function subtitleSpy () {
   }
 }
 
-test('a debrid stream feeds the player the same subtitle data a torrent would', { skip, timeout: 300_000 }, async t => {
-  const service = new RealDebrid(KEY)
-  const resolved = await service.resolve(MAGNET, {
-    fileFilter: name => /\.(mkv|mp4|ass|srt)$/i.test(name),
-    pickFile: EPISODE ? files => files.find(file => file.path.includes(EPISODE)) || files[0] : undefined
-  })
+test('a debrid stream feeds the player the same subtitle data a torrent would', { skip, timeout: 300_000 }, async () => {
+  const resolved = await resolveTorBox(HASH, { filter: name => /\.(mkv|mp4|ass|srt)$/i.test(name) })
   const videos = resolved.files.filter(file => /\.mkv$/i.test(file.name))
   // play the episode that was asked for, not merely the first file of a pack
   const video = (EPISODE && videos.find(file => file.name.includes(EPISODE))) || videos[0]
   if (!video) {
-    service.destroy()
-    return t.skip('resolved release holds no MKV, set RD_TEST_MAGNET to one that does')
+    return skipped('resolved release holds no MKV, point TB_TEST_PACK_HASH at one that does')
   }
   console.log(`  Playing "${video.name}"`)
 
@@ -81,7 +77,7 @@ test('a debrid stream feeds the player the same subtitle data a torrent would', 
   assert.equal(spy.seen.files.length, expectedExternal.length, 'external subtitle files must match the shared matcher exactly')
 
   if (!spy.seen.tracks.length && !expectedExternal.length) {
-    return t.skip('this release carries no subtitles at all, nothing to compare')
+    return skipped('this release carries no subtitles at all, nothing to compare')
   }
 
   if (spy.seen.tracks.length) {
@@ -97,7 +93,7 @@ test('a debrid stream feeds the player the same subtitle data a torrent would', 
       const throughput = await measureThroughput(video.url)
       const bitrate = durationMs > 0 ? video.size / (durationMs / 1_000) : 0
       const summary = `${(throughput / 1024).toFixed(0)} KB/s link vs ${(bitrate / 1024).toFixed(0)} KB/s release`
-      if (throughput < bitrate) return t.skip(`link too slow to reach dialogue within ${STREAM_BUDGET_MS / 1000}s (${summary}); re-run on a faster connection`)
+      if (throughput < bitrate) return skipped(`link too slow to reach dialogue within ${STREAM_BUDGET_MS / 1000}s (${summary}); re-run on a faster connection`)
       assert.fail(`embedded tracks announced themselves but streamed no subtitle events, and bandwidth was sufficient (${summary})`)
     }
     for (const { subtitle, trackNumber } of spy.seen.subtitles.slice(0, 5)) {
@@ -107,16 +103,13 @@ test('a debrid stream feeds the player the same subtitle data a torrent would', 
     console.log(`  First cue: "${String(spy.seen.subtitles[0].subtitle.text).slice(0, 60)}"`)
   }
 
-  service.destroy()
 })
 
-test('a seek far into the file restarts the subtitle stream near the seek', { skip, timeout: 300_000 }, async t => {
-  const service = new RealDebrid(KEY)
-  const resolved = await service.resolve(MAGNET, { fileFilter: name => /\.mkv$/i.test(name) })
+test('a seek far into the file restarts the subtitle stream near the seek', { skip, timeout: 300_000 }, async () => {
+  const resolved = await resolveTorBox(HASH, { filter: name => /\.mkv$/i.test(name) })
   const video = resolved.files[0]
   if (!video) {
-    service.destroy()
-    return t.skip('resolved release holds no MKV')
+    return skipped('resolved release holds no MKV')
   }
 
   // observe every range request DebridMetadata makes, the restart shows up here
@@ -132,7 +125,7 @@ test('a seek far into the file restarts the subtitle stream near the seek', { sk
   const spy = subtitleSpy()
   const metadata = new DebridMetadata(video, resolved.files, spy, { getTime: () => time })
   try {
-    if (!(await metadata.metadata.getTracks()).length) return t.skip('this release has no embedded subtitles to stream')
+    if (!(await metadata.metadata.getTracks()).length) return skipped('this release has no embedded subtitles to stream')
     const durationSeconds = (await metadata.metadata.duration) / 1_000
 
     // let the sequential stream get going, then seek to the last quarter of the episode.
@@ -161,12 +154,11 @@ test('a seek far into the file restarts the subtitle stream near the seek', { sk
       const throughput = await measureThroughput(video.url)
       const bitrate = video.size / durationSeconds
       const summary = `${(throughput / 1024).toFixed(0)} KB/s link vs ${(bitrate / 1024).toFixed(0)} KB/s release`
-      if (throughput < bitrate) return t.skip(`seek restarted correctly, but the link cannot reach dialogue within 120s (${summary}); re-run on a faster connection`)
+      if (throughput < bitrate) return skipped(`seek restarted correctly, but the link cannot reach dialogue within 120s (${summary}); re-run on a faster connection`)
       assert.fail(`the stream restarted at the seek but no cues followed, and bandwidth was sufficient (${summary})`)
     }
   } finally {
     metadata.destroy()
     globalThis.fetch = realFetch
-    service.destroy()
   }
 })

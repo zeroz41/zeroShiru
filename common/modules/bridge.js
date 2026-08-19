@@ -98,7 +98,29 @@ const desktopDefaults = {
   getYouTube: async () => 'https://www.youtube-nocookie.com'
 }
 
+// the debrid layer lives in the Rust core: providers, availability memory, the
+// account listing, rate limits and pack picking. The frontend asks and renders.
+const debridDefaults = {
+  /** selectable services as plain data, in menu order; the host inlines them */
+  services: [],
+  /** verify the key and that the account can stream; resolves to { username, expires } */
+  validate: async (service, apiKey) => ({ username: '' }),
+  /** what the account itself holds, the free badge source */
+  listAvailability: async (service, apiKey) => ({ answers: {}, names: {} }),
+  /** ask about releases; answers also arrive one at a time via onAvailability */
+  checkAvailability: async (service, apiKey, hashes) => ({ answers: {}, names: {}, busy: false }),
+  /** the given hashes nothing is known about yet */
+  unknownHashes: async (service, apiKey, hashes) => [],
+  /** record an answer the app proved itself, e.g. by playing the release */
+  remember: noopAsyncVoid,
+  /** magnet -> player-ready files; `episode` picks the right one out of a pack */
+  resolve: async (service, apiKey, magnet, episode) => ({ hash: '', name: '', files: [] }),
+  /** fires per answer as a check goes, so badges fill in as they land */
+  onAvailability: noopVoid
+}
+
 export const TORRENT = { ...torrentDefaults, ...window.torrent }
 export const COMMON = { ...commonDefaults, ...window.common }
 export const ANDROID = { ...androidDefaults, ...window.android }
 export const DESKTOP = { ...desktopDefaults, ...window.desktop }
+export const DEBRID = { ...debridDefaults, ...window.shiru?.debrid }

@@ -10,3 +10,6 @@ shiru-domain = { path = "../domain" }
 shiru-platform-contracts = { path = "../platform-contracts" }
 shiru-media = { path = "../media" }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

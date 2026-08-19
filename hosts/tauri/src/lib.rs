@@ -14,7 +14,10 @@ mod window;
 /// synchronous half of the bridge contract needs inlined at startup.
 fn bridge_script() -> String {
     let info = serde_json::to_string(&commands::platform_info()).expect("platform info serializes");
-    include_str!("bridge.js").replace("__SHIRU_PLATFORM_INFO__", &info)
+    let services = serde_json::to_string(&debrid::catalog()).expect("debrid catalog serializes");
+    include_str!("bridge.js")
+        .replace("__SHIRU_PLATFORM_INFO__", &info)
+        .replace("__SHIRU_DEBRID_SERVICES__", &services)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -42,7 +45,10 @@ pub fn run() {
             commands::route_playback,
             commands::open_uri,
             debrid::debrid_validate,
+            debrid::debrid_list_availability,
             debrid::debrid_check_availability,
+            debrid::debrid_unknown_hashes,
+            debrid::debrid_remember,
             debrid::debrid_resolve,
             torrent::torrent_start,
             torrent::torrent_stream,

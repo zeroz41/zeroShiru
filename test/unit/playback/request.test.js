@@ -6,8 +6,6 @@
 // played 18. These pin the request that now outranks that guess.
 import { test } from 'bun:test'
 import assert from 'node:assert/strict'
-import DebridService from '../../../common/modules/debrid/service.js'
-import TorBox from '../../../common/modules/debrid/torbox.js'
 import { matchRequestedFile, describeMissingEpisode, requestPlayback, playRequest } from '../../../common/modules/playback/request.js'
 
 const MEDIA = 21 // One Piece, as it happens
@@ -18,11 +16,17 @@ const file = (episode, { mediaId = MEDIA, name = `Show - ${episode}.mkv`, ...res
   media: { media: { id: mediaId }, episode, parseObject: { episode_number: String(episode) }, ...rest }
 })
 
-/** The window a debrid resolve hands the player: maxFiles centred on the episode asked for. */
-function debridWindow (episode, { first = 1, last = 100, maxFiles = TorBox.maxFiles } = {}) {
+/**
+ * The window a debrid resolve hands the player: maxFiles centred on the episode asked for.
+ * The real windowing lives in crates/debrid/src/window.rs (and TorBox's 12-file cap in its
+ * provider config); this reproduces its shape so the player can be tested against it.
+ */
+function debridWindow (episode, { first = 1, last = 100, maxFiles = 12 } = {}) {
   const pack = Array.from({ length: last - first + 1 }, (_, index) => file(first + index))
-  const target = pack.find(candidate => candidate.media.episode === episode)
-  return DebridService.windowFiles(pack, target, maxFiles, candidate => candidate.name)
+  if (pack.length <= maxFiles) return pack
+  const index = pack.findIndex(candidate => candidate.media.episode === episode)
+  const start = index < 0 ? 0 : Math.min(Math.max(0, index - (maxFiles >> 1)), pack.length - maxFiles)
+  return pack.slice(start, start + maxFiles)
 }
 
 test('the episode the user asked for is what plays, not the lowest one in the window', () => {

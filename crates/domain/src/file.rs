@@ -33,12 +33,16 @@ pub struct DebridResolved {
 
 /// A resolved file shaped like the torrent client's file objects, shared watch key included.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlayerFile {
     pub info_hash: String,
     /// SHA-1 of `"{infoHash}:{name}:{size}"` — the key watch progress and resume positions are
     /// stored under. MUST stay byte-identical with the torrent client's makeHash, so debrid and
     /// torrent playback of the same release share progress.
     pub file_hash: String,
+    /// The torrent's own name. Stays snake_case: the player's file objects have
+    /// carried this key since the torrent client wrote them.
+    #[serde(rename = "torrent_name")]
     pub torrent_name: String,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -57,12 +61,19 @@ pub fn sha1_hex(data: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// The key watch progress and resume positions are stored under: sha1 of
+/// `"{infoHash}:{name}:{size}"`. Both lanes call this — a debrid play and a torrent
+/// play of the same file must land on the same key or resume silently restarts.
+pub fn watch_key(info_hash: &str, name: &str, size: u64) -> String {
+    sha1_hex(&format!("{info_hash}:{name}:{size}"))
+}
+
 /// Shapes one resolved debrid file like the torrent client's file objects.
 /// Port of toPlayerFile in common/modules/debrid/identity.js.
 pub fn to_player_file(resolved_hash: &str, resolved_name: &str, file: &DebridFile) -> PlayerFile {
     PlayerFile {
         info_hash: resolved_hash.to_string(),
-        file_hash: sha1_hex(&format!("{}:{}:{}", resolved_hash, file.name, file.size)),
+        file_hash: watch_key(resolved_hash, &file.name, file.size),
         torrent_name: resolved_name.to_string(),
         name: file.name.clone(),
         r#type: file.r#type.clone(),
@@ -85,6 +96,20 @@ mod tests {
     }
 
     #[test]
+    fn the_watch_key_is_pinned_to_the_format_both_lanes_write() {
+        // the same vector crates/torrent pins, so the two can never drift apart
+        assert_eq!(
+            watch_key("cab1a8cd6ea5d193fd4ea88b8e02b3e5e53e0dcb", "Episode 1.mkv", 123_456),
+            sha1_hex("cab1a8cd6ea5d193fd4ea88b8e02b3e5e53e0dcb:Episode 1.mkv:123456")
+        );
+        // non-ASCII names are routine in real releases: UTF-8 bytes, no normalisation
+        assert_eq!(
+            watch_key("aa", "★☆Show☆★ - 01.mkv", 10),
+            sha1_hex("aa:★☆Show☆★ - 01.mkv:10")
+        );
+    }
+
+    #[test]
     fn player_file_keeps_the_shared_watch_key() {
         let file = DebridFile {
             name: "ep1.mkv".into(),
@@ -94,7 +119,7 @@ mod tests {
             r#type: None,
         };
         let player = to_player_file("aabb", "Pack", &file);
-        assert_eq!(player.file_hash, sha1_hex("aabb:ep1.mkv:123"));
+        assert_eq!(player.file_hash, watch_key("aabb", "ep1.mkv", 123));
         assert!(player.debrid);
         assert_eq!(player.torrent_name, "Pack");
     }

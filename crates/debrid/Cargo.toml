@@ -20,4 +20,8 @@ shiru-networking = { path = "../networking" }
 futures = "0.3"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros", "time"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
+# the live tests read stream links back over HTTP and check the account directly
+reqwest = { workspace = true }
+shiru-core = { path = "../core" }
+shiru-media = { path = "../media" }
