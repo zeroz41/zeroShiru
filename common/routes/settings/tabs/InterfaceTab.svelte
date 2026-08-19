@@ -1,4 +1,5 @@
 <script>
+  import { graphics, graphicsModes, setGraphicsMode } from '@/modules/graphics.js'
   import { variables, setStyle, setScale } from '@/modules/themes.js'
   import { click } from '@/modules/lib/click.js'
   import HomeSections from '@/routes/settings/components/HomeSections.svelte'
@@ -156,21 +157,18 @@
     </select>
   </SettingCard>
 {/if}
-{#if SUPPORTS.angle}
+{#if SUPPORTS.graphics && $graphics.modes.length}
   <h4 class='mb-10 font-weight-bold'>Rendering Settings</h4>
-  <SettingCard title='ANGLE Backend' description="What ANGLE backend to use for rendering. DON'T CHANGE WITHOUT REASON! On some Windows machines D3D9 might help with flicker. Changing this setting to something your device doesn't support might prevent zeroShiru from opening which will require a full reinstall. While Vulkan is an available option it might not be fully supported on Linux.">
-    <select class='form-control bg-dark w-300 mw-full text-truncate' bind:value={settings.angle} on:change={() => DESKTOP.setAngle(settings.angle)}>
-      <option value='default' selected>Default</option>
-      <option value='d3d9'>D3D9</option>
-      <option value='d3d11'>D3D11</option>
-      <option value='warp'>Warp [Software D3D11]</option>
-      <option value='gl'>GL</option>
-      <option value='gles'>GLES</option>
-      <option value='swiftshader'>SwiftShader</option>
-      <option value='vulkan'>Vulkan</option>
-      <option value='metal'>Metal</option>
+  <SettingCard title='Graphics Mode' description={"How the window is composited. Leave this on Automatic unless the app fails to draw — a black or never-appearing window on Linux is usually the graphics driver refusing the fast path, and the safer modes trade smoothness for getting a window at all.\n\nTakes effect the next time the app starts. If it will not open at all, launch it once with SHIRU_GRAPHICS=safe."}>
+    <select class='form-control bg-dark w-300 mw-full text-truncate' value={$graphics.mode} disabled={$graphics.overridden} on:change={event => setGraphicsMode(event.currentTarget.value)}>
+      {#each $graphics.modes as mode (mode)}
+        <option value={mode}>{graphicsModes[mode] || mode}</option>
+      {/each}
     </select>
   </SettingCard>
+  {#if $graphics.overridden}
+    <div class='font-size-14 text-muted mb-20'>SHIRU_GRAPHICS is set in this session, so it is deciding rather than this setting.</div>
+  {/if}
 {/if}
 <h4 class='mb-10 font-weight-bold'>Notification Settings</h4>
 <SettingCard title='System Notifications' description={'Allows custom system notifications to be sent, with this disabled you will still get in-app notifications. If you enable system notifications and have MULTIPLE Notification Feeds specified, such as RSS, Releases, and Anilist you WILL be spammed with multiple notifications. Consider choosing a single feed based on your needs.'}>

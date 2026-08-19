@@ -40,19 +40,6 @@
   }
 </script>
 
-{#if SUPPORTS.doh}
-  <h4 class='mb-10 font-weight-bold'>DNS Settings</h4>
-  <SettingCard title='Use DNS Over HTTPS' description='Enables DNS Over HTTPS, useful if your ISP blocks certain domains.'>
-    <div class='custom-switch fit-content'>
-      <input type='checkbox' id='rss-dohtoggle' bind:checked={settings.enableDoH} />
-      <label for='rss-dohtoggle'>{settings.enableDoH ? 'On' : 'Off'}</label>
-    </div>
-  </SettingCard>
-  <SettingCard title='DNS Over HTTPS URL' description='What URL to use for querying DNS Over HTTPS.'>
-    <input type='url' class='form-control bg-dark w-300 mw-full text-truncate' bind:value={settings.doHURL} placeholder={defaults.doHURL} />
-  </SettingCard>
-{/if}
-
 <h4 class='mb-10 font-weight-bold'>Client Settings</h4>
 <SettingCard title='Download Location' description={'Path to the folder used to store torrents. By default this is the TMP folder, which might lose data when your OS tries to reclaim storage.' + (SUPPORTS.isAndroid ? '\n\nIn Android, /sdcard/ is internal storage not external SD Cards and /storage/AB12-34CD/ is external storage not internal.' : '')}>
   <div class='input-group mw-100 w-400 flex-nowrap'>

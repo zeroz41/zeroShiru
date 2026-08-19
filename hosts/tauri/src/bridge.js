@@ -17,6 +17,8 @@
     notify: (opts) => invoke('notify', { title: opts?.title || 'zeroShiru', body: opts?.message || opts?.body }),
     pickFile: async (filters) => (await invoke('pick_file', { filters })) || '',
     pickFolder: async () => (await invoke('pick_folder')) || '',
+    exportLog: () => invoke('export_log'),
+    resetLog: () => invoke('reset_log'),
     // deep links (shiru://, magnet:) as raw URLs; routing lives in the renderer
     onProtocol: (callback) => { listen('shiru://protocol', (event) => callback(event.payload)) }
   }
@@ -28,6 +30,10 @@
     hideWindow: () => invoke('window_hide'),
     showAndFocus: () => invoke('window_show_and_focus'),
     openDevTools: () => invoke('open_devtools'),
+    setUnreadCount: (count) => invoke('set_unread_count', { count: Number(count) || 0 }),
+    // how the renderer is composited; stored, applied at the next launch
+    getGraphics: () => invoke('get_graphics'),
+    setGraphics: (mode) => invoke('set_graphics', { mode }),
     onExitIntent: (callback) => { listen('shiru://exit-intent', () => callback()) },
     setDiscordRPC: (mode) => invoke('set_discord_rpc', { mode }),
     setPresence: (data) => {

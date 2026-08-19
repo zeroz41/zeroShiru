@@ -80,9 +80,13 @@ const androidDefaults = {
 
 const desktopDefaults = {
   exit: noopVoid,
-  setDoH: noopVoid,
-  getAngle: async () => 'default',
-  setAngle: noopVoid,
+  /**
+   * How the renderer is composited, for stacks where the fast path fails.
+   * @returns {Promise<{ mode: string, modes: string[], overridden: boolean }>}
+   */
+  getGraphics: async () => ({ mode: 'auto', modes: [], overridden: false }),
+  /** Stored for the next launch: compositing is decided before a window exists. */
+  setGraphics: noopAsyncVoid,
   isMinimized: noopAsyncBool,
   isFullScreen: noopAsyncBool,
   onMinimize: noopVoid,

@@ -3,8 +3,9 @@
 export const SUPPORTS = {
   offscreenRender: true,
   update: true,
-  angle: true,
-  doh: true,
+  // renderer compositing modes, for the Linux stacks where the fast path fails.
+  // The host fills the list in; an empty one hides the setting
+  graphics: true,
   discord: true,
   keybinds: true,
   isAndroid: false,

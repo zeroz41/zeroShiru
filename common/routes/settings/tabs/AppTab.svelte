@@ -78,7 +78,6 @@
   export let settings
 
   function resetSettings () {
-    DESKTOP.setAngle(defaults.angle)
     cache.resetSettings()
   }
 

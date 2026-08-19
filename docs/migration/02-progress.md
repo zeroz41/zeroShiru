@@ -24,6 +24,7 @@ it renders, and asks the core.
 | Bridge | `common/modules/bridge.js`: TORRENT (19 ops), COMMON, ANDROID, DESKTOP, DEBRID; only file in common/ touching a host API |
 | Android | Tauri Android APK assembles from the same core; Kotlin adapters (Media3, PiP, foreground service, SAF) not started |
 | TV | 160KB WASM core builds; `hosts/tizen` + `hosts/webos` scaffolds, hardware-gated |
+| Desktop settings | Logging (`tracing` → `main.log`), log export/reset, unread badge, and a Linux graphics mode replacing the Electron-era ANGLE selector |
 | Packaging | `release.yml` builds AppImage + deb, MSI + NSIS, universal DMG and both Android ABIs from the Tauri CLI |
 | Tests | 145 JS (`bun run test`) + 209 Rust (`cargo test --workspace`), all green. Live suites are opt-in: `test:rust:live` (debrid, real account), `test:live` (playback, real stream), `test:torrent` (one real swarm) |
 
@@ -48,9 +49,11 @@ below that needs a person at a desktop.
    check files/stats/subtitles/seek, then the same over debrid.
 2. **Updater** — Tauri updater needs signing keys (release-owner decision); the
    bridge ops are noops until then. Steps in [docs/CI.md](../CI.md#updater).
-3. **Desktop odds and ends** — DoH, ANGLE selection, log export/reset,
-   unread-count badge: bridge noops today, need Rust/host equivalents or
-   deliberate removal.
+3. ~~Desktop odds and ends~~ — done: the log buttons write and export a real
+   `tracing` log, the unread badge reaches the taskbar, ANGLE selection became
+   the graphics mode this host actually has (stored, applied at the next launch,
+   `SHIRU_GRAPHICS` still overrides), and the DoH setting is gone — it was
+   Chromium's resolver and nothing here can honour it.
 4. **Android (phase 12/13/14)** — Kotlin adapters, on-device testing, then
    Android TV input/layout profile.
 5. **Anitomy, the rest of it** — the recognizer covers episode numbers and

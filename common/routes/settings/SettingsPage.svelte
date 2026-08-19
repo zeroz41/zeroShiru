@@ -1,6 +1,7 @@
 <script context='module'>
   import { settings, debugStore } from '@/modules/settings.js'
   import { SUPPORTS } from '@/modules/support.js'
+  import { graphics } from '@/modules/graphics.js'
   import { capitalize, debounce } from '@/modules/util.js'
   import { toast } from 'svelte-sonner'
   import { ANDROID, COMMON, DESKTOP } from '@/modules/bridge.js'
@@ -25,8 +26,7 @@
     debug(`v${version} ${platformMap[COMMON.getPlatformInfo().platform] || 'dev'} ${COMMON.getPlatformInfo().arch || 'dev'} ${capitalize(COMMON.getPlatformInfo().session) || ''}`, JSON.stringify(settings))
   })
   debounceRPC(settings.value.enableRPC)
-  if (settings.value.enableDoH) DESKTOP.setDoH(settings.value.doHURL)
-  if (SUPPORTS.angle) settings.value.angle = await DESKTOP.getAngle()
+  if (SUPPORTS.graphics) graphics.set(await DESKTOP.getGraphics())
   if (SUPPORTS.isAndroid) setTimeout(() => requestFileAccess(settings.value.torrentPathNew), 2_500).unref?.()
   function requestFileAccess(path, cb) {
     if (path && path !== '/tmp') {

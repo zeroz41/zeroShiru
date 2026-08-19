@@ -3,8 +3,11 @@
 
 mod commands;
 mod debrid;
+#[cfg(desktop)]
+mod desktop;
 mod discord;
 mod graphics;
+mod logging;
 #[cfg(desktop)]
 mod shell;
 mod torrent;
@@ -20,9 +23,29 @@ fn bridge_script() -> String {
         .replace("__SHIRU_DEBRID_SERVICES__", &services)
 }
 
+/// Every command name `bridge.js` invokes. Kept beside the handler list below so a
+/// renamed command cannot silently become a call into nothing at runtime.
+#[cfg(test)]
+fn bridge_invocations(script: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for (index, _) in script.match_indices("invoke('") {
+        let rest = &script[index + "invoke('".len()..];
+        if let Some(end) = rest.find('\'') {
+            names.push(rest[..end].to_string());
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    graphics::apply();
+    // both run before the window exists: the renderer is configured at startup, and
+    // anything that goes wrong from here should end up in the log
+    let identifier = "watch.zeroshiru.app";
+    graphics::apply(identifier);
+    logging::init(&graphics::config_dir_for(identifier));
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -73,6 +96,16 @@ pub fn run() {
             window::pick_file,
             window::pick_folder,
             window::notify,
+            #[cfg(desktop)]
+            desktop::set_unread_count,
+            #[cfg(desktop)]
+            desktop::export_log,
+            #[cfg(desktop)]
+            desktop::reset_log,
+            #[cfg(desktop)]
+            desktop::get_graphics,
+            #[cfg(desktop)]
+            desktop::set_graphics,
             discord::set_discord_rpc,
             discord::set_presence,
             discord::clear_presence,
@@ -98,4 +131,46 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The command names the invoke_handler above registers. Parsed from this file so
+    /// the test cannot drift from the list it is checking.
+    fn registered_commands() -> Vec<String> {
+        let source = include_str!("lib.rs");
+        let start = source.find("generate_handler![").expect("handler list");
+        let end = source[start..].find("])").expect("handler list end") + start;
+        let mut names: Vec<String> = source[start..end]
+            .lines()
+            .filter_map(|line| line.trim().trim_end_matches(',').rsplit("::").next())
+            .filter(|name| !name.is_empty() && !name.contains('!') && !name.contains('['))
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    #[test]
+    fn every_command_the_bridge_invokes_is_registered() {
+        let script = bridge_script();
+        let registered = registered_commands();
+        let invoked = bridge_invocations(&script);
+        let missing: Vec<&String> = invoked.iter().filter(|name| !registered.contains(name)).collect();
+        assert!(missing.is_empty(), "bridge.js invokes commands that no handler registers: {missing:?}");
+    }
+
+    #[test]
+    fn the_inlined_values_the_sync_bridge_contract_needs_are_substituted() {
+        let script = bridge_script();
+        assert!(!script.contains("__SHIRU_PLATFORM_INFO__"), "getPlatformInfo must be answerable without an await");
+        assert!(!script.contains("__SHIRU_DEBRID_SERVICES__"), "the settings menu reads the service registry synchronously");
+        // and the substituted values are the real ones
+        assert!(script.contains(std::env::consts::OS));
+        assert!(script.contains("\"torbox\""), "the debrid catalog reaches the frontend");
+        assert!(script.contains("\"Real-Debrid\""));
+    }
 }
