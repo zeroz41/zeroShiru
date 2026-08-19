@@ -5,7 +5,7 @@ only — no Samsung C/C++ WASM extensions, no SIMD/threads (report sections 23, 
 
 Assembly (once `scripts/build-tv-core.sh` has run):
 
-    frontend  <- electron/build (the Vite renderer output)
+    frontend  <- dist/web       (the Vite renderer output)
     wasm      <- dist/tv-core/  (wasm-bindgen web-target glue + .wasm)
     host      <- this directory (config.xml, bootstrap, AVPlay adapter)
     tizen build-web && tizen package  -> signed .wgt

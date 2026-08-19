@@ -7,40 +7,56 @@ rewrite`; work continues as small commits on top.
 
 The legacy stacks are gone. There is no Electron, no Webpack, no Capacitor/
 Cordova/node-mobile, no WebTorrent, and no npm in any workflow — Bun runs the
-JS side, Cargo runs the Rust side.
+JS side, Cargo runs the Rust side. The frontend no longer implements anything:
+it renders, and asks the core.
 
 | Area | State |
 |---|---|
 | Frontend build | Vite only (`bun run build` → `dist/web`), Svelte 4 preserved |
 | Desktop host | Tauri 2 (`hosts/tauri`): window/tray/dialogs/notifications, deep links, single instance, Discord RPC, NVIDIA/Wayland graphics fallback |
-| Torrenting | Rust (`crates/torrent`): librqbit behind `TorrentEngine`, plus `TorrentSession` — role registry (current/staging/seeding/completed), sidecar persistence, auto-restore, seeding-limit policy, HTTP tracker scrape, external player launch, loopback range gateway for playback |
+| Torrenting | Rust (`crates/torrent`): librqbit behind `TorrentEngine`, plus `TorrentSession` — role registry, sidecar persistence, auto-restore, seeding-limit policy, HTTP tracker scrape, external player launch, loopback range gateway |
 | Torrent UI wiring | One pushed `stats` snapshot drives all four Svelte stores; `files` events carry gateway URLs with the debrid-identical `fileHash` watch key |
-| Debrid | Rust (`crates/debrid`, 4 providers) behind `window.shiru.debrid`; the JS providers in `common/modules/debrid/` still run the UI path (swap pending) |
-| Subtitles/metadata | Renderer-side `DebridMetadata` (HTTP-range Matroska parsing) now serves BOTH lanes — torrent and debrid — off the gateway/debrid URL |
+| Debrid | Rust end to end (`crates/debrid`, 4 providers) behind `window.shiru.debrid`. The JS providers, base class, service registry and picker are **deleted**; `common/modules/debrid/` is now stores, routing policy, the availability vocabulary and the renderer-side metadata streamer |
+| Filename recognition | Rust (`crates/media/src/filename.rs`): episode numbers and release kind, no anitomy WASM on the pack-picking path |
+| Episode picking | Rust (`crates/core::pick_pack`), driven by that recognizer — one call, no host round trip |
+| Subtitles/metadata | Renderer-side `DebridMetadata` (HTTP-range Matroska parsing) serves BOTH lanes — torrent and debrid — off the gateway/debrid URL |
 | Protocol handling | Renderer-side `common/modules/protocol.js` (shiru://, magnet:); hosts only deliver raw URLs |
-| Bridge | `common/modules/bridge.js` rewritten lean: TORRENT (19 ops), COMMON, ANDROID, DESKTOP; only file in common/ touching a host API |
+| Bridge | `common/modules/bridge.js`: TORRENT (19 ops), COMMON, ANDROID, DESKTOP, DEBRID; only file in common/ touching a host API |
 | Android | Tauri Android APK assembles from the same core; Kotlin adapters (Media3, PiP, foreground service, SAF) not started |
 | TV | 160KB WASM core builds; `hosts/tizen` + `hosts/webos` scaffolds, hardware-gated |
-| Tests | 332 JS (`bun run test`, node:test) + 160+ Rust (`cargo test --workspace`), all green |
+| Packaging | `release.yml` builds AppImage + deb, MSI + NSIS, universal DMG and both Android ABIs from the Tauri CLI |
+| Tests | 128 JS (`bun run test`) + 200+ Rust (`cargo test --workspace`), all green. Live suites are opt-in: `test:rust:live` (debrid, real account), `test:live` (playback, real stream), `test:torrent` (one real swarm) |
+
+## What has been proven live
+
+- **Debrid**: validate, availability (batch + probe), account listing and TTL
+  reuse, resolve to HTTPS links, byte-range playback, and picking episode 53 out
+  of a 168-file One Piece pack — all against a real TorBox account, from Rust.
+- **Playback**: the renderer's `DebridMetadata` streaming 4 tracks, 25 subtitle
+  events, 127 embedded fonts and 6 chapters off a live link, plus seek restart.
+- **Torrent**: `bun run test:torrent` — magnet → metadata → gateway → HTTP 206
+  with real peers.
+
+Still unproven: the whole thing inside the Tauri window. That is the one item
+below that needs a person at a desktop.
 
 ## What's left to finish
 
-1. **Live-run the desktop app** — the rewritten torrent path (session, snapshot
-   events, gateway playback, renderer-side subtitle extraction for torrents)
-   compiles and is unit-tested but has not yet streamed a real torrent end to
-   end under the Tauri window. First manual smoke: `bun run tauri:dev`, load a
-   magnet, check files/stats/subtitles/seek.
-2. **Debrid UI swap** — point `common/modules/debrid/` service calls at
-   `window.shiru.debrid.*` and delete the JS provider implementations.
-3. **Updater** — Tauri updater needs signing keys (release-owner decision);
-   the bridge ops are noops until then.
-4. **Desktop odds and ends** — DoH, ANGLE selection, log export/reset,
+1. **Live-run the desktop app** — the engine, the gateway, the debrid path and
+   the picker are each proven live from their own test harness, but nothing has
+   yet driven them through the Tauri window. `bun run tauri:dev`, load a magnet,
+   check files/stats/subtitles/seek, then the same over debrid.
+2. **Updater** — Tauri updater needs signing keys (release-owner decision); the
+   bridge ops are noops until then. Steps in [docs/CI.md](../CI.md#updater).
+3. **Desktop odds and ends** — DoH, ANGLE selection, log export/reset,
    unread-count badge: bridge noops today, need Rust/host equivalents or
    deliberate removal.
-5. **Android (phase 12/13/14)** — Kotlin adapters, on-device testing, then
+4. **Android (phase 12/13/14)** — Kotlin adapters, on-device testing, then
    Android TV input/layout profile.
-6. **Anime filename parsing → Rust** (anitomyscript replacement) and
-   remaining §18 package audit (comlink, video-deband, quartermoon…).
+5. **Anitomy, the rest of it** — the recognizer covers episode numbers and
+   release kind. Title/season/group parsing for search and matching still runs
+   through `anitomyscript` in the UI bundle; moving it finishes §16.
+6. **§18 package audit** — comlink, video-deband, quartermoon and friends.
 7. **TV hosts** — section 11/28 hardware gates, then real bootstraps.
 8. **Svelte 5** — last, as its own project (phase 18).
 
@@ -53,14 +69,30 @@ JS side, Cargo runs the Rust side.
   tracker scrape fills totals.
 - Rescan no longer re-hashes; the engine verifies on add instead.
 - uTP/PeX toggles are accepted but inert (librqbit manages transports).
+- Pack picking reads file names with the Rust recognizer rather than the anitomy
+  WASM build. It is deliberately more conservative: a number is an episode only
+  where a release name would put one, and anything unreadable falls through to
+  the same safe fallbacks as before.
+
+## Bad connections are a feature requirement
+
+The debrid layer is written for links that are slow, not just links that are
+fast. Poll budgets stretch with measured round-trip latency (capped at 3×), a
+timeout never counts as a measurement, and no link failure is ever recorded as
+an answer about a release — an unanswered hash stays askable rather than being
+badged "not cached". A removal this app owes an account is remembered and
+retried before the next check adds anything, so a link that drops mid-probe
+cannot leave a magnet behind. `crates/debrid/src/client.rs` (`mod connection`)
+and `manager.rs` hold these to it.
 
 ## Running things
 
 ```
-bun run test                # 332 JS unit tests
-cargo test --workspace      # Rust tests
+bun run test                # 128 JS unit tests
+bun run test:rust           # cargo test --workspace
 bun run tauri:dev           # Vite :5173 + Tauri window (SHIRU_GRAPHICS=safe if needed)
 bun run build               # production frontend → dist/web
+bun run tauri:bundle        # installers for the current OS
 ./scripts/build-tv-core.sh  # WASM TV core
 ```
 

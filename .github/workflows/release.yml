@@ -1,13 +1,13 @@
 name: Release
 
 # Releases run two ways:
-#   1. Push a tag like v6.8.1 (must match electron/package.json version).
+#   1. Push a tag like v6.8.1 (must match the version in hosts/tauri/tauri.conf.json).
 #   2. Manual dispatch with the confirmation box ticked.
-# Either way it runs full CI first, then drafts a GitHub Release and uploads
-# one artifact set per platform: Windows (installer + portable), macOS
-# (universal), Linux (AppImage) and Android (arm64 + armv7 APKs). Publishing
-# the draft is a manual step on the Releases page - that is the moment users
-# (and the in-app updater) can see it.
+# Either way it runs full CI first, then drafts a GitHub Release and uploads one
+# artifact set per platform: Windows (MSI + NSIS), macOS (universal DMG), Linux
+# (AppImage + deb) and Android (arm64 + armv7 APKs). Publishing the draft is a
+# manual step on the Releases page - that is the moment users (and the in-app
+# updater) can see it.
 
 on:
   push:
@@ -15,14 +15,16 @@ on:
   workflow_dispatch:
     inputs:
       version_confirmed:
-        description: 'I have verified the version in electron/package.json and confirm this release is intentional'
+        description: 'I have verified the version in hosts/tauri/tauri.conf.json and confirm this release is intentional'
         required: true
         default: false
         type: boolean
 
 env:
-  NODE_VERSION: '24.15.0'
-  PNPM_VERSION: '10.34.1'
+  BUN_VERSION: '1.3.14'
+  RUST_VERSION: '1.89.0'
+  # Linux Tauri build deps, shared by the desktop job and BUILDING.md.
+  LINUX_DEPS: libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
 jobs:
   # Releases are gated on the same CI that runs on every push.
@@ -43,17 +45,16 @@ jobs:
       - name: Read Release Version
         id: read_version
         run: |
-          VERSION=$(node -p "require('./electron/package.json').version")
-          APP_VERSION="v$VERSION"
-          echo "app_version=$APP_VERSION" >> $GITHUB_OUTPUT
-          echo "App Version: $APP_VERSION"
+          VERSION=$(jq -r .version hosts/tauri/tauri.conf.json)
+          echo "app_version=v$VERSION" >> $GITHUB_OUTPUT
+          echo "App Version: v$VERSION"
 
-      - name: Verify tag matches package version
+      - name: Verify tag matches app version
         if: github.event_name == 'push'
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           if [ "$TAG" != "${{ steps.read_version.outputs.app_version }}" ]; then
-            echo "::error::Tag $TAG does not match electron/package.json version ${{ steps.read_version.outputs.app_version }} - bump the version and re-tag."
+            echo "::error::Tag $TAG does not match hosts/tauri/tauri.conf.json version ${{ steps.read_version.outputs.app_version }} - bump the version and re-tag."
             exit 1
           fi
 
@@ -77,45 +78,83 @@ jobs:
     name: Desktop (${{ matrix.name }})
     needs: prepare-release
     runs-on: ${{ matrix.os }}
+    env:
+      APP_VERSION: ${{ needs.prepare-release.outputs.app_version }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # 22.04 rather than latest: the AppImage inherits the builder's glibc,
+          # so building on the newest Ubuntu would refuse to start on older ones.
+          - name: Linux
+            os: ubuntu-22.04
+            targets: ''
+            bundles: target/release/bundle/appimage/*.AppImage target/release/bundle/deb/*.deb
           - name: Windows
-            os: windows-2022
+            os: windows-latest
+            targets: ''
+            bundles: target/release/bundle/msi/*.msi target/release/bundle/nsis/*-setup.exe
           - name: macOS
             os: macos-latest
-          - name: Linux
-            os: ubuntu-latest
+            targets: --target universal-apple-darwin
+            bundles: target/universal-apple-darwin/release/bundle/dmg/*.dmg
 
     steps:
       - name: Check out Git repository
         uses: actions/checkout@v6
 
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v6
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: ${{ env.PNPM_VERSION }}
+          bun-version: ${{ env.BUN_VERSION }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: Install Setuptools for Python (macOS only)
-        if: runner.os == 'macOS'
-        run: pip3 install setuptools --break-system-packages
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Tauri Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ env.LINUX_DEPS }}
+
+      - name: Install Tauri CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli
 
       - name: Install dependencies
-        working-directory: electron
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
-      - name: Build and Publish
-        working-directory: electron
+      - name: Build frontend
+        run: bun run build
+
+      # tauri.conf.json declares the bundle targets; beforeBuildCommand is empty
+      # because the frontend is already in dist/web by this point.
+      - name: Build bundles
+        working-directory: hosts/tauri
+        run: cargo tauri build ${{ matrix.targets }}
+
+      - name: Publish bundles
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run publish
+        run: |
+          shopt -s nullglob
+          FILES=(${{ matrix.bundles }})
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "::error::No bundles were produced for ${{ matrix.name }}"
+            exit 1
+          fi
+          for f in "${FILES[@]}"; do
+            echo "uploading $(basename "$f")"
+            gh release upload --clobber "$APP_VERSION" "$f"
+          done
 
   release-android:
     name: Android
@@ -123,40 +162,45 @@ jobs:
     runs-on: ubuntu-latest
     env:
       APP_VERSION: ${{ needs.prepare-release.outputs.app_version }}
-
-    defaults:
-      run:
-        working-directory: ./capacitor
+      NDK_VERSION: '27.2.12479018'
 
     steps:
       - name: Free Disk Space
-        working-directory: .
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk \
-            /opt/ghc /usr/local/share/boost \
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost \
             "$AGENT_TOOLSDIRECTORY" /opt/hostedtoolcache/CodeQL
           sudo docker image prune -af > /dev/null
 
       - name: Check out Git repository
         uses: actions/checkout@v6
 
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v6
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '21'
-          check-latest: true
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: |
+          sdkmanager --install "ndk;${NDK_VERSION}"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> $GITHUB_ENV
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
 
       - name: Cache Gradle
         uses: actions/cache@v5
@@ -168,39 +212,36 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}
 
+      - name: Install Tauri CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli
+
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
-      - name: Install node-pre-gyp
-        run: pnpm install -g node-pre-gyp
+      - name: Build frontend
+        run: bun run build
 
-      - name: Build Native + Web
-        run: pnpm run build:app
+      # armv7 covers 32-bit TV boxes; the same APK serves phone and Android TV.
+      - name: Build Android APKs
+        working-directory: hosts/tauri
+        run: cargo tauri android build --apk --split-per-abi --target aarch64 --target armv7
 
-      - name: Build Android APK
-        run: cd android && chmod +x ./gradlew && ./gradlew assembleRelease
-
-      - name: Stop Gradle Daemon
-        run: cd android && ./gradlew --stop
-
-      - name: Sign Android APK
+      - name: Sign Android APKs
         id: sign_app
         uses: RockinChaos/sign-android@v1.1.0
         with:
-          releaseDir: capacitor/android/app/build/outputs/apk/release
+          releaseDir: hosts/tauri/gen/android/app/build/outputs/apk/release
           signingKey: "${{ secrets.SIGNING_KEY }}"
           keyAlias: "${{ secrets.ALIAS }}"
           keyStorePassword: "${{ secrets.KEY_STORE_PASSWORD }}"
           keyPassword: "${{ secrets.KEY_PASSWORD }}"
-          appName: Shiru
+          appName: zeroShiru
           appVersion: ${{ env.APP_VERSION }}
           appPrefix: android
 
-      - name: Generate latest-android.yml
-        run: |
-          echo "version: ${{ env.APP_VERSION }}" | sed 's/^version: v/version: /' > latest-android.yml
-
-      - name: Publish Android APK
+      - name: Publish Android APKs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -209,11 +250,6 @@ jobs:
           for f in "${FILES[@]}"; do
             if [ -n "$f" ]; then
               echo "uploading $(basename $f)"
-              gh release upload --clobber "$APP_VERSION" "../$f"
+              gh release upload --clobber "$APP_VERSION" "$f"
             fi
           done
-          echo "uploading latest-android.yml"
-          gh release upload --clobber "$APP_VERSION" latest-android.yml
-
-      - name: Clean Build Artifacts
-        run: rm -rf ./build

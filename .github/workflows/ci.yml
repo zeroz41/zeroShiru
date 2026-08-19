@@ -18,7 +18,7 @@ env:
   BUN_VERSION: '1.3.14'
 
 jobs:
-  # Unit tests: plain node:test, no native builds needed. Anything added under
+  # Unit tests: bun:test, no native builds needed. Anything added under
   # test/unit/ is picked up automatically - see BUILDING.md.
   test:
     name: Unit Tests
@@ -104,12 +104,19 @@ jobs:
       - name: Install dependencies (no native builds)
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.89.0
+
       - name: Run live tests
         env:
           REAL_DEBRID_API_KEY: ${{ secrets.REAL_DEBRID_API_KEY }}
           TORBOX_API_KEY: ${{ secrets.TORBOX_API_KEY }}
           RD_TEST_MAGNET: ${{ vars.RD_TEST_MAGNET }}
-          RD_TEST_PACK_MAGNET: ${{ vars.RD_TEST_PACK_MAGNET }}
-          RD_TEST_PACK_EPISODE: ${{ vars.RD_TEST_PACK_EPISODE }}
           TORBOX_TEST_HASH: ${{ vars.TORBOX_TEST_HASH }}
-        run: bun run test:live
+          TB_TEST_PACK_HASH: ${{ vars.TB_TEST_PACK_HASH }}
+          TB_TEST_PACK_EPISODE: ${{ vars.TB_TEST_PACK_EPISODE }}
+        run: |
+          bun run test:rust:live
+          bun run test:live

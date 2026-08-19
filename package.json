@@ -1,5 +1,5 @@
 {
-  "name": "shiru",
+  "name": "zeroshiru",
   "license": "GPL-3.0-or-later",
   "private": true,
   "type": "module",
@@ -11,9 +11,14 @@
     "test:watch": "bun test --watch --preload ./test/bun-register.js test/unit",
     "test:live": "bun test --preload ./test/bun-register.js --timeout 120000 test/live",
     "test:rust": "cargo test --workspace",
+    "test:rust:live": "cargo test -p shiru-debrid --features native --test live -- --ignored --nocapture",
+    "test:torrent": "cargo run -p shiru-torrent --features native --example smoke",
     "build": "cross-env NODE_ENV=production vite build common",
     "tauri:dev": "concurrently --kill-others \"vite common\" \"cargo run -p shiru-tauri\"",
-    "tauri:build": "cross-env NODE_ENV=production vite build common && cargo build --release -p shiru-tauri"
+    "tauri:build": "cross-env NODE_ENV=production vite build common && cargo build --release -p shiru-tauri",
+    "tauri:bundle": "cross-env NODE_ENV=production vite build common && cd hosts/tauri && cargo tauri build",
+    "android:build": "cross-env NODE_ENV=production vite build common && cd hosts/tauri && cargo tauri android build --apk",
+    "tv:core": "./scripts/build-tv-core.sh"
   },
   "dependencies": {
     "concurrently": "^10.0.4",

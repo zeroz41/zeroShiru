@@ -11,5 +11,5 @@ Player: HTMLMediaElement/MSE behind the shared PlayerBackend (report section 30)
 No webOS Node services (report section 57) — the shared Rust/WASM core is the
 application.
 
-Assembly mirrors the Tizen host: Vite renderer output + dist/tv-core WASM glue
+Assembly mirrors the Tizen host: dist/web renderer output + dist/tv-core WASM glue
 + this directory's adapters.
