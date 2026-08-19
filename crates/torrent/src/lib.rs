@@ -72,4 +72,11 @@ mod engine;
 #[cfg(feature = "native")]
 mod gateway;
 #[cfg(feature = "native")]
+mod session;
+#[cfg(feature = "native")]
 pub use engine::RqbitEngine;
+#[cfg(feature = "native")]
+pub use session::{
+    ActivityTorrent, CompletedTorrent, CurrentStats, LoadedTorrent, PlayerFile, Role, ScrapeEntry,
+    SessionEvent, SessionSettings, Snapshot, TorrentSession, Tracked,
+};

@@ -1,123 +1,144 @@
-//! Torrent IPC adapters over the shared engine. The engine starts lazily on the
-//! first torrent action so a debrid-only session never opens a listen socket.
+//! Torrent IPC: one session, started by the frontend with its settings; every
+//! session event is forwarded as a `shiru://torrent` window event of the shape
+//! `{ type, data }`, fanned out by the injected bridge script.
 
-use shiru_torrent::{RqbitEngine, TorrentEngine, TorrentError, TorrentMetadata, TorrentStatus};
+use shiru_torrent::{ScrapeEntry, SessionSettings, TorrentSession};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
-use tokio::sync::OnceCell;
+use tokio::sync::Mutex;
 
 #[derive(Default)]
 pub struct TorrentState {
-    engine: OnceCell<Arc<RqbitEngine>>,
+    session: Mutex<Option<Arc<TorrentSession>>>,
 }
 
 impl TorrentState {
-    async fn engine(&self, app: &tauri::AppHandle) -> Result<Arc<RqbitEngine>, String> {
-        self.engine
-            .get_or_try_init(|| async {
-                let dir = app
-                    .path()
-                    .app_cache_dir()
-                    .map_err(|error| error.to_string())?
-                    .join("torrents");
-                RqbitEngine::new(dir).await.map(Arc::new).map_err(|error| error.to_string())
-            })
+    async fn session(&self) -> Result<Arc<TorrentSession>, String> {
+        self.session
+            .lock()
             .await
-            .cloned()
+            .clone()
+            .ok_or_else(|| "torrent session not started".to_string())
     }
 }
 
-fn fail(error: TorrentError) -> String {
-    error.to_string()
-}
-
+/// Starts (or restarts) the session with the renderer's settings and begins
+/// pushing events. Resolving tells the frontend the session is ready.
 #[tauri::command]
-pub async fn torrent_add(
+pub async fn torrent_start(
     app: tauri::AppHandle,
     state: tauri::State<'_, TorrentState>,
-    id: String,
-) -> Result<String, String> {
-    let engine = state.engine(&app).await?;
-    let hash = engine.add(&id).await.map_err(fail)?;
-    // push status instead of making the frontend poll (report section 46);
-    // the loop ends itself when the torrent is removed
+    settings: SessionSettings,
+) -> Result<(), String> {
+    let mut slot = state.session.lock().await;
+    if slot.is_some() {
+        // settings changed mid-run: apply what can change live
+        if let Some(session) = slot.clone() {
+            session.update_settings(settings).await;
+        }
+        return Ok(());
+    }
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?
+        .join("torrents");
+    let (session, mut events) = TorrentSession::start(dir, settings)
+        .await
+        .map_err(|error| error.to_string())?;
     let emitter = app.clone();
-    let watched = hash.clone();
     tauri::async_runtime::spawn(async move {
-        loop {
-            match engine.status(&watched).await {
-                Ok(status) => {
-                    let _ = emitter.emit("shiru://torrent-status", &status);
-                }
-                Err(_) => break,
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        while let Some(event) = events.recv().await {
+            let (kind, data) = event.wire();
+            let _ = emitter.emit("shiru://torrent", serde_json::json!({ "type": kind, "data": data }));
         }
     });
-    Ok(hash)
+    *slot = Some(session);
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn torrent_metadata(
-    app: tauri::AppHandle,
+pub async fn torrent_stream(
     state: tauri::State<'_, TorrentState>,
-    info_hash: String,
-) -> Result<TorrentMetadata, String> {
-    state.engine(&app).await?.metadata(&info_hash).await.map_err(fail)
-}
-
-#[tauri::command]
-pub async fn torrent_select_file(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, TorrentState>,
-    info_hash: String,
-    index: u32,
+    id: String,
+    #[allow(non_snake_case)] base64: Option<bool>,
 ) -> Result<(), String> {
-    state.engine(&app).await?.select_file(&info_hash, index).await.map_err(fail)
+    let session = state.session().await?;
+    tauri::async_runtime::spawn(async move { session.stream(id, base64.unwrap_or(false)).await });
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn torrent_playback_source(
-    app: tauri::AppHandle,
+pub async fn torrent_stage(
     state: tauri::State<'_, TorrentState>,
-    info_hash: String,
-    index: u32,
-) -> Result<shiru_domain::PlaybackSource, String> {
-    state.engine(&app).await?.playback_source(&info_hash, index).await.map_err(fail)
-}
-
-#[tauri::command]
-pub async fn torrent_status(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, TorrentState>,
-    info_hash: String,
-) -> Result<TorrentStatus, String> {
-    state.engine(&app).await?.status(&info_hash).await.map_err(fail)
-}
-
-#[tauri::command]
-pub async fn torrent_pause(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, TorrentState>,
-    info_hash: String,
+    id: String,
+    base64: Option<bool>,
 ) -> Result<(), String> {
-    state.engine(&app).await?.pause(&info_hash).await.map_err(fail)
+    let session = state.session().await?;
+    tauri::async_runtime::spawn(async move { session.stage(id, base64.unwrap_or(false)).await });
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn torrent_resume(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, TorrentState>,
-    info_hash: String,
-) -> Result<(), String> {
-    state.engine(&app).await?.resume(&info_hash).await.map_err(fail)
+pub async fn torrent_unload(state: tauri::State<'_, TorrentState>) -> Result<(), String> {
+    state.session().await?.unload().await;
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn torrent_remove(
-    app: tauri::AppHandle,
+pub async fn torrent_untrack(state: tauri::State<'_, TorrentState>, hash: String) -> Result<(), String> {
+    state.session().await?.untrack(hash).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn torrent_complete(state: tauri::State<'_, TorrentState>, hash: String) -> Result<(), String> {
+    state.session().await?.complete(hash).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn torrent_rescan(state: tauri::State<'_, TorrentState>) -> Result<(), String> {
+    state.session().await?.rescan().await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn torrent_scrape(
     state: tauri::State<'_, TorrentState>,
-    info_hash: String,
+    hashes: Vec<String>,
+) -> Result<Vec<ScrapeEntry>, String> {
+    Ok(state.session().await?.scrape(hashes).await)
+}
+
+#[tauri::command]
+pub async fn torrent_set_playback(
+    state: tauri::State<'_, TorrentState>,
+    current: serde_json::Value,
+    external: Option<bool>,
 ) -> Result<(), String> {
-    state.engine(&app).await?.remove(&info_hash).await.map_err(fail)
+    state
+        .session()
+        .await?
+        .set_playback(current, external.unwrap_or(false))
+        .await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn torrent_launch_external(
+    state: tauri::State<'_, TorrentState>,
+    current: serde_json::Value,
+) -> Result<(), String> {
+    state.session().await?.launch_external(current).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn torrent_update_settings(
+    state: tauri::State<'_, TorrentState>,
+    settings: SessionSettings,
+) -> Result<(), String> {
+    state.session().await?.update_settings(settings).await;
+    Ok(())
 }

@@ -5,7 +5,7 @@
   "identifier": "watch.shiru.app",
   "build": {
     "devUrl": "http://localhost:5173/app.html",
-    "frontendDist": "../../electron/build",
+    "frontendDist": "../../dist/web",
     "beforeDevCommand": "",
     "beforeBuildCommand": ""
   },

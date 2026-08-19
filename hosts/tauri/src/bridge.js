@@ -17,13 +17,11 @@
     notify: (opts) => invoke('notify', { title: opts?.title || 'Shiru', body: opts?.message || opts?.body }),
     pickFile: async (filters) => (await invoke('pick_file', { filters })) || '',
     pickFolder: async () => (await invoke('pick_folder')) || '',
-    handleProtocol: () => {} // URLs arrive via the shiru://protocol event below
+    // deep links (shiru://, magnet:) as raw URLs; routing lives in the renderer
+    onProtocol: (callback) => { listen('shiru://protocol', (event) => callback(event.payload)) }
   }
 
-  // deep links (shiru://, magnet:) land here; the frontend's protocol map decides
-  window.__shiruProtocol = (callback) => { listen('shiru://protocol', (event) => callback(event.payload)) }
-
-  window.electron = {
+  window.desktop = {
     exit: () => invoke('app_exit'),
     isMinimized: () => invoke('window_is_minimized'),
     isFullScreen: () => invoke('window_is_fullscreen'),
@@ -55,21 +53,57 @@
 
   window.shiru = {
     routePlayback: (request) => invoke('route_playback', { request }),
-    torrent: {
-      add: (id) => invoke('torrent_add', { id }),
-      metadata: (infoHash) => invoke('torrent_metadata', { infoHash }),
-      selectFile: (infoHash, index) => invoke('torrent_select_file', { infoHash, index }),
-      playbackSource: (infoHash, index) => invoke('torrent_playback_source', { infoHash, index }),
-      status: (infoHash) => invoke('torrent_status', { infoHash }),
-      pause: (infoHash) => invoke('torrent_pause', { infoHash }),
-      resume: (infoHash) => invoke('torrent_resume', { infoHash }),
-      remove: (infoHash) => invoke('torrent_remove', { infoHash }),
-      onStatus: (callback) => { listen('shiru://torrent-status', (event) => callback(event.payload)) }
-    },
     debrid: {
       validate: (service, apiKey) => invoke('debrid_validate', { service, apiKey }),
       checkAvailability: (service, apiKey, hashes) => invoke('debrid_check_availability', { service, apiKey, hashes }),
       resolve: (service, apiKey, magnet) => invoke('debrid_resolve', { service, apiKey, magnet })
     }
+  }
+
+  // torrent session: commands go down as invokes, state comes back on one event
+  // channel fanned out per type — common/modules/bridge.js merges this over its
+  // noop defaults
+  const torrentListeners = new Map() // type -> Set<callback>
+  listen('shiru://torrent', (event) => {
+    const { type, data } = event.payload || {}
+    for (const callback of torrentListeners.get(type) || []) callback(data)
+  })
+  const on = (type) => (callback) => {
+    if (!torrentListeners.has(type)) torrentListeners.set(type, new Set())
+    torrentListeners.get(type).add(callback)
+  }
+  /** single-slot: re-registered per playback, replacing the previous handler */
+  const one = (type) => (callback) => { torrentListeners.set(type, new Set([callback])) }
+  const asId = (id) => {
+    // .torrent bytes cross the bridge as base64
+    if (id instanceof Uint8Array || id instanceof ArrayBuffer) {
+      const bytes = id instanceof ArrayBuffer ? new Uint8Array(id) : id
+      let binary = ''
+      for (const byte of bytes) binary += String.fromCharCode(byte)
+      return { id: btoa(binary), base64: true }
+    }
+    return { id: String(id), base64: false }
+  }
+
+  window.torrent = {
+    start: (settings) => invoke('torrent_start', { settings }),
+    stream: (id) => invoke('torrent_stream', asId(id)),
+    stage: (id) => invoke('torrent_stage', asId(id)),
+    unload: () => invoke('torrent_unload'),
+    untrack: (hash) => invoke('torrent_untrack', { hash }),
+    complete: (hash) => invoke('torrent_complete', { hash }),
+    rescan: () => invoke('torrent_rescan'),
+    scrape: (hashes) => invoke('torrent_scrape', { hashes }),
+    setPlayback: (current, external) => invoke('torrent_set_playback', { current, external: !!external }),
+    launchExternal: (current) => invoke('torrent_launch_external', { current }),
+    updateSettings: (settings) => invoke('torrent_update_settings', { settings }).catch(() => {}),
+    onStats: on('stats'),
+    onCurrentStats: on('currentStats'),
+    onProgress: on('progress'),
+    onFiles: on('files'),
+    onLoaded: on('loaded'),
+    onNotify: on('notify'),
+    onExternalReady: one('externalReady'),
+    onExternalWatched: one('externalWatched')
   }
 })()

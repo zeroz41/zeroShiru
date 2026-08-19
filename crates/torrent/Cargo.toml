@@ -7,12 +7,27 @@ license.workspace = true
 [features]
 default = []
 # librqbit-backed engine + loopback media gateway; native hosts only
-native = ["dep:librqbit", "dep:tokio", "dep:tokio-util", "dep:axum", "dep:rand", "dep:anyhow"]
+native = [
+  "dep:librqbit",
+  "dep:tokio",
+  "dep:tokio-util",
+  "dep:axum",
+  "dep:rand",
+  "dep:anyhow",
+  "dep:reqwest",
+  "dep:sha1",
+  "dep:hex",
+  "dep:serde_json",
+]
 
 [dependencies]
 # rust-tls: keeps openssl out of the tree, which Android cross-builds cannot link
 librqbit = { version = "9", optional = true, default-features = false, features = ["rust-tls", "http-api-client"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util"], optional = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "process", "fs", "time", "sync"], optional = true }
+reqwest = { workspace = true, optional = true }
+sha1 = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 axum = { version = "0.8", optional = true }
 rand = { version = "0.9", optional = true }
 tokio-util = { version = "0.7", features = ["io"], optional = true }

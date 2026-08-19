@@ -25,10 +25,70 @@ impl RqbitEngine {
         let session = Session::new(download_dir)
             .await
             .map_err(|error| TorrentError::Engine(format!("session: {error:#}")))?;
+        Self::with_session(session).await
+    }
+
+    /// Starts the engine configured from the application's torrent settings.
+    pub async fn with_settings(
+        download_dir: PathBuf,
+        settings: &crate::SessionSettings,
+    ) -> Result<Self, TorrentError> {
+        use librqbit::limits::LimitsConfig;
+        use librqbit::{DhtSessionConfig, ListenerOptions, SessionOptions};
+        let bps = |limit: u64| u32::try_from(limit).ok().and_then(std::num::NonZeroU32::new);
+        let options = SessionOptions {
+            dht: settings.dht.then(|| DhtSessionConfig {
+                port: (settings.dht_port > 0).then_some(settings.dht_port),
+                ..Default::default()
+            }),
+            fastresume: true,
+            listen: Some(ListenerOptions {
+                listen_addr: (
+                    std::net::Ipv4Addr::UNSPECIFIED,
+                    settings.torrent_port, // 0 = ephemeral
+                )
+                    .into(),
+                enable_upnp_port_forwarding: true,
+                ..Default::default()
+            }),
+            ratelimits: LimitsConfig {
+                download_bps: bps(settings.download_limit),
+                upload_bps: bps(settings.upload_limit),
+            },
+            trackers: settings
+                .trackers
+                .iter()
+                .filter_map(|tracker| tracker.parse().ok())
+                .collect(),
+            peer_limit: settings.max_conns.map(|conns| conns as usize),
+            ..Default::default()
+        };
+        let session = Session::new_with_opts(download_dir, options)
+            .await
+            .map_err(|error| TorrentError::Engine(format!("session: {error:#}")))?;
+        Self::with_session(session).await
+    }
+
+    async fn with_session(session: Arc<Session>) -> Result<Self, TorrentError> {
         let gateway = Gateway::spawn(session.clone())
             .await
             .map_err(|error| TorrentError::Engine(format!("gateway: {error:#}")))?;
         Ok(RqbitEngine { session, gateway })
+    }
+
+    /// Applies transfer speed limits live (0 = unlimited).
+    pub fn set_rate_limits(&self, download: u64, upload: u64) {
+        let bps = |limit: u64| u32::try_from(limit).ok().and_then(std::num::NonZeroU32::new);
+        self.session.ratelimits.set_download_bps(bps(download));
+        self.session.ratelimits.set_upload_bps(bps(upload));
+    }
+
+    pub(crate) fn rqbit_session(&self) -> &Arc<Session> {
+        &self.session
+    }
+
+    pub(crate) fn media_gateway(&self) -> &Gateway {
+        &self.gateway
     }
 
     fn handle(&self, info_hash: &str) -> Result<Arc<ManagedTorrent>, TorrentError> {
