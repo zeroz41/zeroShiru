@@ -128,6 +128,11 @@ const bareHashRx = /^[a-f\d]{40}$/i
 
 const RATE_LIMIT_RETRIES = 2
 const RATE_LIMIT_FALLBACK = 5 // seconds to wait when a 429 carries no retry-after header
+// the longest retry-after worth obeying. TorBox has answered a link-request burst with
+// retry-after: 300, and honoring it froze every request on the instance — playback included —
+// for five minutes. Beyond this, failing fast beats waiting: the error says what happened,
+// and waiting less than asked would only collect another 429
+const RATE_LIMIT_MAX_WAIT = 30_000
 const NETWORK_RETRY_DELAY = 3_000
 const MAX_PROBE_FAILURES = 3 // consecutive unanswered probes before a sweep gives up
 const MAX_STRETCH = 3 // how far a poll budget may stretch on a slow link
@@ -223,6 +228,13 @@ export default class DebridService {
     this.latency = 0
     /** @type {Map<string, { state: string, at: number }>} What the service has already said about a hash. */
     this.availabilityState = new Map()
+    /**
+     * @type {Map<string, string>} The real release name behind a hash, as the service knows it.
+     * Search sources are free to invent a title — one of them replaces a multi file release's
+     * name with `[Group] Show Dual Audio`, which says nothing about the episodes inside — so a
+     * name from the service is the trustworthy one to judge a release by.
+     */
+    this.releaseNames = new Map()
     /** @type {Map<string, Promise<string>>} Probes in flight, so a hash is never asked about twice at once. */
     this.probes = new Map()
     /** @type {boolean} Whether a check that adds magnets is running, since only one may be. */
@@ -232,6 +244,10 @@ export default class DebridService {
       if (error instanceof DebridNetworkError) return // offline, retrying just delays the error
       if (error instanceof DebridError && error.status === 429 && jobInfo.retryCount < RATE_LIMIT_RETRIES) {
         const time = (Number(error.retryAfter) || RATE_LIMIT_FALLBACK) * 1_000
+        if (time > RATE_LIMIT_MAX_WAIT) {
+          debug(`Rate limited by ${this.config.title} for ${time}ms, too long to wait out — surfacing the error`)
+          return
+        }
         debug(`Rate limited by ${this.config.title}, retrying in ${time}ms`)
         if (!this.rateLimitPromise) this.rateLimitPromise = new Promise(resolve => setTimeout(resolve, time).unref?.()).then(() => { this.rateLimitPromise = null })
         return time
@@ -507,6 +523,26 @@ export default class DebridService {
     const known = normalizeAvailability(state)
     if (known === Availability.UNKNOWN) this.availabilityState.delete(hash)
     else this.availabilityState.set(hash, { state: known, at: Date.now() })
+  }
+
+  /**
+   * Records the real name of a release, whenever the service happens to mention one. Free: it
+   * rides along on answers the client already asks for.
+   * @param {string} magnetOrHash
+   * @param {any} name
+   */
+  rememberRelease (magnetOrHash, name) {
+    const hash = DebridService.parseHash(magnetOrHash)
+    if (hash && typeof name === 'string' && name) this.releaseNames.set(hash, name)
+  }
+
+  /**
+   * The service's own name for a release, or undefined when it has never mentioned one.
+   * @param {string} magnetOrHash
+   * @returns {string | undefined}
+   */
+  releaseName (magnetOrHash) {
+    return this.releaseNames.get(DebridService.parseHash(magnetOrHash))
   }
 
   /**

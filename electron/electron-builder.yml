@@ -56,6 +56,10 @@ linux:
   target:
     - arch: x64
       target: AppImage
+    # the raw unpacked app in dist/linux-unpacked/ - run ./Shiru directly, no
+    # FUSE, no extraction. A directory, so electron-builder cannot publish it.
+    - arch: x64
+      target: dir
 mac:
   artifactName: ${os}-${productName}-v${version}.${ext}
   singleArchFiles: node_modules/+(register-scheme|utp-native|fs-native-extensions)/**

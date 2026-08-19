@@ -6,11 +6,12 @@
   import { tick } from 'svelte'
   import { toast } from 'svelte-sonner'
   import { anilistClient } from '@/modules/providers/anilist/anilist.js'
-  import { files as _files } from '@/modules/navigation.js'
+  import { files as _files, modal } from '@/modules/navigation.js'
   import { mediaCache } from '@/modules/cache.js'
   import { episodesList } from '@/modules/episodes.js'
   import { settings } from '@/modules/settings.js'
   import { getAniMappings, hasZeroEpisode } from '@/modules/anime/anime.js'
+  import { playRequest, matchRequestedFile, describeMissingEpisode } from '@/modules/playback/request.js'
   import Debug from 'debug'
   const debug = Debug('ui:mediahandler')
 
@@ -417,6 +418,26 @@
           return true
       })
       debug(`Removed matching type exclusions for ${resolvedFiles - videoFiles?.length} video files`, fileListToDebug(videoFiles))
+    }
+
+    // an episode the user named outranks the watch-status heuristics below, which would
+    // otherwise play the lowest episode present — on a debrid stream the file list is a window
+    // centred on the wanted episode, so that is the wanted episode minus half the window
+    if (!targetFile) {
+      targetFile = matchRequestedFile(videoFiles, playRequest.value)
+      if (targetFile) debug(`Playing the episode that was asked for: ${targetFile.name}`)
+      else {
+        // every file resolved to an episode and none is the one asked for: this release cannot
+        // serve it, and playing the lowest episode present instead is how a two episode fix
+        // release ended up playing episode 487 whichever episode was picked
+        const missing = describeMissingEpisode(videoFiles, playRequest.value)
+        if (missing) {
+          // put the user back where they can fix it rather than leaving an empty player behind
+          const wanted = mediaCache.value[playRequest.value?.mediaId] || nowPlaying.value?.media
+          if (wanted) modal.open(modal.TORRENT_MENU, { media: wanted, episode: playRequest.value.episode })
+          throw new Error(missing)
+        }
+      }
     }
 
     const newPlaying = await findPreferredPlaybackMedia(videoFiles, targetFile)

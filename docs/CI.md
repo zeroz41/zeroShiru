@@ -13,7 +13,9 @@ were removed. In-app updaters point at `zeroz41/zeroShiru`.
 
 - **Windows**: NSIS installer + portable
 - **macOS**: universal DMG
-- **Linux**: AppImage (x64)
+- **Linux**: AppImage (x64). The `dir` target also builds the raw binary into
+  `linux-unpacked/`, but a directory cannot be uploaded to a Release, so it is
+  a local-build convenience only.
 - **Android / TV**: `arm64-v8a` + `armeabi-v7a` APKs (armv7 = 32-bit TV boxes;
   same APK works on phone and TV)
 

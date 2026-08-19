@@ -10,7 +10,8 @@
   import { anitomyscript, getMediaMaxEp, getKitsuMappings, getEpisodeMetadataForMedia } from '@/modules/anime/anime.js'
   import { loadedTorrent, completedTorrents, seedingTorrents, stagingTorrents } from '@/modules/torrent.js'
   import { dedupe, getTorrentResults, updatePeerCounts } from '@/modules/extensions/handler.js'
-  import { debridEnabled, debridAvailability, debridTransport, debridChecking, refreshDebridAvailability, checkDebridAvailability, cancelDebridAvailability } from '@/modules/debrid/debrid.js'
+  import { releaseHoldsEpisode } from '@/modules/playback/coverage.js'
+  import { debridEnabled, debridAvailability, debridTransport, debridChecking, debridReleaseNames, refreshDebridAvailability, checkDebridAvailability, cancelDebridAvailability } from '@/modules/debrid/debrid.js'
   import { Availability, AVAILABILITY_ORDER, availabilityOf, describeAvailability } from '@/modules/debrid/availability.js'
   import { listResult } from '@/modules/debrid/route.js'
   import { getId, getHash } from '@/modules/anime/animehash.js'
@@ -262,6 +263,13 @@
         const matchingFile = cached.files.find(file => file.episode === normalizedEpisode)
         if (matchingFile) isLocked = matchingFile.locked ?? false
       }
+      const parseObject = (await anitomyscript(title))?.[0]
+      // these bypass getTorrentResults entirely, so they need the same check: a pack already on
+      // disk is no more able to serve an episode it does not contain than one being searched for
+      if (!releaseHoldsEpisode(parseObject, { episode: search?.episode, episodeCount: getMediaMaxEp(search?.media) })) {
+        debug(`Hiding locally held ${title}, its title says it does not hold episode ${search?.episode}`)
+        continue
+      }
       cachedTorrents.push({
         title,
         link: torrent.magnetURI,
@@ -271,7 +279,7 @@
         size: torrent.size,
         date: torrent.date,
         accuracy: isLocked ? 'high' : 'medium',
-        parseObject: (await anitomyscript(title))?.[0],
+        parseObject,
         source: { managed: true, name: `Local (${torrent.staging ? 'Staging' : torrent.seeding ? 'Seeding' : torrent.current ? 'Now Playing' : 'Completed'})` }
       })
     }
@@ -365,7 +373,48 @@
   $: errors = getErrors({...search}, queries)
   $: cachedOnly = $debridEnabled && $settings.debridCachedOnly
   $: debridFilters = { cachedOnly, only: $debridEnabled && Boolean($debridTransport?.only) }
-  $: sortedResults = sortResults($results?.torrents, $settings.torrentSort, batch)
+  /**
+   * A search source is free to invent a title, and one of them does: SeaDex replaces a multi
+   * file release's name with `[Group] Show Dual Audio`, which says nothing about which episodes
+   * are inside, so a two episode fix release looked identical to a full series batch and was
+   * offered for every episode. Anything that knows the release's real name — the debrid service,
+   * which names what it answers about, or the torrent client for one it already holds — gives a
+   * name worth judging in place of the invented one.
+   * @type {Record<string, any>} Parsed real names, keyed by info hash.
+   */
+  let realParses = {}
+
+  /** The real names the torrent client knows, for releases it holds. */
+  function localNames() {
+    const known = new Map()
+    for (const torrent of [...completedTorrents.value, ...seedingTorrents.value, ...stagingTorrents.value, loadedTorrent.value]) {
+      if (torrent?.infoHash && torrent?.name) known.set(torrent.infoHash, torrent.name)
+    }
+    return known
+  }
+
+  async function judgeByRealName(torrents, names) {
+    let learned = false
+    const local = localNames()
+    for (const result of torrents ?? []) {
+      const hash = result?.hash
+      if (!hash || realParses[hash]) continue
+      const real = names?.get(hash) || local.get(hash)
+      if (!real || real === result.title) continue
+      realParses[hash] = (await anitomyscript(real))?.[0] ?? null
+      const holds = releaseHoldsEpisode(realParses[hash], { episode: search?.episode, episodeCount: getMediaMaxEp(search?.media) })
+      debug(`${holds ? 'Keeping' : 'Hiding'} "${result.title}" for episode ${search?.episode}: its real name is "${real}"`)
+      learned = true
+    }
+    if (learned) realParses = { ...realParses }
+  }
+
+  $: judgeByRealName($results?.torrents, $debridReleaseNames)
+  // hidden reactively rather than at search time: a real name can arrive after the list does
+  $: hiddenByEpisode = new Set(Object.entries(realParses)
+    .filter(([, parsed]) => parsed && !releaseHoldsEpisode(parsed, { episode: search?.episode, episodeCount: getMediaMaxEp(search?.media) }))
+    .map(([hash]) => hash))
+  $: sortedResults = sortResults(($results?.torrents ?? []).filter(result => !hiddenByEpisode.has(result.hash)), $settings.torrentSort, batch)
   // ask about the results from the top of the list down, which is where the releases worth
   // playing are. How far it reaches is the service's call: one request for a service with a
   // cache endpoint, a handful of probes for one without.

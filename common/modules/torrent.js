@@ -10,6 +10,7 @@ import { capitalize } from '@/modules/util.js'
 import clipboard from '@/modules/lib/clipboard.js'
 import { streamDebrid, debridPlayback } from '@/modules/debrid/debrid.js'
 import { setHash } from '@/modules/anime/animehash.js'
+import { requestPlayback } from '@/modules/playback/request.js'
 import { TORRENT, ELECTRON } from '@/modules/bridge.js'
 import { get } from 'svelte/store'
 import Debug from 'debug'
@@ -141,6 +142,7 @@ export async function add(torrentID, search, hash, magnet, base64 = false) {
     files.set([])
     page.navigateTo(page.PLAYER)
     media.value = search ? { media: (search.media || media.value?.media), episode: (search.episode || media.value?.episode), ...(media.value?.torrent ? { torrent: true } : { feed: true }) } : { torrent: true }
+    requestPlayback(search) // an episode named here outranks the watch-status guess made once the files land
     if (hash && search) setHash(hash, { mediaId: search.media?.id, episode: search.episode, client: true })
     if (SUPPORTS.isAndroid && !settings.value.enableExternal) document.querySelector('.content-wrapper').requestFullscreen() // this WILL not work with auto-select torrents due to permissions check.
     if (await streamDebrid(torrentID, hash, search)) return

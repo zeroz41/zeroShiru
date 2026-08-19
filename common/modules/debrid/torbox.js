@@ -44,6 +44,10 @@ export default class TorBox extends DebridService {
   static availabilityCheck = 'batch'
   // hashes travel as repeated query parameters, so the chunk size keeps the URL sane
   static maxBatch = 75
+  // measured live: a 60-link burst against /torrents/requestdl earned a 429 with
+  // retry-after: 300 — five minutes of the account frozen mid-play. A dozen links keeps
+  // next/previous episode working while staying far inside the real allowance
+  static maxFiles = 12
 
   /** Failures arrive inside a 200, so success is decided here rather than by the status code. */
   unwrap (json) {
@@ -89,7 +93,9 @@ export default class TorBox extends DebridService {
   async listAvailability () {
     const known = new Map()
     for (const torrent of await this.listing()) {
-      if (torrent?.hash) known.set(String(torrent.hash).toLowerCase(), torrentAvailability(torrent))
+      if (!torrent?.hash) continue
+      known.set(String(torrent.hash).toLowerCase(), torrentAvailability(torrent))
+      this.rememberRelease(String(torrent.hash).toLowerCase(), torrent.name)
     }
     return known
   }
@@ -104,11 +110,15 @@ export default class TorBox extends DebridService {
     const data = await this.request(`${API}/torrents/checkcached?${query}&format=list`)
     // the endpoint has answered in both shapes over its life: a list of entries, or an object
     // keyed by hash. Either way it only ever says "TorBox holds this one"
-    const cached = Array.isArray(data) ? data.map(entry => entry?.hash) : Object.keys(data || {})
+    const entries = Array.isArray(data) ? data : Object.entries(data || {}).map(([hash, entry]) => ({ hash, ...entry }))
     const answers = new Map(hashes.map(hash => [hash, Availability.AVAILABLE]))
-    for (const hash of cached) {
-      const key = String(hash || '').toLowerCase()
-      if (answers.has(key)) answers.set(key, Availability.CACHED)
+    for (const entry of entries) {
+      const key = String(entry?.hash || '').toLowerCase()
+      if (!answers.has(key)) continue
+      answers.set(key, Availability.CACHED)
+      // the endpoint names the release it is answering about, which is worth far more than the
+      // title a search source made up for it
+      this.rememberRelease(key, entry?.name)
     }
     return answers
   }
@@ -133,7 +143,7 @@ export default class TorBox extends DebridService {
       const wanted = (torrent.files || []).filter(file => fileFilter(filePath(file))).map(file => ({ id: file.id, path: filePath(file), size: file.size, type: file.mimetype }))
       if (!wanted.length) throw new DebridError('No playable files in this torrent')
       const target = pickFile ? await pickFile(wanted) : [...wanted].sort((a, b) => b.size - a.size)[0]
-      const files = await this.#requestLinks(torrent, TorBox.windowFiles(wanted, target, maxFiles))
+      const files = await this.#requestLinks(torrent, TorBox.windowFiles(wanted, target, maxFiles), target)
       if (!files.length) throw new DebridError('TorBox returned no links for this torrent')
       debug(`Resolved ${files.length} files for ${torrent.name}`)
       return { hash: String(torrent.hash || hash).toLowerCase(), name: torrent.name, files }
@@ -215,17 +225,25 @@ export default class TorBox extends DebridService {
   }
 
   /**
-   * Turns the wanted files into direct stream links, skipping dead ones.
+   * Turns the wanted files into direct stream links, skipping dead ones. The played file's
+   * request goes to the front of the queue: TorBox rate limits this endpoint well below its
+   * documented allowance, and when a batch trips that, the episode the user asked for must be
+   * the one request that already went through.
    * @param {any} torrent
    * @param {{ id: number, path: string, size: number, type?: string }[]} wanted
+   * @param {{ path: string } | null} [target] - The file playback asked for.
    */
-  async #requestLinks (torrent, wanted) {
-    return this.mapFiles(wanted, async file => {
+  async #requestLinks (torrent, wanted, target = null) {
+    const ordered = target ? [...wanted].sort((a, b) => (b.path === target.path) - (a.path === target.path)) : wanted
+    const files = await this.mapFiles(ordered, async file => {
       // this one endpoint takes the key as a query parameter instead of a bearer header
       const url = await this.request(`${API}/torrents/requestdl?torrent_id=${torrent.id}&file_id=${file.id}&redirect=false`, { auth: 'query', authParam: 'token' })
       if (typeof url !== 'string') return null
       return { name: file.path.split('/').pop(), path: file.path, size: file.size, url, type: file.type }
     })
+    // hand the caller torrent order back, whatever order the requests went out in
+    const position = new Map(wanted.map((file, index) => [file.path, index]))
+    return files.sort((a, b) => position.get(a.path) - position.get(b.path))
   }
 
   /** @param {string | number} id */

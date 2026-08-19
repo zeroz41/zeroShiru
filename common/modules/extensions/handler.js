@@ -8,6 +8,7 @@ import { extensionManager } from '@/modules/extensions/manager.js'
 import { SUPPORTS } from '@/modules/support.js'
 import { TORRENT } from '@/modules/bridge.js'
 import AnimeResolver from '@/modules/anime/animeresolver.js'
+import { releaseHoldsEpisode } from '@/modules/playback/coverage.js'
 import { cache, caches } from '@/modules/cache.js'
 import Debug from 'debug'
 const debug = Debug('ui:extensions')
@@ -73,7 +74,14 @@ export async function getTorrentResults({ media, episode, batch, movie, resoluti
     if (!deduped.length) return []
     const parseObjects = await anitomyscript(deduped.map(r => r.title))
     deduped.forEach((r, i) => r.parseObject = parseObjects[i])
-    return updatePeerCounts(deduped, !settings.value.torrentAutoScrape)
+    // a title naming several episodes parses to an array exactly like a batch does, so a two
+    // episode fix release used to be offered for every episode of the show. This applies to
+    // batch searches too: `batch` asks sources to include packs, and a pack that does not cover
+    // the episode being watched is exactly the noise this removes. Only a search with no episode
+    // at all judges nothing
+    const listed = deduped.filter(result => releaseHoldsEpisode(result.parseObject, { episode, absoluteEpisode: options.absoluteEpisode, episodeCount: options.episodeCount }))
+    if (listed.length !== deduped.length) debug(`Hid ${deduped.length - listed.length} release(s) whose titles say they do not hold episode ${episode}`)
+    return updatePeerCounts(listed, !settings.value.torrentAutoScrape)
   })
 }
 

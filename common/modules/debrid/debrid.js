@@ -7,6 +7,8 @@ import { writable } from 'simple-store-svelte'
 import { derived } from 'svelte/store'
 import { toast } from 'svelte-sonner'
 import DebridService, { availabilityFromError, secureFiles } from '@/modules/debrid/service.js'
+import { pickPackFile, EpisodeNotInPackError } from '@/modules/debrid/pick.js'
+import { toPlayerFile } from '@/modules/debrid/identity.js'
 import { debridServices, debridService } from '@/modules/debrid/services.js'
 import { Availability, describeAvailability } from '@/modules/debrid/availability.js'
 import { routeDebrid, debridKey } from '@/modules/debrid/route.js'
@@ -68,6 +70,25 @@ export const debridAvailability = writable(new Map())
 export const debridChecking = writable(0)
 
 /**
+ * The real name of each release the service has mentioned, keyed by lowercase info hash. Search
+ * sources are free to invent a title — one replaces a multi file release's name with
+ * `[Group] Show Dual Audio`, which says nothing about which episodes are inside — so the results
+ * list judges a release by this name where there is one.
+ * @type {import('simple-store-svelte').Writable<Map<string, string>>}
+ */
+export const debridReleaseNames = writable(new Map())
+
+/**
+ * Publishes any release names the service picked up while answering. They ride along on requests
+ * the client already makes, so this costs nothing.
+ * @param {import('@/modules/debrid/service.js').default} instance
+ */
+function publishReleaseNames (instance) {
+  if (!current(instance) || instance.releaseNames.size === debridReleaseNames.value.size) return
+  debridReleaseNames.set(new Map(instance.releaseNames))
+}
+
+/**
  * Whether debrid owns what the player is showing. Set the moment playback is routed rather than
  * once it resolves, since the player opens straight away and must not look like a torrent.
  */
@@ -83,6 +104,7 @@ settings.subscribe(value => {
     lastRefresh = 0
     cancelDebridAvailability()
     debridAvailability.set(new Map())
+    debridReleaseNames.set(new Map())
   }
   serviceKey = key
 })
@@ -135,6 +157,13 @@ export async function streamDebrid (torrentID, hash, search) {
     files.set(await resolveDebridFiles(route.id, search))
     return true
   } catch (error) {
+    // the release provably lacks the episode: the torrent client holds the same files, so
+    // falling back would spend a whole pack's bandwidth to play the wrong episode anyway
+    if (error instanceof EpisodeNotInPackError) {
+      debug(`Release does not contain the requested episode: ${error.message}`)
+      toast.error('Wrong Release', { description: error.message })
+      return handOver(true)
+    }
     // playback is the most authoritative answer there is, worth more than the badge
     const proven = availabilityFromError(error)
     if (proven) {
@@ -177,23 +206,13 @@ export async function resolveDebridFiles (torrentID, search) {
   const episode = Number(search?.episode)
   const resolved = await service.resolve(torrentID, {
     fileFilter: name => playbackRx.test(name),
-    pickFile: Number.isFinite(episode) ? files => pickEpisodeFile(files, episode) : undefined
+    pickFile: Number.isFinite(episode) ? files => pickPackFile(files, episode, anitomyscript, { maxFiles: service.config.maxFiles }) : undefined
   })
   const secure = secureFiles(resolved.files, serviceTitle())
   if (secure.length !== resolved.files.length) debug(`Discarded ${resolved.files.length - secure.length} non-HTTPS links from ${serviceTitle()}`)
   // playing it proves the service holds it, which is the best answer there is
   recordAvailability(resolved.hash, Availability.CACHED)
-  return Promise.all(secure.map(async file => ({
-    infoHash: resolved.hash,
-    fileHash: await sha1hex(`${resolved.hash}:${file.name}:${file.size}`), // same key the torrent client uses, so watch progress is shared
-    torrent_name: resolved.name,
-    name: file.name,
-    type: file.type,
-    size: file.size,
-    path: file.path,
-    url: file.url,
-    debrid: true
-  })))
+  return Promise.all(secure.map(file => toPlayerFile(resolved, file)))
 }
 
 /** Refreshes what the account itself says, which is free. One request a minute at most. */
@@ -205,6 +224,7 @@ export function refreshDebridAvailability () {
   active.listAvailability().then(known => {
     for (const [hash, state] of known) active.remember(hash, state)
     if (current(active)) publishAvailability(known)
+    publishReleaseNames(active)
   }).catch(error => {
     lastRefresh = 0
     debug('Failed to list debrid torrents:', error)
@@ -249,6 +269,7 @@ export async function checkDebridAvailability (hashes) {
     debug('Availability check failed:', error)
   } finally {
     debridChecking.update(count => count - 1)
+    publishReleaseNames(active)
   }
   if (!current(active)) return
   const left = active.unknownHashes(hashes)
@@ -268,25 +289,6 @@ export async function checkDebridAvailability (hashes) {
 export function cancelDebridAvailability () {
   if (retry) clearTimeout(retry)
   retry = null
-}
-
-/**
- * Picks the requested episode out of a pack, using the same anitomy parsing as the rest of the
- * app. Falls back to the largest video.
- * @param {{ id: number, path: string, size: number }[]} files
- * @param {number} episode
- */
-async function pickEpisodeFile (files, episode) {
-  const videoFiles = files.filter(({ path }) => videoRx.test(path))
-  if (videoFiles.length <= 1) return videoFiles[0] || files[0]
-  try {
-    const parsed = await anitomyscript(videoFiles.map(({ path }) => path.split('/').pop()))
-    const match = parsed?.findIndex(parse => Number(parse.episode_number) === episode)
-    if (match >= 0) return videoFiles[match]
-  } catch (error) {
-    debug('Failed to parse pack file names:', error)
-  }
-  return videoFiles.sort((a, b) => b.size - a.size)[0]
 }
 
 function serviceTitle () {
@@ -343,7 +345,3 @@ function publishAvailability (answers) {
   })
 }
 
-async function sha1hex (data) {
-  const buffer = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(data))
-  return Array.from(new Uint8Array(buffer)).map(byte => byte.toString(16).padStart(2, '0')).join('')
-}

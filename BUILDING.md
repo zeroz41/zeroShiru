@@ -45,12 +45,18 @@ Node.
 ```
 test/
 ├── unit/            fast, no network — run on every push
-│   ├── debrid/      debrid services, availability, routing, rate limits
-│   └── playback/    subtitles, fonts, file matching
+│   ├── debrid/      debrid services, availability, routing, rate limits,
+│   │                episode picking, pack windowing, resume identity
+│   └── playback/    subtitles, fonts, file matching, and the full
+│                    DebridMetadata stream/seek/pacing pipeline against
+│                    fixtures/episode.mkv over mocked range requests
 ├── live/            hits real APIs, opt-in only
 │   ├── debrid/
 │   └── playback/
-└── tools/           manual diagnostics, not run by the suite
+├── fixtures/        episode.mkv — a synthetic 600s release (video, audio,
+│                    ASS+SRT subs, chapters, font); regenerate with
+│                    tools/make-fixture.sh
+└── tools/           manual diagnostics and fixture generation, not run by the suite
 ```
 
 Add a file ending in `.test.js` anywhere under `unit/` and it runs — including
@@ -89,6 +95,7 @@ env REAL_DEBRID_API_KEY=xxx pnpm test:live      # fish
 | `RD_TEST_MAGNET` | resolve/playback tests: a magnet or hash already cached on the account |
 | `RD_TEST_PACK_MAGNET`, `RD_TEST_PACK_EPISODE` | season-pack episode picking, e.g. a pack hash and `25` |
 | `TORBOX_TEST_HASH` | TorBox cache-check test: an info hash TorBox reports as cached |
+| `TB_TEST_PACK_HASH`, `TB_TEST_PACK_EPISODE` | TorBox season-pack test; defaults to the largest multi-video torrent on the account and the median episode it holds |
 
 Live tests are deliberately non-destructive — they only resolve releases
 already on the account and assert they don't add duplicates. They do consume
@@ -115,6 +122,56 @@ Desktop, with hot reload:
 cd electron
 pnpm start
 ```
+
+`pnpm start` compiles once into `electron/build`, then leaves `webpack serve`
+watching. The watcher writes to disk, so **the compiled bundle is only as new
+as the last time that watcher was running**. Stop it (Ctrl+C) and every source
+change after that point is invisible to the app, however many times you relaunch
+Electron from `electron/build`.
+
+### "I changed the code and nothing happened"
+
+Work down this list — each step is cheap, and the first two catch almost
+everything:
+
+1. **Is the bundle newer than your edit?** This is the one that fools people:
+
+   ```bash
+   ls -l --time-style=+%H:%M electron/build/renderer.js   # compiled output
+   ls -l --time-style=+%H:%M common/modules/<the file you changed>
+   ```
+
+   If the source is newer, the running app cannot contain your change. Rebuild
+   without launching anything:
+
+   ```bash
+   cd electron && npx cross-env NODE_ENV=development webpack build
+   ```
+
+2. **Reload the window.** Renderer changes need the Electron window reloaded
+   (Ctrl+R). Main-process and preload changes need the app restarted outright.
+
+3. **Confirm the change really is in the bundle** by grepping for a string only
+   your version contains — the renderer is code split, so look across chunks:
+
+   ```bash
+   grep -l "some new string I added" electron/build/*.renderer.js
+   ```
+
+4. **Extension search results are cached for two minutes.** Anything touching
+   search results looks unchanged until that expires — the log says so plainly
+   (`The previously cached extension results are less than two minutes old,
+   returning cached results`). Change the episode, or wait it out, before
+   concluding a filter or sort did not work.
+
+5. **Debrid answers are cached too, and for much longer.** A cached hit is
+   trusted for six hours and the account listing for a minute, so availability
+   badges can lag a change in that code. Switching service or key in settings
+   tears the instance down and clears them.
+
+Both caches are deliberate — they exist so browsing does not hammer the APIs —
+but they mean "it still does the old thing" is usually a stale bundle or a
+stale cache rather than a broken change.
 
 Android, on an ADB-connected device:
 
@@ -151,6 +208,7 @@ Or one target at a time:
 pnpm run web:build && pnpm exec electron-builder --win
 pnpm run web:build && pnpm exec electron-builder --mac
 pnpm run web:build && pnpm exec electron-builder --linux AppImage
+pnpm run web:build && pnpm exec electron-builder --linux dir      # raw binary only
 ```
 
 Everything lands in `electron/dist/`. `X.X.X` is the `version` from
@@ -163,6 +221,7 @@ Everything lands in `electron/dist/`. `X.X.X` is the `version` from
 | macOS | `mac-Shiru-vX.X.X.dmg` | universal (Apple Silicon + Intel) |
 | macOS | `mac-Shiru-vX.X.X.zip` | same app zipped, used by the auto-updater |
 | Linux | `linux-Shiru-vX.X.X.AppImage` | `chmod +x` and run — needs FUSE (`libfuse2` on Debian/Ubuntu, `fuse2` on Arch), or run it with `--appimage-extract-and-run` |
+| Linux | `linux-unpacked/Shiru` | the raw binary — run it directly, no FUSE and nothing to extract. Keep the folder together, the executable needs the files beside it |
 
 ## Android / Android TV builds
 

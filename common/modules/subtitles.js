@@ -231,7 +231,9 @@ export default class Subtitles {
       const replaced = text.replace(/\r/g, '')
       let frames = 1000 / Number(replaced.match(subRx)[3])
       if (!frames || isNaN(frames)) frames = 41.708
-      for (const split of replaced.split('\r?\n')) {
+      // \r is already stripped above; splitting on the literal string '\r?\n' used to leave the
+      // whole file as one line, so only the first cue of any MicroDVD subtitle ever converted
+      for (const split of replaced.split('\n')) {
         const match = split.match(subRx)
         if (match) subtitles.push('Dialogue: 0,' + toTS((match[1] * frames) / 1000, 1) + ',' + toTS((match[2] * frames) / 1000, 1) + ',Default,,0,0,0,,' + match[3].replace('|', '\\N'))
       }
