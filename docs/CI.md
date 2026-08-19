@@ -62,17 +62,42 @@ packages are blocked on the hardware gates in `hosts/{tizen,webos}/README.md`.
 
 ## Updater
 
-The Tauri updater is not enabled yet: it needs a signing keypair, which is a
-release-owner decision. To turn it on, once:
+In-app updates are built and wired: the app checks on a timer, downloads, and
+restarts into the new version. What is missing is a **signing keypair**, and it
+has to be missing until you make one, because Tauri only installs an update
+whose signature matches the public key compiled into the app. That is the whole
+security model: without it, anyone who could serve you a file could serve you a
+program. Until the key exists, a check answers `unconfigured` and the app says
+nothing — an update prompt that can never install is worse than no prompt.
+
+To turn updates on, once:
 
 ```bash
-cargo tauri signer generate -w ~/.tauri/zeroshiru.key   # back this up privately
+cargo tauri signer generate -w ~/.tauri/zeroshiru.key
 ```
 
-Then add the public key to `hosts/tauri/tauri.conf.json`
-(`plugins.updater.pubkey` plus an endpoint), and set `TAURI_SIGNING_PRIVATE_KEY`
-/ `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as Actions secrets so release builds
-produce signatures. Until then the bridge's update ops are noops.
+That writes two things: a **private key** (`~/.tauri/zeroshiru.key`) that signs
+releases, and a **public key** printed to the terminal that verifies them. Back
+the private key up somewhere private and never commit it — lose it and existing
+installs can never be updated again, since a new key cannot sign for the old one.
+
+Then, in the repository settings:
+
+```bash
+gh variable set TAURI_PUBKEY --body "<the public key it printed>"
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/zeroshiru.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD   # paste when prompted
+```
+
+`TAURI_PUBKEY` is the switch: with it set, release builds compile the key in,
+emit signed updater artifacts, and the `update-manifest` job publishes the
+`latest.json` the app reads. Without it, releases build exactly as they do now
+and simply are not self-updating.
+
+Channels: the app follows `latest.json` on the newest non-prerelease for stable,
+and `latest.json` on a release tagged `nightly` for the nightly channel — GitHub's
+"latest release" pointer deliberately skips prereleases, so nightlies need their
+own fixed tag.
 
 ## Android signing (one-time)
 

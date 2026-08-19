@@ -11,6 +11,7 @@ mod logging;
 #[cfg(desktop)]
 mod shell;
 mod torrent;
+mod updater;
 mod window;
 
 /// The bridge adapter injected before the page loads, with the platform info the
@@ -53,6 +54,8 @@ pub fn run() {
         let urls = argv.iter().filter_map(|arg| url::Url::parse(arg).ok()).collect();
         shell::forward_urls(app, urls);
     }));
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
@@ -61,6 +64,7 @@ pub fn run() {
         .manage(debrid::DebridState::default())
         .manage(torrent::TorrentState::default())
         .manage(discord::DiscordState::default())
+        .manage(updater::UpdateState::default())
         .append_invoke_initialization_script(bridge_script())
         .invoke_handler(tauri::generate_handler![
             commands::get_app_version,
@@ -106,6 +110,9 @@ pub fn run() {
             desktop::get_graphics,
             #[cfg(desktop)]
             desktop::set_graphics,
+            updater::set_update_channel,
+            updater::check_for_updates,
+            updater::quit_and_install,
             discord::set_discord_rpc,
             discord::set_presence,
             discord::clear_presence,

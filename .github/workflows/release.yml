@@ -90,14 +90,17 @@ jobs:
             os: ubuntu-22.04
             targets: ''
             bundles: target/release/bundle/appimage/*.AppImage target/release/bundle/deb/*.deb
+            updater: target/release/bundle/appimage/*.AppImage.sig
           - name: Windows
             os: windows-latest
             targets: ''
             bundles: target/release/bundle/msi/*.msi target/release/bundle/nsis/*-setup.exe
+            updater: target/release/bundle/nsis/*-setup.exe.sig
           - name: macOS
             os: macos-latest
             targets: --target universal-apple-darwin
             bundles: target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            updater: target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
 
     steps:
       - name: Check out Git repository
@@ -136,9 +139,24 @@ jobs:
 
       # tauri.conf.json declares the bundle targets; beforeBuildCommand is empty
       # because the frontend is already in dist/web by this point.
+      #
+      # The updater is switched on by the repository variable TAURI_PUBKEY: with it
+      # set, the build compiles that key in and emits signed updater artifacts, and
+      # without it the release is simply not self-updating. See docs/CI.md#updater.
       - name: Build bundles
+        shell: bash
         working-directory: hosts/tauri
-        run: cargo tauri build ${{ matrix.targets }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          PUBKEY: ${{ vars.TAURI_PUBKEY }}
+        run: |
+          if [ -n "$PUBKEY" ]; then
+            cargo tauri build ${{ matrix.targets }} --config "{\"bundle\":{\"createUpdaterArtifacts\":true},\"plugins\":{\"updater\":{\"pubkey\":\"$PUBKEY\",\"endpoints\":[\"https://github.com/${{ github.repository }}/releases/latest/download/latest.json\"]}}}"
+          else
+            echo "TAURI_PUBKEY is not set: building without in-app updates"
+            cargo tauri build ${{ matrix.targets }}
+          fi
 
       - name: Publish bundles
         shell: bash
@@ -151,6 +169,8 @@ jobs:
             echo "::error::No bundles were produced for ${{ matrix.name }}"
             exit 1
           fi
+          # the updater artifacts and their signatures ride along when signing is on
+          FILES+=(${{ matrix.updater }})
           for f in "${FILES[@]}"; do
             echo "uploading $(basename "$f")"
             gh release upload --clobber "$APP_VERSION" "$f"
@@ -253,3 +273,50 @@ jobs:
               gh release upload --clobber "$APP_VERSION" "$f"
             fi
           done
+
+  # The manifest the in-app updater reads: one entry per platform, each naming the
+  # artifact to download and the signature it must match. Assembled from what the
+  # platform jobs actually uploaded, so a platform that failed to build is absent
+  # rather than pointing at nothing.
+  update-manifest:
+    name: Update Manifest
+    needs: [prepare-release, release-desktop]
+    if: ${{ vars.TAURI_PUBKEY != '' }}
+    runs-on: ubuntu-latest
+    env:
+      APP_VERSION: ${{ needs.prepare-release.outputs.app_version }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v6
+
+      - name: Build latest.json from the uploaded assets
+        run: |
+          set -euo pipefail
+          VERSION="${APP_VERSION#v}"
+          BASE="https://github.com/${{ github.repository }}/releases/download/${APP_VERSION}"
+          mkdir -p manifest && cd manifest
+          gh release download "$APP_VERSION" --repo "${{ github.repository }}" --pattern '*.sig' --clobber
+          PLATFORMS=""
+          add() { # platform key, artifact suffix
+            local sig
+            sig=$(ls *"$2".sig 2>/dev/null | head -1 || true)
+            [ -z "$sig" ] && { echo "no signature for $1, skipping"; return; }
+            local asset="${sig%.sig}"
+            PLATFORMS="$PLATFORMS{\"$1\":{\"signature\":\"$(cat "$sig")\",\"url\":\"$BASE/$(printf %s "$asset" | jq -sRr @uri)\"}},"
+          }
+          add linux-x86_64 .AppImage
+          add windows-x86_64 -setup.exe
+          add darwin-universal .app.tar.gz
+          if [ -z "$PLATFORMS" ]; then
+            echo "::error::signing is enabled but no signed artifacts were uploaded"
+            exit 1
+          fi
+          # merge the per-platform objects into one, and stamp the release
+          echo "[${PLATFORMS%,}]" | jq --arg version "$VERSION" \
+            --arg notes "See the release notes." \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: (add)}' > latest.json
+          cat latest.json
+          gh release upload --clobber "$APP_VERSION" latest.json

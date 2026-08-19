@@ -8,6 +8,13 @@
 
   const listen = window.__TAURI__.event.listen
 
+  // one handler per update state, replaced rather than stacked: the modal owns them
+  const updateListeners = new Map()
+  listen('shiru://update', (event) => {
+    const { type, data } = event.payload || {}
+    updateListeners.get(type)?.(data)
+  })
+
   window.common = {
     getAppVersion: () => invoke('get_app_version'),
     getPlatformInfo: () => platformInfo,
@@ -19,6 +26,15 @@
     pickFolder: async () => (await invoke('pick_folder')) || '',
     exportLog: () => invoke('export_log'),
     resetLog: () => invoke('reset_log'),
+    setUpdateChannel: (channel) => invoke('set_update_channel', { channel: channel || 'stable' }),
+    // answers 'unconfigured' until a signing key exists, which the UI treats as
+    // "nothing to install" rather than as a failure
+    checkForUpdates: (channel) => invoke('check_for_updates', { channel: channel || 'stable' }).catch(() => {}),
+    quitAndInstall: () => invoke('quit_and_install'),
+    onUpdateAvailable: (callback) => { updateListeners.set('available', callback) },
+    onUpdateDownloaded: (callback) => { updateListeners.set('downloaded', callback) },
+    onUpdateProgress: (callback) => { updateListeners.set('progress', callback) },
+    onUpdateAborted: (callback) => { updateListeners.set('aborted', callback) },
     // deep links (shiru://, magnet:) as raw URLs; routing lives in the renderer
     onProtocol: (callback) => { listen('shiru://protocol', (event) => callback(event.payload)) }
   }
