@@ -77,6 +77,14 @@ pub async fn check_for_updates(
 ) -> Result<CheckResult, String> {
     use tauri_plugin_updater::UpdaterExt;
 
+    // The plugin needs a `plugins.updater` section to initialize at all, so the
+    // config carries an empty pubkey and release builds substitute the real one.
+    // An empty key verifies nothing, and the plugin only notices that at install
+    // time -- long after the user has been shown an update. Notice it here.
+    if !has_signing_key(&app) {
+        return Ok(unconfigured("no signing key compiled in".into()));
+    }
+
     let channel = channel.unwrap_or_else(|| state.channel.lock().unwrap().clone());
     let endpoint = manifest_for(&channel);
     let builder = match app.updater_builder().endpoints(vec![endpoint
@@ -169,6 +177,18 @@ pub async fn check_for_updates(
 #[cfg(not(desktop))]
 #[tauri::command]
 pub fn quit_and_install(_app: tauri::AppHandle) {}
+
+/// Whether a public key was compiled into this build, as opposed to absent or empty.
+#[cfg(desktop)]
+fn has_signing_key(app: &tauri::AppHandle) -> bool {
+    app.config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|updater| updater.get("pubkey"))
+        .and_then(|key| key.as_str())
+        .is_some_and(|key| !key.is_empty())
+}
 
 fn unconfigured(detail: String) -> CheckResult {
     tracing::debug!(%detail, "updater not configured");
