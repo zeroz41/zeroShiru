@@ -10,17 +10,7 @@
     "beforeBuildCommand": ""
   },
   "app": {
-    "windows": [
-      {
-        "title": "zeroShiru",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 320,
-        "minHeight": 390,
-        "backgroundColor": "#17191c",
-        "url": "app.html"
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     },
