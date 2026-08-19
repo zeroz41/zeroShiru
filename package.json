@@ -3,79 +3,40 @@
   "license": "GPL-3.0-or-later",
   "private": true,
   "type": "module",
-  "scripts": {
-    "test": "node --import ./test/register.js --test \"test/unit/**/*.test.js\"",
-    "test:watch": "node --import ./test/register.js --test --watch \"test/unit/**/*.test.js\"",
-    "test:live": "node --env-file-if-exists=.env --import ./test/register.js --test --test-concurrency=1 \"test/live/**/*.test.js\"",
-    "tauri:dev": "concurrently --kill-others \"node_modules/.bin/vite common\" \"cargo run -p shiru-tauri\"",
-    "tauri:build": "cd electron && npm run web:build && cd .. && cargo build --release -p shiru-tauri",
-    "test:rust": "cargo test --workspace"
-  },
   "author": "zeroz <zeroz@none.cx>",
   "description": "A personal anime library manager for watching and tracking your collection in real time. Lightweight, powerful, and paws-itively fast. No waiting required!",
-  "main": "build/main.js",
   "homepage": "https://github.com/zeroz41/zeroShiru#readme",
-  "standard": {
-    "ignore": [
-      "bundle.js",
-      "bundle.map.js"
-    ],
-    "env": [
-      "browser",
-      "node"
-    ]
+  "scripts": {
+    "test": "bun test --preload ./test/bun-register.js test/unit",
+    "test:watch": "bun test --watch --preload ./test/bun-register.js test/unit",
+    "test:live": "bun test --preload ./test/bun-register.js --timeout 120000 test/live",
+    "test:rust": "cargo test --workspace",
+    "build": "cross-env NODE_ENV=production vite build common",
+    "tauri:dev": "concurrently --kill-others \"vite common\" \"cargo run -p shiru-tauri\"",
+    "tauri:build": "cross-env NODE_ENV=production vite build common && cargo build --release -p shiru-tauri"
   },
   "dependencies": {
-    "@typescript-eslint/parser": "^8.66.0",
-    "copy-webpack-plugin": "^14.0.0",
+    "concurrently": "^10.0.4",
     "cross-env": "^10.1.0",
+    "semver": "^7.8.5"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^3.1.2",
+    "@typescript-eslint/parser": "^8.66.0",
     "eslint": "^10.8.0",
     "eslint-config-standard": "^17.1.0",
     "eslint-plugin-svelte": "^3.22.0",
-    "html-webpack-plugin": "^5.6.8",
-    "mini-css-extract-plugin": "^2.10.2",
-    "semver": "^7.8.5",
-    "webpack": "^5.109.2",
-    "webpack-cli": "^7.2.2",
-    "webpack-dev-server": "^6.0.0"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260804.1",
-    "@sveltejs/vite-plugin-svelte": "^3.1.2",
-    "matroska-metadata": "github:cedarpolar/matroska-metadata#b36dd003c41da5acd11c70144c13aef16a5603ee",
-    "npm-run-all": "^4.1.5",
-    "uint8-util": "^2.3.2",
     "vite": "^5.4.21"
   },
   "workspaces": [
-    "capacitor",
-    "client",
     "common",
-    "electron",
     "extensions"
   ],
   "patchedDependencies": {
-    "@capacitor/local-notifications@8.2.0": "patches/@capacitor__local-notifications.patch",
-    "@capacitor/android@8.3.4": "patches/@capacitor__android.patch",
     "rfdc@1.4.1": "patches/rfdc.patch",
-    "svelte-keybinds@1.0.9": "patches/svelte-keybinds.patch",
-    "cordova-plugin-apkupdater@5.0.1": "patches/cordova-plugin-apkupdater.patch"
-  },
-  "overrides": {
-    "@electron/universal": "3.0.4"
+    "svelte-keybinds@1.0.9": "patches/svelte-keybinds.patch"
   },
   "trustedDependencies": [
-    "@paymoapp/electron-shutdown-handler",
-    "bufferutil",
-    "electron",
-    "electron-winstaller",
-    "esbuild",
-    "fs-native-extensions",
-    "fsctl",
-    "node-datachannel",
-    "sharp",
-    "utf-8-validate",
-    "utp-native",
-    "wrtc"
+    "esbuild"
   ]
 }

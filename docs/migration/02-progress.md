@@ -1,56 +1,68 @@
 # Migration Progress
 
-Updated: 2026-08-19 (branch `redo`). One commit per phase; `git log --oneline`
-reads as the migration timeline.
+Updated: 2026-08-19 (branch `redo`). History was squashed into `initial tauri
+rewrite`; work continues as small commits on top.
 
-## Landed
+## Where things stand
 
-| Phase | State | Evidence |
-|---|---|---|
-| 0 baseline | done | 00-baseline.md, 01-parity-checklist.md |
-| 2 Webpack→Vite (renderer) | done | `common/vite.config.mjs`; electron/capacitor node bundles stay webpack until 8-13 |
-| 1 pnpm→Bun (hoisted) | done | bun.lock authoritative; CI on bun; lucide patch retired |
-| 3 service boundaries | pre-existing | bridge.js was already the only host seam; now merges host overrides over noop defaults |
-| 4 Rust workspace | done | 10 crates + wasm-bridge; portable set builds for wasm32 |
-| 6 debrid → Rust | done* | 4 providers + manager, 109 tests mirroring test/unit/debrid; *TODOs: shared TTL listing cache, orphan-retry replay |
-| 7 Tauri desktop | shell up | boots the Vite renderer; NVIDIA/Wayland graphics auto-fallback (reproduced the report's Error 71 on this machine) |
-| 8 torrent → Rust | engine core | librqbit behind TorrentEngine; loopback gateway (token, range); live-verified vs a real swarm (206, 64KiB in ~0.9s, 6 peers) |
-| 9 desktop integration | partial | window controls, exit-intent modal flow, dialogs, notifications, devtools, Discord RPC; missing: tray, updater, protocol handler, DoH, logging |
-| 12 Android | APK builds | cargo tauri android → app-universal-debug.apk (aarch64), same Rust core + renderer; device testing + Kotlin adapters pending |
-| 15 WASM core | seed | scripts/build-tv-core.sh → 160KB wasm + web glue (route/normalize/parse + matroska); executed with native-identical results |
-| 16/17 TV hosts | scaffolds | hosts/tizen (config.xml access list = section-11 gate), hosts/webos (spike-first README) |
+The legacy stacks are gone. There is no Electron, no Webpack, no Capacitor/
+Cordova/node-mobile, no WebTorrent, and no npm in any workflow — Bun runs the
+JS side, Cargo runs the Rust side.
+
+| Area | State |
+|---|---|
+| Frontend build | Vite only (`bun run build` → `dist/web`), Svelte 4 preserved |
+| Desktop host | Tauri 2 (`hosts/tauri`): window/tray/dialogs/notifications, deep links, single instance, Discord RPC, NVIDIA/Wayland graphics fallback |
+| Torrenting | Rust (`crates/torrent`): librqbit behind `TorrentEngine`, plus `TorrentSession` — role registry (current/staging/seeding/completed), sidecar persistence, auto-restore, seeding-limit policy, HTTP tracker scrape, external player launch, loopback range gateway for playback |
+| Torrent UI wiring | One pushed `stats` snapshot drives all four Svelte stores; `files` events carry gateway URLs with the debrid-identical `fileHash` watch key |
+| Debrid | Rust (`crates/debrid`, 4 providers) behind `window.shiru.debrid`; the JS providers in `common/modules/debrid/` still run the UI path (swap pending) |
+| Subtitles/metadata | Renderer-side `DebridMetadata` (HTTP-range Matroska parsing) now serves BOTH lanes — torrent and debrid — off the gateway/debrid URL |
+| Protocol handling | Renderer-side `common/modules/protocol.js` (shiru://, magnet:); hosts only deliver raw URLs |
+| Bridge | `common/modules/bridge.js` rewritten lean: TORRENT (19 ops), COMMON, ANDROID, DESKTOP; only file in common/ touching a host API |
+| Android | Tauri Android APK assembles from the same core; Kotlin adapters (Media3, PiP, foreground service, SAF) not started |
+| TV | 160KB WASM core builds; `hosts/tizen` + `hosts/webos` scaffolds, hardware-gated |
+| Tests | 332 JS (`bun run test`, node:test) + 160+ Rust (`cargo test --workspace`), all green |
+
+## What's left to finish
+
+1. **Live-run the desktop app** — the rewritten torrent path (session, snapshot
+   events, gateway playback, renderer-side subtitle extraction for torrents)
+   compiles and is unit-tested but has not yet streamed a real torrent end to
+   end under the Tauri window. First manual smoke: `bun run tauri:dev`, load a
+   magnet, check files/stats/subtitles/seek.
+2. **Debrid UI swap** — point `common/modules/debrid/` service calls at
+   `window.shiru.debrid.*` and delete the JS provider implementations.
+3. **Updater** — Tauri updater needs signing keys (release-owner decision);
+   the bridge ops are noops until then.
+4. **Desktop odds and ends** — DoH, ANGLE selection, log export/reset,
+   unread-count badge: bridge noops today, need Rust/host equivalents or
+   deliberate removal.
+5. **Android (phase 12/13/14)** — Kotlin adapters, on-device testing, then
+   Android TV input/layout profile.
+6. **Anime filename parsing → Rust** (anitomyscript replacement) and
+   remaining §18 package audit (comlink, video-deband, quartermoon…).
+7. **TV hosts** — section 11/28 hardware gates, then real bootstraps.
+8. **Svelte 5** — last, as its own project (phase 18).
+
+## Known behavior changes (deliberate, from the clean rewrite)
+
+- Session state lives in Rust (`shiru-session.json` next to the download dir);
+  the frontend no longer caches torrent lists.
+- `reannounce` is gone (librqbit reannounces on its own schedule).
+- Seeder/leecher splits in the torrent manager show connected peers until a
+  tracker scrape fills totals.
+- Rescan no longer re-hashes; the engine verifies on add instead.
+- uTP/PeX toggles are accepted but inert (librqbit manages transports).
 
 ## Running things
 
 ```
-npm test                      # 332 JS unit tests
-cargo test --workspace        # 160+ Rust tests
-npm run tauri:dev             # vite :5173 + Tauri window (SHIRU_GRAPHICS=safe if graphics act up)
-cd electron && npm start      # the Electron path, still fully working
-./scripts/build-tv-core.sh    # dist/tv-core WASM bundle
-cargo run -p shiru-torrent --features native --example smoke   # live torrent smoke
+bun run test                # 332 JS unit tests
+cargo test --workspace      # Rust tests
+bun run tauri:dev           # Vite :5173 + Tauri window (SHIRU_GRAPHICS=safe if needed)
+bun run build               # production frontend → dist/web
+./scripts/build-tv-core.sh  # WASM TV core
 ```
 
-## The honest gaps (what "parity" still means)
-
-1. **Frontend still speaks JS-webtorrent.** The TORRENT bridge surface
-   (onStats/onFiles/subtitle extraction/fonts/chapters/session restore) is
-   implemented by the webtorrent background process. The Rust engine covers
-   add/metadata/select/stream/stats + pushed status events; crates/media now
-   parses Matroska heads (tracks/codecs/languages/ASS CodecPrivate) from
-   ranged bytes — the cue/attachment extraction pass is the remaining piece.
-2. **Debrid UI path**: window.shiru.debrid.* works end to end, but
-   common/modules/debrid/*.js remains the code the UI runs. The swap is a
-   frontend service-layer change gated on (1) events and error-shape parity.
-3. **Updater**: needs Tauri signing keys — a release-owner decision.
-4. **Tray, protocol handler (shiru://), DoH, log export**: not started.
-5. **Android**: APK assembles; needs on-device run + the Kotlin adapter layer (Media3 player, PiP, foreground service, SAF, notifications).
-6. **TV**: both hosts are scaffolds; the report's hardware gates (sections 11
-   and 28) are deliberately unskippable and need physical TVs.
-7. **Extension system decision** (01-parity-checklist.md) still open — blocks
-   crates/sources beyond normalization.
-
-## Rollback
-
-Every phase is one commit on `redo`; Electron/webpack paths still build and run
-at every commit since c413c7a6.
+The user's live desktop session: never launch GUI apps or take screenshots
+while it is in use.
