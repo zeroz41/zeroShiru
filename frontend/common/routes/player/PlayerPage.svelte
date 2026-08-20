@@ -1,6 +1,6 @@
 <script>
   import { settings } from '@/modules/settings.js'
-  import { audioSelectionWrites, safeGain } from '@/modules/playback/audio.js'
+  import { audioSelectionWrites, safeGain, storedVolume } from '@/modules/playback/audio.js'
   import { showsSpinner, BUFFER_RECHECK_MS } from '@/modules/playback/buffering.js'
   import { thumbnailHorizon } from '@/modules/playback/thumbnails.js'
   import { cache, caches } from '@/modules/cache.js'
@@ -96,7 +96,7 @@
   let isFullscreen = false
   let ended = false
   let gain = 0
-  let volume = $settings.volume || 1
+  let volume = storedVolume($settings.volume) // persisted as a string, and string arithmetic is how a boost became NaN
   let volumeBoosted = false
   let volumeText = ''
   let volumeVisible = false
@@ -579,7 +579,7 @@
     const delta = direction === 'up' ? 0.05 : -0.05
     wheelAccumulator = 0
 
-    const combined = (volumeBoosted && gain > 1) ? gain : volume
+    const combined = Number((volumeBoosted && gain > 1) ? gain : volume) || 0
     let next = Math.max(0, Math.min(3, combined + delta))
     // If crossing 100% on the way up, snap to exactly 100% and stop
     if (direction === 'up' && combined < 1 && next > 1) next = 1

@@ -47,3 +47,20 @@ export function safeGain (stored) {
   if (!Number.isFinite(gain) || gain <= 0) return 1
   return gain
 }
+
+/**
+ * A volume read back from settings, as a number.
+ *
+ * It is persisted as a string — `String(volume || 0)` — and read straight back into the
+ * arithmetic behind the scroll wheel, where `"0.5" + -0.05` concatenates instead of
+ * adding and the result is `NaN`. That `NaN` was then stored as the title's boost, and
+ * the next launch restored it as silence. See [safeGain].
+ *
+ * @param {any} stored
+ * @returns {number} A volume between 0 and 1; a value that makes no sense reads as full.
+ */
+export function storedVolume (stored) {
+  const volume = Number(stored)
+  if (!Number.isFinite(volume) || volume < 0) return 1
+  return Math.min(1, volume)
+}

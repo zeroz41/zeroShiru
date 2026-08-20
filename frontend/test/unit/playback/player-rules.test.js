@@ -3,7 +3,7 @@
 // loading spinner stuck forever, and thumbnail drawing raced the stream it was drawn from.
 import { test } from 'bun:test'
 import assert from 'node:assert/strict'
-import { audioSelectionWrites, safeGain } from '../../../common/modules/playback/audio.js'
+import { audioSelectionWrites, safeGain, storedVolume } from '../../../common/modules/playback/audio.js'
 import { showsSpinner } from '../../../common/modules/playback/buffering.js'
 import { thumbnailHorizon, THUMBNAIL_LOOKAHEAD_SECONDS } from '../../../common/modules/playback/thumbnails.js'
 
@@ -75,4 +75,16 @@ test('an unknown duration is not a horizon of zero', () => {
   assert.ok(Number.isNaN(thumbnailHorizon({ duration: NaN, reachable: true })))
   assert.ok(Number.isNaN(thumbnailHorizon({ duration: 0, bufferPercent: 100 })))
   assert.ok(Number.isNaN(thumbnailHorizon({ duration: Infinity, currentTime: 10, reachable: true })))
+})
+
+test('a volume read back from settings is a number, whatever was stored', () => {
+  // it is persisted as a string, and the scroll wheel adds to it: "0.5" + -0.05 is
+  // "0.5-0.05", which is NaN, which was then stored as the title's boost
+  assert.equal(storedVolume('0.5'), 0.5)
+  assert.equal(storedVolume('0'), 0, 'a muted player stays muted')
+  assert.equal(storedVolume(1), 1)
+  assert.equal(storedVolume(undefined), 1)
+  assert.equal(storedVolume('nonsense'), 1)
+  assert.equal(storedVolume(-1), 1)
+  assert.equal(storedVolume('3'), 1, 'the element only takes 0 to 1; the boost above that is a gain node')
 })
