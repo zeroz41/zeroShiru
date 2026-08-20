@@ -104,6 +104,28 @@ below that needs a person at a desktop.
 7. **TV hosts** — section 11/28 hardware gates, then real bootstraps.
 8. **Svelte 5** — last, as its own project (phase 18).
 
+## When a debrid service goes quiet
+
+Found on 2026-08-19 while chasing "no cached releases and play freezes to a black screen":
+TorBox's API was accepting authenticated requests to `/user/me` and `/torrents/checkcached` and
+never answering them, while `/torrents/mylist` answered in 450ms — then flipping which endpoints
+were unwell minute to minute (`mylist` 502, `checkcached` fine, `/user/me` still hanging).
+Reproducible with plain `curl`, no app involved.
+
+Nothing was wrong on our side, but the app handled it terribly, so three things changed:
+
+- **A resolve is bounded end to end** (`Timeouts.resolve`, 60s, enforced in `ManagedProvider::resolve`
+  so every host inherits it). Every other budget bounds one round trip, and a resolve chains many —
+  add, poll, then a link per file — so a service answering slowly could keep the player black for
+  minutes. It now ends with "TorBox did not answer with a playable link within 60s", which the
+  frontend already turns into a toast plus a torrent fallback.
+- **A failing badge sweep says so, once** (`outageNotice` in `modules/debrid/availability.js`). It
+  used to `debug()` the failure and retry forever, so missing badges looked exactly like a library
+  where nothing is cached.
+- **A key still validates when only the account endpoint is unwell**: `validate` gives `/user/me` a
+  short budget and falls through to the listing, which answers the same question. A key the service
+  actively refuses is still refused.
+
 ## Known behavior changes (deliberate, from the clean rewrite)
 
 - Session state lives in Rust (`shiru-session.json` next to the download dir);
