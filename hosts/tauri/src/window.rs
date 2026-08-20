@@ -62,6 +62,15 @@ pub fn window_ready(window: tauri::Window) {
 #[tauri::command]
 pub fn app_exit(app: tauri::AppHandle) {
     exit_intent_answered();
+    quit(&app);
+}
+
+/// Exits, recording that this launch ended because it was asked to rather than
+/// because it could not draw.
+pub fn quit(app: &tauri::AppHandle) {
+    if let Ok(config_dir) = app.path().app_config_dir() {
+        crate::graphics::exiting_cleanly(&config_dir);
+    }
     app.exit(0);
 }
 
@@ -140,7 +149,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
         // already asking, and asked again: the answer is not coming, and they mean it
         if EXIT_INTENT.swap(true, Ordering::SeqCst) {
-            window.app_handle().exit(0);
+            quit(window.app_handle());
             return;
         }
         api.prevent_close();
@@ -152,7 +161,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             // still unanswered: nothing is going to ask the user, so stop holding the app open
             if EXIT_INTENT.swap(false, Ordering::SeqCst) {
                 tracing::warn!("the renderer did not answer the close, exiting anyway");
-                app.exit(0);
+                quit(&app);
             }
         });
     }

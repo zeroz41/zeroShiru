@@ -16,7 +16,7 @@ pub fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_main(app),
-            "quit" => app.exit(0),
+            "quit" => crate::window::quit(app),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

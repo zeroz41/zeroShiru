@@ -136,17 +136,7 @@ pub fn run() {
                 .background_color(tauri::window::Color(0x17, 0x19, 0x1c, 0xff))
                 .initialization_script(bridge_script())
                 .build()?;
-            // A window that is still up after this was composited successfully, whatever
-            // the page is doing inside it. The renderer says so sooner (window_ready);
-            // this is the backstop, so a page bug can never be mistaken for a driver that
-            // cannot draw and cost the machine its GPU path.
-            {
-                let config_dir = graphics::config_dir_for("watch.zeroshiru.app");
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(20));
-                    graphics::started_successfully(&config_dir);
-                });
-            }
+
             #[cfg(desktop)]
             {
                 shell::setup_tray(app.handle())?;

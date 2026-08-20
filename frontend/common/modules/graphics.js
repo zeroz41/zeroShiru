@@ -14,10 +14,14 @@ export const graphics = writable({ mode: 'auto', modes: [], overridden: false })
 
 /** What each mode means, for the settings screen. */
 export const graphicsModes = {
-  auto: 'Automatic — the GPU path, dropped only after a launch that failed to draw',
-  'no-dmabuf': 'No DMABUF — for a window that never appears, or renders black',
+  auto: 'Automatic — the GPU path, or the safe one on a driver known to need it',
+  'gpu-no-gbm': 'GPU without GBM — keeps accelerated compositing, skips the buffer call NVIDIA rejects',
+  'no-dmabuf': 'No DMABUF — frames go through shared memory; slower, works everywhere',
   safe: 'Safe — no DMABUF and no compositing, slowest and most compatible'
 }
+
+/** The modes that composite on the GPU, for wording that depends on it. */
+const accelerated = new Set(['gpu', 'gpu-no-gbm'])
 
 /**
  * What Automatic has settled on, or null when nothing needs saying. Auto falling back is
@@ -27,9 +31,18 @@ export const graphicsModes = {
  * @returns {string | null}
  */
 export function graphicsFallbackNotice ({ mode, effective, failedStarts } = {}) {
-  if (mode !== 'auto' || !failedStarts || !effective || effective === 'auto') return null
-  const launches = failedStarts === 1 ? 'A previous launch' : `${failedStarts} launches in a row`
-  return `${launches} failed to draw a window, so Automatic has dropped to ${graphicsModes[effective]?.split(' — ')[0] || effective}. That costs smoothness — pick Automatic again after fixing the driver, or once a launch works it clears itself.`
+  if (!effective || effective === 'gpu' || effective === mode) return null
+  const name = graphicsModes[effective]?.split(' — ')[0] || effective
+  if (failedStarts) {
+    const launches = failedStarts === 1 ? 'A previous launch' : `${failedStarts} launches in a row`
+    return `${launches} could not draw a window, so this is running as ${name} regardless of the setting. It clears itself the moment a launch draws.`
+  }
+  if (mode !== 'auto') return null
+  // auto took the safe rung on purpose, which costs real smoothness and is worth saying:
+  // every composited frame goes through shared memory instead of the GPU
+  return !accelerated.has(effective)
+    ? `Automatic is using ${name}: this graphics driver rejects the buffers accelerated compositing needs, and a black window is not worth the frame rate. GPU without GBM is the narrower workaround — if it cannot draw either, the next launch comes back here on its own.`
+    : null
 }
 
 /**

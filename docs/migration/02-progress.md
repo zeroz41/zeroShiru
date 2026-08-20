@@ -198,27 +198,38 @@ It writes to the log now (`hosts/tauri/src/logging.rs`, `log_renderer`, target `
 The debrid commands leave a trace too: what was asked, how many were answered, how many
 came back cached, and every failure with the reason attached.
 
-## Having a card fitted is not a reason to give up the GPU
+## The graphics fallback, and what it actually costs
 
-`graphics.rs` used to read `auto` as "if `/proc/driver/nvidia/version` exists, disable
-WebKitGTK's DMABUF renderer". That is far too broad a brush. Without that renderer every
-composited frame goes through the CPU, so hover states, scrolling and video all get slower
-— on any machine that merely has an NVIDIA card fitted, whether or not it drives anything,
-and whether or not its driver has the bug the rule was written for. Drivers that used to
-fail this way largely no longer do.
+`auto` disables WebKitGTK's DMABUF renderer whenever the NVIDIA driver is loaded. That
+was briefly narrowed on the theory that current drivers no longer need it. They do: a
+610-series open module on KDE Wayland answers `Failed to create GBM buffer of size
+1280x800: Invalid argument` and then shows a window with nothing in it. The guard is back,
+and a window is never traded for a frame rate.
 
-Auto now means **try the fast path and learn**:
+The cost of the guard is real — without that renderer every composited frame goes through
+shared memory rather than the GPU — so there is now a narrower knob for it. The installed
+`libwebkit2gtk-4.1` reads `WEBKIT_DMABUF_RENDERER_DISABLE_GBM`, which drops only the GBM
+allocation *inside* the DMA-BUF renderer instead of the renderer itself: aimed at the call
+that fails rather than the feature containing it. That is the `gpu-no-gbm` mode. It is
+offered, never defaulted — it is untested on the stack that needs it, and a first launch is
+not the place to find out. (Checked against the shipped library's own strings, since none of
+this is documented; `WEBKIT_WEB_RENDER_DEVICE_FILE` is in there too, for pointing WebKit at
+a different DRM node on a hybrid machine.)
 
-- each launch records that it is trying (`graphics-attempt` in the config dir),
-- the renderer clears it as soon as a window is actually painted (`window_ready`), with a
-  20-second host-side backstop so a page bug can never be mistaken for a driver that cannot
-  draw,
-- a launch that never got that far leaves the mark behind: one failed start drops the DMABUF
-  renderer, two drop compositing as well.
+Every mode now **escalates on evidence**, a pinned one included, because an app that cannot
+draw is worse than a preference ignored for one launch:
 
-So a stack that genuinely cannot do this fixes itself at the next launch, and everyone else
-keeps their GPU. A pinned mode is never second-guessed, `SHIRU_GRAPHICS` still overrides
-everything, and the settings screen says when auto has fallen back and what it cost.
+- each launch records that it is trying, and a launch that draws clears the mark,
+- "draws" means the renderer reported a painted window **and** nothing on its stderr said it
+  could not allocate a buffer — a window that exists is not a window with anything in it,
+  which is exactly how the black-window case slips past a naive check. `graphics.rs` reads
+  the process's own stderr for that, passing everything through untouched,
+- quitting on purpose clears the mark too, so closing the app during the splash costs
+  nothing,
+- each failure moves one rung: `gpu` → `gpu-no-gbm` → `no-dmabuf` → `safe`. `SHIRU_GRAPHICS`
+  alone is absolute, being the escape hatch someone debugging reaches for.
+
+The settings screen says which rung is in force and why, so a fallback is never silent.
 
 ## A preview that opens on arrival costs a preview per card crossed
 
