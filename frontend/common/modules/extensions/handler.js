@@ -10,6 +10,7 @@ import { TORRENT } from '@/modules/bridge.js'
 import AnimeResolver from '@/modules/anime/animeresolver.js'
 import { releaseHoldsEpisode } from '@/modules/playback/coverage.js'
 import { cache, caches } from '@/modules/cache.js'
+import { withDeadline, SOURCE_DEADLINE } from '@/modules/lib/deadline.js'
 import Debug from 'debug'
 const debug = Debug('ui:extensions')
 
@@ -112,7 +113,9 @@ async function queryExtensions(type, options, queryTypes, processResults) {
   for (const key of allExtensionKeys) {
     const source = extensionSources[key]
     if ((source.type ?? 'torrent') === type && (!source?.nsfw || settings.value.adult !== 'none')) {
-      const promise = (async () => {
+      // bounded: a source that never answers must not keep the whole results list — and
+      // with it the debrid check, autoplay and the spinner — waiting forever
+      const promise = withDeadline((async () => {
         try {
           const extensionEnabled = settings.value.extensionsNew?.[key]?.enabled
           const worker = extensionEnabled && await extensionManager.whenExtensionReady(key)
@@ -130,7 +133,12 @@ async function queryExtensions(type, options, queryTypes, processResults) {
           debug(`Extension ${key} failed: ${error}`)
           return { results: [], errors: [{ message: error?.[0]?.message || error?.message }] }
         }
-      })()
+      })(), {
+        late: () => {
+          debug(`Extension ${key} did not answer within ${SOURCE_DEADLINE}ms`)
+          return { results: [], errors: [{ message: `Source ${source?.name || source?.id} did not answer within ${Math.round(SOURCE_DEADLINE / 1000)}s` }] }
+        }
+      })
       promises.set(key, { name: source?.name || source?.id, icon: source?.icon, promise })
     }
   }

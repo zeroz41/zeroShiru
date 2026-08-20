@@ -418,7 +418,13 @@
   // ask about the results from the top of the list down, which is where the releases worth
   // playing are. How far it reaches is the service's call: one request for a service with a
   // cache endpoint, a handful of probes for one without.
-  $: if ($debridEnabled && $results?.resolved) checkDebridAvailability(sortedResults.map(result => result.hash))
+  // asked as sources answer rather than once every one of them has: waiting for the whole
+  // set means one slow source leaves the list with no badges at all. Debounced because
+  // sources land in a burst and every arrival rewrites the list — without it a five source
+  // search asks the service six overlapping questions inside a second, which is how an
+  // account gets rate limited
+  const askAboutResults = debounce(hashes => checkDebridAvailability(hashes), 250)
+  $: if ($debridEnabled && ($results?.resolved || sortedResults.length)) askAboutResults(sortedResults.map(result => result.hash))
   $: queryResults = listResults(sortedResults, $debridEnabled ? $debridAvailability : undefined, debridFilters)
   // every state and its count, for the tooltip on the cached filter
   $: availabilitySummary = AVAILABILITY_ORDER.map(state => `${queryResults?.counts?.[state] ?? 0} ${describeAvailability(state, $debridTransport?.title).label}`).join(' · ')
