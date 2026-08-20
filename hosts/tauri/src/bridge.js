@@ -58,7 +58,15 @@
     // how the renderer is composited; stored, applied at the next launch
     getGraphics: () => invoke('get_graphics'),
     setGraphics: (mode) => invoke('set_graphics', { mode }),
-    onExitIntent: (callback) => { listen('shiru://exit-intent', () => callback()) },
+    onExitIntent: (callback) => {
+      listen('shiru://exit-intent', () => {
+        // the host closes the window itself if nothing takes the close, so a renderer that is
+        // wedged or has no handler can never trap the app open. Acknowledging AFTER the callback
+        // means a handler that throws leaves that fallback armed, which is the point of it
+        callback()
+        invoke('exit_intent_ack')
+      })
+    },
     setDiscordRPC: (mode) => invoke('set_discord_rpc', { mode }),
     setPresence: (data) => {
       const activity = data?.activity || {}

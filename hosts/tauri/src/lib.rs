@@ -97,6 +97,7 @@ pub fn run() {
             window::window_is_minimized,
             window::window_is_fullscreen,
             window::window_ready,
+            window::exit_intent_ack,
             window::app_exit,
             window::open_devtools,
             window::pick_file,
