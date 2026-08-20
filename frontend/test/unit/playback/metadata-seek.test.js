@@ -171,3 +171,31 @@ test('a stream that gave up comes back when the user seeks somewhere that works'
   metadata.destroy()
   assert.ok(cueNear(spy, 450), `subtitles must resume at the seek, saw times: ${[...new Set(cueTimes(spy))].join(', ')}`)
 }, 40_000) // the retry budget plus its backoff has to be spent before the seek means anything
+
+test('a seek that produces no subtitles says so, and a seek that works says nothing', async () => {
+  // subtitles going missing after a seek has several possible causes and they look
+  // identical from outside the app; this is the one place that knows a seek happened
+  // and whether anything came of it
+  const warnings = []
+  const realWarn = console.warn
+  console.warn = (...args) => warnings.push(args.join(' '))
+  class Loud extends FastMetadata { static SILENCE_TIMEOUT = 700 }
+  try {
+    const { spy, clock, metadata } = (() => {
+      const state = serveRemote(FIXTURE, URL_, { chunkSize: 1024 })
+      const spy = subtitleSpy()
+      const clock = { time: 0 }
+      const metadata = new Loud(video, [video], spy, { getTime: () => clock.time })
+      return { state, spy, clock, metadata }
+    })()
+    await until(() => spy.seen.subtitles.length >= 3)
+    clock.time = 450
+    await until(() => cueNear(spy, 450), 8_000)
+    await new Promise(resolve => setTimeout(resolve, 1_200))
+    metadata.destroy()
+    assert.equal(warnings.filter(line => line.includes('[subtitles]')).length, 0,
+      `a seek that streamed must be silent, said: ${warnings.join(' | ')}`)
+  } finally {
+    console.warn = realWarn
+  }
+}, 20_000)

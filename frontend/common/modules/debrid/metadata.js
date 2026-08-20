@@ -76,8 +76,12 @@ export default class DebridMetadata {
   static STALL_TIMEOUT = 30_000
   /** How often the watcher looks at the playback position while the parser waits on bytes. */
   static WATCH_INTERVAL = 1_000
+  /** How long a restart after a seek may deliver nothing before it is worth reporting. */
+  static SILENCE_TIMEOUT = 12_000
 
   destroyed = false
+  /** Cues handed to the renderer, so a stream that goes quiet can prove it. */
+  cues = 0
   /** @type {RemoteFile | null} */
   remote = null
   /** @type {Metadata | null} */
@@ -150,6 +154,7 @@ export default class DebridMetadata {
     }).catch(error => debug('Failed to read attachments:', error))
 
     this.metadata.on('subtitle', (subtitle, trackNumber) => {
+      this.cues++
       if (!this.destroyed) subtitles.handleSubtitle({ subtitle, trackNumber })
     })
   }
@@ -213,6 +218,7 @@ export default class DebridMetadata {
         await watcher
         if (jumpTo !== null) {
           debug(`Seek left the parsed subtitle window, restarting stream at ${jumpTo}`)
+          this.#watchForSilence(jumpTo)
           start = offset = jumpTo
           attempt = -1 // following a seek is progress, not a failed attempt
           continue
@@ -228,12 +234,35 @@ export default class DebridMetadata {
         streaming = false
       }
     }
+    if (!this.destroyed) {
+      console.warn(`[subtitles] the stream gave up after its retries at byte ${offset} with ${this.cues} cues delivered; a seek will try again`)
+    }
     // The retries are spent. Nothing used to restart this, so a stream that gave up —
     // three stalls on a busy link is enough — left the rest of the film with no
     // subtitles at all, and seeking did nothing because the seek was only ever noticed
     // by a loop that had already exited. Wait, asking the link for nothing, until a seek
     // leaves the parsed window: that is a new place to read from, and worth one more go.
     await this.#reviveOnSeek(byteRate, start, offset)
+  }
+
+  /**
+   * Says so, once, if a restart after a seek delivers nothing.
+   *
+   * Subtitles going missing after a seek is a symptom with several possible causes — a
+   * parser that cannot find its footing mid-file, a link that will not serve the range, a
+   * renderer that stopped asking — and they are indistinguishable from the outside. This
+   * is the one place that knows a seek happened AND whether anything came of it, so it is
+   * the only place that can say which. It costs nothing when subtitles work.
+   */
+  #watchForSilence (from) {
+    const before = this.cues
+    setTimeout(() => {
+      if (this.destroyed || this.cues > before) return
+      console.warn(
+        `[subtitles] no cues in ${this.constructor.SILENCE_TIMEOUT / 1000}s after seeking to byte ${from} ` +
+        `(${this.cues} cues so far, file ${this.file?.size} bytes) — the stream restarted but delivered nothing`
+      )
+    }, this.constructor.SILENCE_TIMEOUT)
   }
 
   /**

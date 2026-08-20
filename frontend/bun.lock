@@ -53,6 +53,7 @@
   "patchedDependencies": {
     "svelte-keybinds@1.0.9": "patches/svelte-keybinds.patch",
     "rfdc@1.4.1": "patches/rfdc.patch",
+    "matroska-metadata@github:cedarpolar/matroska-metadata#b36dd00": "patches/matroska-metadata.patch",
   },
   "packages": {
     "@ampproject/remapping": ["@ampproject/remapping@2.3.0", "", { "dependencies": { "@jridgewell/gen-mapping": "^0.3.5", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw=="],

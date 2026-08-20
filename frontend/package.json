@@ -31,7 +31,8 @@
   ],
   "patchedDependencies": {
     "rfdc@1.4.1": "patches/rfdc.patch",
-    "svelte-keybinds@1.0.9": "patches/svelte-keybinds.patch"
+    "svelte-keybinds@1.0.9": "patches/svelte-keybinds.patch",
+    "matroska-metadata@github:cedarpolar/matroska-metadata#b36dd00": "patches/matroska-metadata.patch"
   },
   "trustedDependencies": [
     "esbuild"
