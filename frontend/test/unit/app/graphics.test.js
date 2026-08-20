@@ -11,8 +11,8 @@ test('a machine drawing on the gpu is told nothing', () => {
 })
 
 test('automatic working around a driver but keeping the gpu says so, and says it is still fast', () => {
-  const notice = graphicsFallbackNotice({ mode: 'auto', effective: 'nvidia-sync', failedStarts: 0 })
-  assert.match(notice, /Automatic is using NVIDIA without explicit sync/)
+  const notice = graphicsFallbackNotice({ mode: 'auto', effective: 'no-gbm', failedStarts: 0 })
+  assert.match(notice, /Automatic is using GPU without GBM/)
   assert.match(notice, /Still accelerated/, 'a working around is not the same news as giving up the gpu')
 })
 
@@ -41,7 +41,7 @@ test('a mode the user pinned and got is not a notice', () => {
 
 test('every mode the host offers has something to show for it', () => {
   // the list the host's MODES const holds, plus the names earlier versions stored
-  for (const mode of ['auto', 'gpu', 'nvidia-sync', 'no-gbm', 'shm', 'safe', 'gpu-no-gbm', 'no-dmabuf']) {
+  for (const mode of ['auto', 'gpu', 'no-gbm', 'shm', 'safe', 'nvidia-sync', 'gpu-no-gbm', 'no-dmabuf']) {
     assert.ok(graphicsModes[mode], mode)
     assert.match(graphicsModes[mode], / — /, 'a name and then what it is for')
   }

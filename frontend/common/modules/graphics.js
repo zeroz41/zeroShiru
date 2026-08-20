@@ -1,11 +1,13 @@
-// How the renderer is composited. WebKitGTK's DMA-BUF renderer fails on some Linux
-// stacks — NVIDIA under Wayland most often — and the window never appears, so this has
-// to be changeable from inside the app that failed to draw... which is why the host also
-// honours SHIRU_GRAPHICS: when the window never opens, the environment variable is
-// the only way in.
+// How the renderer is composited. The thing that used to break here — a black window on
+// NVIDIA under Wayland — is fixed in the host and is not a mode: this webview is GTK3,
+// GTK3 cannot speak the explicit-sync protocol NVIDIA's EGL layer negotiates for it, and
+// the host turns that negotiation off on every Linux launch. What is left below is a
+// manual override for a stack that fails for some other reason, which no working machine
+// touches. The host also honours SHIRU_GRAPHICS, because when a window never opens the
+// environment variable is the only way in.
 //
-// The host owns the list, the stored value and the ladder it walks; this is just what
-// the settings screen renders from.
+// The host owns the list and the stored value; this is just what the settings screen
+// renders from.
 import { writable } from 'simple-store-svelte'
 import { DESKTOP } from '@/modules/bridge.js'
 
@@ -14,13 +16,13 @@ export const graphics = writable({ mode: 'auto', modes: [], overridden: false })
 
 /** What each mode means, for the settings screen. In the order the host offers them. */
 export const graphicsModes = {
-  auto: 'Automatic — the GPU path, stepping down only if a launch cannot draw',
+  auto: 'Automatic — accelerated compositing, which is what every machine should get',
   gpu: 'GPU — accelerated compositing as WebKit ships it',
-  'nvidia-sync': "NVIDIA without explicit sync — accelerated, minus the synchronisation NVIDIA's driver and WebKit disagree about",
   'no-gbm': 'GPU without GBM — accelerated, skipping the buffer allocation some drivers reject',
   shm: 'Shared memory — frames go through the CPU; slower, works nearly everywhere',
   safe: 'Safe — no DMABUF renderer and no compositing, slowest and most compatible',
   // stored preferences written by earlier versions, so an old value still reads
+  'nvidia-sync': 'GPU — accelerated compositing as WebKit ships it',
   'gpu-no-gbm': 'GPU without GBM — accelerated, skipping the buffer allocation some drivers reject',
   'no-dmabuf': 'Shared memory — frames go through the CPU; slower, works nearly everywhere'
 }

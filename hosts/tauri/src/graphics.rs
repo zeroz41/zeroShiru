@@ -1,61 +1,63 @@
-//! Linux graphics compatibility. WebKitGTK composites through a DMA-BUF renderer, and
-//! on some stacks one step of that fails — most often NVIDIA under Wayland, seen as
-//! `Failed to create GBM buffer of size 1280x800: Invalid argument` or
-//! `Error 71 (Protocol error) dispatching to Wayland display`, and then a window that
-//! is alive and black.
+//! Linux graphics. One thing here is a fix; the rest is a manual override nobody
+//! should need.
 //!
-//! What this is NOT: a list of drivers that do not get the GPU. A vendor is not a bug,
-//! and "NVIDIA is loaded, therefore shared memory" costs every working NVIDIA machine
-//! its frame rate to spare one broken one a restart. There is no such rule here.
+//! **The fix.** This process's webview is GTK3 — `libgtk-3`/`libgdk-3` plus
+//! webkit2gtk-4.1 — and GDK3 has no implementation of `linux-drm-syncobj-v1`. Not a
+//! partial one: the protocol's symbols do not appear in the library at all, because
+//! explicit sync landed in GTK4 and was never backported. NVIDIA's EGL-Wayland platform
+//! library, meanwhile, negotiates that protocol itself, on behalf of a client that knows
+//! nothing about it. The compositor is then handed a surface using explicit sync that
+//! nothing will ever set an acquire or release point on, and the buffer handoff fails.
 //!
-//! Instead there is a ladder of ways to composite, fastest first, and each launch
-//! **escalates on evidence**: a launch that draws is remembered as the one that works,
-//! and one that does not moves a single rung down. Nothing is assumed about the stack
-//! before it has failed once.
+//! That is what `Failed to create GBM buffer of size 1280x800: Invalid argument` and
+//! `Error 71 (Protocol error) dispatching to Wayland display` are. Not a bad machine, not
+//! a driver too old or too new, and not something a particular user did: a client that
+//! cannot speak a protocol its EGL layer signed it up for. Every GTK3 WebKitGTK app on
+//! NVIDIA under Wayland meets it, which is why every Tauri, wails and GTK3-webkit project
+//! has the same issue open.
 //!
-//! The rungs, and what each one gives up:
+//! `__NV_DISABLE_EXPLICIT_SYNC=1` is NVIDIA's own documented switch for precisely this
+//! case — fall back to implicit sync when the client cannot do explicit sync — so it is
+//! set on every Linux launch, before GTK or EGL initialise, whatever else is configured.
+//! It is safe to set everywhere because nothing else in a graphics stack reads it: on a
+//! full Arch install with Mesa, the Intel and Gallium drivers and Vulkan present, the only
+//! libraries containing that string at all are `libnvidia-egl-wayland*`. On AMD, Intel,
+//! llvmpipe or under X11 it is an unread string in the environment. It disables no
+//! feature this app uses: DMA-BUF, GBM and accelerated compositing all stay on.
 //!
-//! | rung | what it does | still on the GPU |
+//! **The overrides.** Everything below is a manual setting, for a stack that fails for
+//! some reason this does not cover. It is not a path any working machine takes.
+//!
+//! | mode | what it does | still on the GPU |
 //! | --- | --- | --- |
-//! | `gpu` | the DMA-BUF renderer as WebKit ships it | yes |
-//! | `nvidia-sync` | `__NV_DISABLE_EXPLICIT_SYNC=1`: NVIDIA's explicit sync is where its Wayland buffer sharing and WebKit disagree, and it is the one knob that fixes the GBM failure without giving up acceleration. Ignored by every other driver, so it costs nothing to try | yes |
-//! | `no-gbm` | `WEBKIT_DMABUF_RENDERER_DISABLE_GBM=1`: buffers are still shared as dma-bufs, they are just not allocated through GBM — aimed at the failing call rather than the feature containing it | yes |
-//! | `shm` | `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1`: the renderer stays, its buffers go through shared memory. Slower, but the renderer is still there, which matters — see below | no |
-//! | `safe` | `WEBKIT_DISABLE_DMABUF_RENDERER=1` + `WEBKIT_DISABLE_COMPOSITING_MODE=1`, the last resort | no |
+//! | `gpu` | the DMA-BUF renderer as WebKit ships it — what everyone gets | yes |
+//! | `no-gbm` | `WEBKIT_DMABUF_RENDERER_DISABLE_GBM=1`: buffers are still shared as dma-bufs, they are just not allocated through GBM | yes |
+//! | `shm` | `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1`: the renderer stays, its buffers go through shared memory | no |
+//! | `safe` | `WEBKIT_DISABLE_DMABUF_RENDERER=1` + `WEBKIT_DISABLE_COMPOSITING_MODE=1` | no |
 //!
-//! `shm` sits above `safe` deliberately. Removing the DMA-BUF renderer outright leaves
-//! WebKit 2.52 with no accelerated backing-store transport at all, which it does not
-//! always survive; forcing that renderer onto shared memory asks for the same slow path
-//! by the supported route. `safe` is kept for the stacks where even that is too much.
+//! `shm` sits above `safe` because removing the DMA-BUF renderer outright leaves WebKit
+//! 2.52 with no accelerated backing-store transport at all, which it does not always
+//! survive; forcing that same renderer onto shared memory asks for the slow path by the
+//! supported route.
 //!
-//! **A mode that works is remembered.** Without that, the ladder oscillates: a launch
-//! fails, the next one falls back and draws, drawing clears the failure count, and the
-//! launch after that starts at the top again and shows another black window. So the rung
-//! that drew is written down along with a fingerprint of the stack it drew on — NVIDIA's
-//! driver version, the WebKit library actually mapped into this process, the kernel, the
-//! session type. Update any of those and the fingerprint no longer matches, the note is
-//! ignored, and the fast path gets a fresh try. That is the only way back up, and it is
-//! the right one: what changed is exactly what was broken.
+//! A launch that never draws a window still leaves a mark, and the next one steps down a
+//! rung — the only way back into an app whose window never opens, since the setting that
+//! would fix it lives inside that window. With the fix above in place nothing should ever
+//! reach it. A rung that does draw is remembered against a fingerprint of the stack, so
+//! the step-down cannot oscillate, and a driver, kernel or WebKit update re-opens the top.
 //!
-//! The user can still pin a rung in settings (stored, applied at the next launch — the
-//! renderer is configured before a window exists). A pinned rung escalates too, because
-//! an app that cannot draw is worse than one that ignored a preference for a launch.
-//! `SHIRU_GRAPHICS` overrides even that and never escalates: it is what someone debugging
-//! a black window reaches for. Explicit `WEBKIT_*`/`__NV_*` variables win over all of it.
-//!
-//! "Draws" means the renderer reported a painted window AND nothing on stderr said it
-//! could not allocate a buffer: a window that exists is not a window with anything in it,
-//! which is exactly how the black-window case slips past a naive check.
+//! `SHIRU_GRAPHICS` overrides the stored preference and never steps down: it is what
+//! someone debugging reaches for. Explicit `WEBKIT_*`/`__NV_*` variables win over all of it.
 
 use std::path::{Path, PathBuf};
 
 /// The modes the settings screen offers, in order. `auto` walks the ladder below;
 /// everything else names a rung on it.
-pub const MODES: [&str; 6] = ["auto", "gpu", "nvidia-sync", "no-gbm", "shm", "safe"];
+pub const MODES: [&str; 5] = ["auto", "gpu", "no-gbm", "shm", "safe"];
 
 /// Every mode that draws, fastest first. A launch that fails to draw moves one rung
 /// down this; `auto` is not on it because auto is a starting rung, not a setting.
-const LADDER: [&str; 5] = ["gpu", "nvidia-sync", "no-gbm", "shm", "safe"];
+const LADDER: [&str; 4] = ["gpu", "no-gbm", "shm", "safe"];
 
 /// The environment variable that overrides the stored preference.
 pub const ENV_OVERRIDE: &str = "SHIRU_GRAPHICS";
@@ -66,8 +68,9 @@ pub const ENV_OVERRIDE: &str = "SHIRU_GRAPHICS";
 fn canonical(mode: &str) -> Option<&'static str> {
     Some(match mode.trim() {
         "auto" => "auto",
-        "gpu" => "gpu",
-        "nvidia-sync" => "nvidia-sync",
+        // an explicit-sync-free GPU path is what every launch gets now, so the rung
+        // that used to mean "the gpu path plus that" is simply the gpu path
+        "gpu" | "nvidia-sync" => "gpu",
         "no-gbm" | "gpu-no-gbm" => "no-gbm",
         "shm" | "no-dmabuf" => "shm",
         "safe" => "safe",
@@ -223,7 +226,10 @@ pub fn renderer_cannot_draw(line: &str) -> bool {
     FAILURES.iter().any(|failure| line.contains(failure))
 }
 
-/// Remembers that this launch could not draw, whatever the window does afterwards.
+/// Remembers that this launch could not draw, whatever the window does afterwards, so
+/// the next one starts a rung lower. Nothing is restarted and nothing is interrupted:
+/// this is a note for next time, and with the explicit-sync fix in place it should never
+/// be written at all.
 pub fn renderer_failed(config_dir: &Path) {
     if RENDERER_FAILED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
@@ -281,20 +287,16 @@ fn resolve_effective(config_dir: &Path, settled: usize) -> String {
 /// did not fix it on its own is no reason to take a fix back off.
 fn environment(mode: &str) -> &'static [(&'static str, &'static str)] {
     match mode {
-        // the DMA-BUF renderer as WebKit ships it, which is the whole point of not
-        // being a browser tab
+        // the DMA-BUF renderer as WebKit ships it, which is the whole point of not being
+        // a browser tab. What every machine gets, because the fix is not a mode
         "gpu" => &[],
-        // NVIDIA's explicit sync is where its Wayland buffer sharing and WebKit's
-        // renderer disagree. No other driver reads this variable
-        "nvidia-sync" => &[("__NV_DISABLE_EXPLICIT_SYNC", "1")],
-        // the DMA-BUF renderer without the one allocation that fails: buffers are
-        // still dma-bufs, they are just not allocated through GBM
-        "no-gbm" => &[("__NV_DISABLE_EXPLICIT_SYNC", "1"), ("WEBKIT_DMABUF_RENDERER_DISABLE_GBM", "1")],
-        // the renderer stays and moves its buffers through shared memory. Slower, and
-        // the supported way to ask for slower
+        // the DMA-BUF renderer without the one allocation that fails: buffers are still
+        // dma-bufs, they are just not allocated through GBM
+        "no-gbm" => &[("WEBKIT_DMABUF_RENDERER_DISABLE_GBM", "1")],
+        // the renderer stays and moves its buffers through shared memory. Slower, and the
+        // supported way to ask for slower
         "shm" => &[("WEBKIT_DMABUF_RENDERER_FORCE_SHM", "1")],
-        // no renderer and no compositing: the last resort, for stacks where even the
-        // shared-memory path does not come up
+        // no renderer and no compositing: for stacks where even shared memory does not come up
         _ => &[
             ("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
             ("WEBKIT_DISABLE_COMPOSITING_MODE", "1"),
@@ -309,6 +311,14 @@ pub fn apply(identifier: &str) {
     let _ = config_dir;
     #[cfg(target_os = "linux")]
     {
+        // The fix, applied before anything reads the environment and whatever mode is in
+        // force. GDK3 cannot speak linux-drm-syncobj-v1 — the protocol is not in the
+        // library — while NVIDIA's EGL-Wayland layer negotiates it on the client's behalf,
+        // which leaves the compositor holding a surface whose sync points nobody sets. This
+        // is NVIDIA's own switch for a client that cannot do explicit sync. Nothing else in
+        // a graphics stack reads it, so on Mesa or under X11 it is an unread string, and it
+        // turns off nothing this app uses: DMA-BUF, GBM and compositing all stay on
+        set_default("__NV_DISABLE_EXPLICIT_SYNC", "1");
         let failed = failed_starts(&config_dir);
         let settled = settled_rung(&config_dir);
         let mode = resolve_effective(&config_dir, settled);
@@ -457,10 +467,9 @@ mod tests {
 
     #[test]
     fn a_launch_that_could_not_draw_moves_one_rung_down() {
-        assert_eq!(walk("auto", 1, 0), "nvidia-sync", "the accelerated fix comes before giving up on the gpu");
-        assert_eq!(walk("auto", 2, 0), "no-gbm");
-        assert_eq!(walk("auto", 3, 0), "shm");
-        assert_eq!(walk("auto", 4, 0), "safe");
+        assert_eq!(walk("auto", 1, 0), "no-gbm");
+        assert_eq!(walk("auto", 2, 0), "shm");
+        assert_eq!(walk("auto", 3, 0), "safe");
         assert_eq!(walk("auto", 9, 0), "safe", "and never past the end of the ladder");
     }
 
@@ -476,14 +485,10 @@ mod tests {
     }
 
     #[test]
-    fn the_accelerated_rungs_keep_the_gpu_and_the_sync_workaround() {
+    fn the_accelerated_rungs_keep_the_gpu() {
         assert!(environment("gpu").is_empty(), "the fast path sets nothing at all");
-        assert_eq!(environment("nvidia-sync"), [("__NV_DISABLE_EXPLICIT_SYNC", "1")]);
-        // a rung that did not fix it on its own is no reason to take the fix back off
-        let no_gbm: Vec<&str> = environment("no-gbm").iter().map(|(name, _)| *name).collect();
-        assert!(no_gbm.contains(&"__NV_DISABLE_EXPLICIT_SYNC"));
-        assert!(no_gbm.contains(&"WEBKIT_DMABUF_RENDERER_DISABLE_GBM"));
-        for rung in ["gpu", "nvidia-sync", "no-gbm"] {
+        assert_eq!(environment("no-gbm"), [("WEBKIT_DMABUF_RENDERER_DISABLE_GBM", "1")]);
+        for rung in ["gpu", "no-gbm"] {
             let names: Vec<&str> = environment(rung).iter().map(|(name, _)| *name).collect();
             assert!(!names.contains(&"WEBKIT_DISABLE_DMABUF_RENDERER"), "{rung} composites on the gpu");
             assert!(!names.contains(&"WEBKIT_DMABUF_RENDERER_FORCE_SHM"), "{rung} composites on the gpu");
@@ -497,14 +502,15 @@ mod tests {
         assert_eq!(walk("no-gbm", 0, 0), "no-gbm", "what they asked for, first");
         assert_eq!(walk("no-gbm", 1, 0), "shm");
         assert_eq!(walk("no-gbm", 2, 0), "safe");
+        assert_eq!(walk("gpu", 1, 0), "no-gbm");
     }
 
     #[test]
     fn the_rung_that_drew_is_where_the_next_launch_starts() {
         // without this the ladder oscillates: fail, fall back, draw, the drawing clears
         // the failure count, and the launch after that shows another black window
-        assert_eq!(walk("auto", 0, 2), "no-gbm");
-        assert_eq!(walk("auto", 1, 2), "shm", "and it still escalates from there");
+        assert_eq!(walk("auto", 0, 2), "shm");
+        assert_eq!(walk("auto", 1, 2), "safe", "and it still steps down from there");
     }
 
     #[test]
@@ -527,7 +533,7 @@ mod tests {
         assert_eq!(settled_rung(&dir), 0, "nothing proven yet, so the fast path");
 
         record_settled(&dir, "no-gbm");
-        assert_eq!(settled_rung(&dir), 2, "auto starts where it last succeeded");
+        assert_eq!(settled_rung(&dir), 1, "auto starts where it last succeeded");
 
         // a driver, kernel or WebKit update is the likeliest thing to have fixed this
         std::fs::write(settled_file(&dir), "some-other-stack\nno-gbm").unwrap();
@@ -560,6 +566,23 @@ mod tests {
         started_reported(&dir, true);
         assert_eq!(failed_starts(&dir), 1, "so the next launch takes the next rung down");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_explicit_sync_fix_is_not_a_mode_and_not_a_fallback() {
+        // GDK3 has no linux-drm-syncobj-v1 implementation, so no rung of this ladder is
+        // ever a client that can do explicit sync. Making it a mode would mean shipping a
+        // configuration that is wrong by construction and waiting for it to fail
+        for mode in MODES {
+            let names: Vec<&str> = environment(mode).iter().map(|(name, _)| *name).collect();
+            assert!(
+                !names.contains(&"__NV_DISABLE_EXPLICIT_SYNC"),
+                "{mode} must not be where this gets decided"
+            );
+        }
+        // the rung that used to carry it now means what it always should have: the gpu path
+        assert_eq!(canonical("nvidia-sync"), Some("gpu"));
+        assert!(environment("gpu").is_empty(), "the fast path asks WebKit for nothing special");
     }
 
     #[test]
