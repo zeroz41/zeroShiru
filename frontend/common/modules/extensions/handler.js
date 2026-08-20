@@ -10,6 +10,7 @@ import { TORRENT } from '@/modules/bridge.js'
 import AnimeResolver from '@/modules/anime/animeresolver.js'
 import { releaseHoldsEpisode } from '@/modules/playback/coverage.js'
 import { cache, caches } from '@/modules/cache.js'
+import { debridEnabled } from '@/modules/debrid/debrid.js'
 import { withDeadline, SOURCE_DEADLINE } from '@/modules/lib/deadline.js'
 import Debug from 'debug'
 const debug = Debug('ui:extensions')
@@ -82,7 +83,10 @@ export async function getTorrentResults({ media, episode, batch, movie, resoluti
     // at all judges nothing
     const listed = deduped.filter(result => releaseHoldsEpisode(result.parseObject, { episode, absoluteEpisode: options.absoluteEpisode, episodeCount: options.episodeCount }))
     if (listed.length !== deduped.length) debug(`Hid ${deduped.length - listed.length} release(s) whose titles say they do not hold episode ${episode}`)
-    return updatePeerCounts(listed, !settings.value.torrentAutoScrape)
+    // with a debrid service configured the seeder count is trivia, not routing:
+    // gating results on a tracker scrape (15s worst case, per source) was pure
+    // wait before the availability check could even see a hash. Cached counts only
+    return updatePeerCounts(listed, !settings.value.torrentAutoScrape || debridEnabled.value)
   })
 }
 

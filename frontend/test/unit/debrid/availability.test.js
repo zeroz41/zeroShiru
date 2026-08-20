@@ -12,6 +12,7 @@ import {
   isAvailability,
   normalizeAvailability,
   outageNotice,
+  preferCached,
   streamsInstantly
 } from '../../../common/modules/debrid/availability.js'
 
@@ -111,4 +112,38 @@ test('a failure nobody wrote a case for still says something', () => {
 test('the service is named, so the user knows who went quiet', () => {
   assert.match(outageNotice({ kind: 'timeout' }, 'Real-Debrid').title, /Real-Debrid/)
   assert.match(outageNotice({ kind: 'timeout' }).title, /your debrid service/)
+})
+
+// --- preferCached: what the "best release" pick feeds itself under debrid ---
+
+test('cached releases outrank everything, original order kept within each half', () => {
+  const results = [
+    { hash: 'a'.repeat(40), seeders: 900 },
+    { hash: 'b'.repeat(40), seeders: 50 },
+    { hash: 'c'.repeat(40), seeders: 10 }
+  ]
+  const availability = new Map([
+    ['b'.repeat(40), Availability.CACHED],
+    ['c'.repeat(40), Availability.CACHED]
+  ])
+  const ranked = preferCached(results, availability)
+  assert.deepEqual(ranked.map(result => result.hash[0]), ['b', 'c', 'a'],
+    'a most-seeded uncached pick is a guaranteed resolve failure and a torrent fallback')
+  assert.deepEqual(results.map(result => result.hash[0]), ['a', 'b', 'c'], 'the input is not reordered in place')
+})
+
+test('with nothing known the results pass through untouched', () => {
+  const results = [{ hash: 'a'.repeat(40) }, { hash: 'b'.repeat(40) }]
+  assert.equal(preferCached(results, new Map()), results)
+  assert.equal(preferCached(results, null), results)
+  assert.deepEqual(preferCached([], new Map([['x', Availability.CACHED]])), [])
+})
+
+test('available-but-uncached is not cached, and unknown hashes sort with the rest', () => {
+  const results = [{ hash: 'a'.repeat(40) }, { hash: 'b'.repeat(40) }, {}]
+  const availability = new Map([
+    ['a'.repeat(40), Availability.AVAILABLE],
+    ['b'.repeat(40), Availability.CACHED]
+  ])
+  assert.deepEqual(preferCached(results, availability), [results[1], results[0], results[2]])
 })

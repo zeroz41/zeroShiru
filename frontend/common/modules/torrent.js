@@ -9,7 +9,8 @@ import { writable } from 'simple-store-svelte'
 import { toast } from 'svelte-sonner'
 import { capitalize } from '@/modules/util.js'
 import clipboard from '@/modules/lib/clipboard.js'
-import { streamDebrid, debridPlayback } from '@/modules/debrid/debrid.js'
+import { streamDebrid, debridPlayback, debridTransport } from '@/modules/debrid/debrid.js'
+import { torrentToast } from '@/modules/lib/torrent-toasts.js'
 import { setHash } from '@/modules/anime/animehash.js'
 import { requestPlayback } from '@/modules/playback/request.js'
 import { onTorrentRequest } from '@/modules/protocol.js'
@@ -151,7 +152,10 @@ export async function complete (hash) {
 function notify (detail) {
   const type = detail?.type || 'info'
   debug(`${capitalize(type)}:`, detail?.message)
-  if (type === 'info' || settings.value.toasts.includes('All') || settings.value.toasts.includes('Warnings')) {
+  // while debrid is the transport the torrent lane's failures are not the user's
+  // weather — they stay in the log. See lib/torrent-toasts.js for the rule
+  const debridActive = debridPlayback.value || Boolean(debridTransport.value?.only)
+  if (torrentToast(type, { toasts: settings.value.toasts, debridActive })) {
     if (type === 'warn') toast.warning('Torrent Warning', { description: '' + detail.message })
     else if (type === 'error') toast.error('Torrent Error', { description: '' + detail.message })
     else toast(`Torrent ${capitalize(type)}`, { description: '' + detail.message })

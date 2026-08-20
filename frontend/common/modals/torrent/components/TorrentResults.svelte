@@ -12,7 +12,8 @@
   import { dedupe, getTorrentResults, updatePeerCounts } from '@/modules/extensions/handler.js'
   import { releaseHoldsEpisode } from '@/modules/playback/coverage.js'
   import { debridEnabled, debridAvailability, debridTransport, debridChecking, debridReleaseNames, refreshDebridAvailability, checkDebridAvailability, cancelDebridAvailability } from '@/modules/debrid/debrid.js'
-  import { Availability, AVAILABILITY_ORDER, availabilityOf, describeAvailability } from '@/modules/debrid/availability.js'
+  import { Availability, AVAILABILITY_ORDER, availabilityOf, describeAvailability, preferCached } from '@/modules/debrid/availability.js'
+  import { get } from 'svelte/store'
   import { listResult } from '@/modules/debrid/route.js'
   import { getId, getHash } from '@/modules/anime/animehash.js'
   import AnimeResolver from '@/modules/anime/animeresolver.js'
@@ -73,7 +74,11 @@
     }
     candidates.push(...results.filter(result => (result.type === 'best' || result.type === 'alt') && result.seeders > 9))
     const uniqueCandidates = Array.from(new Set(candidates))
-    const toConsider = uniqueCandidates.length ? uniqueCandidates : results
+    // a release the debrid service already holds beats any seeder count: picking an
+    // uncached one is choosing a resolve failure and a fall back to the torrent lane.
+    // module context, so the stores are read explicitly rather than via $
+    const considered = uniqueCandidates.length ? uniqueCandidates : results
+    const toConsider = get(debridEnabled) ? preferCached(considered, debridAvailability.value) : considered
     if (torrentProvider?.length) {
       const filteredByProvider = toConsider.filter(result => result.parseObject?.release_group && torrentProvider.some(provider => result.parseObject.release_group.toLowerCase().includes(provider.toLowerCase())))
       if (filteredByProvider.length) return filteredByProvider[0]

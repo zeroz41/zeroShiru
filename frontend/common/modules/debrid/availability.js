@@ -66,6 +66,27 @@ export function streamsInstantly (state) {
  * @param {string | undefined} hash
  * @returns {string}
  */
+/**
+ * The same releases, cached ones first, original order kept within each half. What
+ * the "best release" pick feeds itself when a debrid service is configured: a most-
+ * seeded release the service does not hold is a guaranteed resolve failure and a
+ * hand-over to the torrent lane, which is exactly the noise debrid mode exists to end.
+ *
+ * @template {{ hash?: string }} T
+ * @param {T[]} results
+ * @param {Map<string, string>} availability
+ * @returns {T[]}
+ */
+export function preferCached (results, availability) {
+  if (!availability?.size || !results?.length) return results
+  const cached = []
+  const rest = []
+  for (const result of results) {
+    (availabilityOf(availability, result.hash) === Availability.CACHED ? cached : rest).push(result)
+  }
+  return [...cached, ...rest]
+}
+
 export function availabilityOf (availability, hash) {
   return (hash && availability?.get(String(hash).toLowerCase())) || Availability.UNKNOWN
 }
