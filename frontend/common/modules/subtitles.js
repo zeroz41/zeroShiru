@@ -171,7 +171,16 @@ export default class Subtitles {
         legacyWasmUrl: new URL('jassub/dist/jassub-worker.wasm.js', import.meta.url).toString(),
         modernWasmUrl: new URL('jassub/dist/jassub-worker-modern.wasm', import.meta.url).toString(),
         useLocalFonts: settings.value.missingFont,
-        dropAllBlur: settings.value.disableSubtitleBlur
+        dropAllBlur: settings.value.disableSubtitleBlur,
+        // Drive rendering from the media events rather than from a video frame callback.
+        // On-demand rendering registers a requestVideoFrameCallback and nothing else — no
+        // seeking, waiting or playing listener — and re-arms itself only from inside its
+        // own callback. A flush seek in the system webview can drop the pending callback,
+        // and then nothing on either side re-arms it: subtitles freeze on the frame the
+        // seek left and never come back. It also messages the worker once per video frame,
+        // which is a cost this webview can ill afford for text that changes every few
+        // seconds. The event path re-syncs on every seek by construction
+        onDemandRender: false
       }
       if (SUPPORTS.isAndroid) JASSUB._hasBitmapBug = true
       this.renderer = new JASSUB(options)

@@ -154,13 +154,17 @@ export default class DebridMetadata {
     })
   }
 
-  /** Streams the file through the parser, throttled against the playback position. */
-  async #streamSubtitles () {
+  /**
+   * Streams the file through the parser, throttled against the playback position.
+   *
+   * @param {number} [from] Byte offset to start at, for picking a given-up stream back up.
+   */
+  async #streamSubtitles (from = 0) {
     const durationMs = await this.metadata.duration
     const byteRate = durationMs > 0 ? this.file.size / (durationMs / 1_000) : 0
     // the window of bytes fed to the parser so far, seeks outside it restart the stream
-    let start = 0
-    let offset = 0
+    let start = from
+    let offset = from
     for (let attempt = 0; attempt < RETRIES && !this.destroyed; ++attempt) {
       const source = this.remote.slice(offset)
       // a stalled connection yields no chunk, and chunk handling used to be the only place a
@@ -223,6 +227,28 @@ export default class DebridMetadata {
       } finally {
         streaming = false
       }
+    }
+    // The retries are spent. Nothing used to restart this, so a stream that gave up —
+    // three stalls on a busy link is enough — left the rest of the film with no
+    // subtitles at all, and seeking did nothing because the seek was only ever noticed
+    // by a loop that had already exited. Wait, asking the link for nothing, until a seek
+    // leaves the parsed window: that is a new place to read from, and worth one more go.
+    await this.#reviveOnSeek(byteRate, start, offset)
+  }
+
+  /**
+   * Waits at a standstill for a seek out of the parsed window, then picks the stream back
+   * up there. Costs nothing while nobody seeks, which is what keeps a genuinely dead link
+   * from being retried forever.
+   */
+  async #reviveOnSeek (byteRate, start, offset) {
+    while (!this.destroyed) {
+      const jump = this.#jumpTarget(byteRate, start, offset)
+      if (jump !== null && jump !== offset) {
+        debug(`A seek to ${jump} picks the given-up subtitle stream back up`)
+        return this.#streamSubtitles(jump)
+      }
+      await sleep(this.constructor.WATCH_INTERVAL)
     }
   }
 

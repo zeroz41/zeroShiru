@@ -1,5 +1,8 @@
 <script>
   import { settings } from '@/modules/settings.js'
+  import { audioSelectionWrites, safeGain } from '@/modules/playback/audio.js'
+  import { showsSpinner, BUFFER_RECHECK_MS } from '@/modules/playback/buffering.js'
+  import { thumbnailHorizon } from '@/modules/playback/thumbnails.js'
   import { cache, caches } from '@/modules/cache.js'
   import { page, modal, playPage } from '@/modules/navigation.js'
   import { getAnimeProgress, setAnimeProgress } from '@/modules/anime/animeprogress.js'
@@ -84,6 +87,7 @@
   let buffering = false
   let immerseTimeout = null
   let bufferTimeout = null
+  let bufferRecheck = null
   let subHeaders = null
   let pip = false
   // const presentationRequest = null
@@ -137,7 +141,9 @@
     volumeBoosted = cache.getEntry(caches.HISTORY, 'lastBoosted')?.[`${media?.media?.id || media?.title || media?.parseObject?.title || media?.parseObject?.file_name}`]?.boosted || false
     if (volumeBoosted) {
       setupAudio()
-      gain = cache.getEntry(caches.HISTORY, 'lastBoosted')?.[`${media?.media?.id || media?.title || media?.parseObject?.title || media?.parseObject?.file_name}`]?.gain || 0
+      // a remembered boost with no usable amount used to restore as a gain of zero,
+      // which is silence the volume slider sits upstream of and cannot undo
+      gain = safeGain(cache.getEntry(caches.HISTORY, 'lastBoosted')?.[`${media?.media?.id || media?.title || media?.parseObject?.title || media?.parseObject?.file_name}`]?.gain)
       gainNode.gain.value = gain
     } else {
       if (gainNode?.gain) gainNode.gain.value = volume
@@ -654,11 +660,14 @@
     seek(-settings.value.playerSeek)
   }
   function selectAudio (id) {
-    if (id != null) {
-      for (const track of video.audioTracks) {
-        track.enabled = track.id === id
-      }
-      seek(-0.2) // stupid fix because video freezes up when changing tracks
+    if (id == null || !video?.audioTracks) return
+    // the wanted track goes on before the others go off: an instant with nothing
+    // selected is what silenced the element, and the seek that used to paper over the
+    // freeze it caused only made it worse. See modules/playback/audio.js
+    const writes = audioSelectionWrites([...video.audioTracks], id)
+    for (const write of writes) {
+      const track = [...video.audioTracks].find(track => track.id === write.id)
+      if (track) track.enabled = write.enabled
     }
   }
   function selectVideo (id) {
@@ -1099,15 +1108,28 @@
       clearTimeout(bufferTimeout)
       bufferTimeout = null
     }
+    if (bufferRecheck) {
+      clearInterval(bufferRecheck)
+      bufferRecheck = null
+    }
     buffering = false
   }
 
-  function showBuffering (skipCheck = false) {
+  /** @param {boolean} [forced] show it without asking the element, see modules/playback/buffering.js */
+  function showBuffering (forced = false) {
     if (bufferTimeout) clearTimeout(bufferTimeout)
     bufferTimeout = setTimeout(() => {
-      if (((skipCheck || video?.readyState < 3) && !externalPlayback) || (externalPlayback && !externalPlayerReady)) {
-        buffering = true
-        resetImmerse()
+      if (!showsSpinner({ forced, readyState: video?.readyState, externalPlayback, externalPlayerReady })) return
+      buffering = true
+      resetImmerse()
+      // the events that take the spinner back down all fire on the way UP through
+      // readiness, and a seek into a region the element already holds need not produce
+      // one. So a spinner that is up keeps asking whether it is still true, rather than
+      // waiting for an event that already came and went
+      if (!bufferRecheck) {
+        bufferRecheck = setInterval(() => {
+          if (!showsSpinner({ readyState: video?.readyState, externalPlayback, externalPlayerReady })) hideBuffering()
+        }, BUFFER_RECHECK_MS)
       }
     }, 150)
   }
@@ -1357,7 +1379,7 @@
           debug('Thumbnail generation process was interrupted due to a change in the video url, exiting...')
           return
         }
-        let dynamicDuration = (buffer / 100) * videoDraw.duration
+        let dynamicDuration = thumbnailHorizon({ duration: videoDraw.duration, bufferPercent: buffer, currentTime: video?.currentTime, reachable: !!current?.debrid })
         if (!isFinite(dynamicDuration)) {
           debug('Video is still loading... waiting to generate thumbnails...')
           setTimeout(() => captureThumbnail(), 1_000)
@@ -1371,7 +1393,7 @@
             debug(`Reached currently downloaded video duration, current seek time is: ${currentTime}s (${index} of ${buffer}%), waiting for buffer update...`)
           }
           setTimeout(() => {
-            if (currentTime < (buffer / 100) * videoDraw.duration) {
+            if (currentTime < thumbnailHorizon({ duration: videoDraw.duration, bufferPercent: buffer, currentTime: video?.currentTime, reachable: !!current?.debrid })) {
               lastIndex = 0
               debug('Detected a buffer change, continuing thumbnail generation...')
             }
@@ -1664,10 +1686,11 @@
     on:pause={updatew2g}
     on:play={updatew2g}
     on:seeked={updatew2g}
+    on:seeked={hideBuffering}
     on:timeupdate={() => createThumbnail()}
     on:timeupdate={checkCompletion}
     on:timeupdate={checkSkippableChapters}
-    on:waiting={showBuffering}
+    on:waiting={() => showBuffering()}
     on:loadeddata={hideBuffering}
     on:pause={() => { immersed = false }}
     on:canplay={hideBuffering}

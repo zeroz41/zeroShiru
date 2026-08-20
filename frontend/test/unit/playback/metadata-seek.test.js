@@ -149,3 +149,25 @@ test('seeking during the retry backoff of a dead link does not crash the stream'
   metadata.destroy()
   assert.ok(cueNear(spy, 450), 'the seek target streams fine, so the seek must recover the stream')
 })
+
+test('a stream that gave up comes back when the user seeks somewhere that works', async () => {
+  // the complaint this answers: subtitles die mid-episode and never return, however far
+  // you seek. Three stalls on a busy link is enough to spend the retries, and nothing
+  // used to restart the stream afterwards — the loop that noticed seeks had exited
+  const { state, spy, clock, metadata } = play({
+    // the head of the file is a dead link; everything past the halfway mark streams fine
+    behave: (request, position) => request.start < 20_000 && position >= 4_096 ? 'error' : undefined
+  })
+  await until(() => state.requests.filter(request => request.done).length >= 3, 15_000)
+  // and past the last backoff, so the retry loop has really exited: a seek that lands
+  // while it is still sleeping is caught by the loop itself and proves nothing
+  await new Promise(resolve => setTimeout(resolve, 5_000))
+  const spent = state.requests.length
+  await new Promise(resolve => setTimeout(resolve, 1_000))
+  assert.equal(state.requests.length, spent, 'sanity: the stream has given up, and asks the dead link for nothing')
+
+  clock.time = 450 // the user jumps to the last quarter
+  await until(() => cueNear(spy, 450), 10_000)
+  metadata.destroy()
+  assert.ok(cueNear(spy, 450), `subtitles must resume at the seek, saw times: ${[...new Set(cueTimes(spy))].join(', ')}`)
+}, 40_000) // the retry budget plus its backoff has to be spent before the seek means anything
