@@ -1,5 +1,5 @@
 <script>
-  import { graphics, graphicsModes, setGraphicsMode } from '@/modules/graphics.js'
+  import { graphics, graphicsModes, setGraphicsMode, graphicsFallbackNotice } from '@/modules/graphics.js'
   import { variables, setStyle, setScale } from '@/modules/themes.js'
   import { click } from '@/modules/lib/click.js'
   import HomeSections from '@/routes/settings/components/HomeSections.svelte'
@@ -168,6 +168,8 @@
   </SettingCard>
   {#if $graphics.overridden}
     <div class='font-size-14 text-muted mb-20'>SHIRU_GRAPHICS is set in this session, so it is deciding rather than this setting.</div>
+  {:else if graphicsFallbackNotice($graphics)}
+    <div class='font-size-14 text-muted mb-20'>{graphicsFallbackNotice($graphics)}</div>
   {/if}
 {/if}
 <h4 class='mb-10 font-weight-bold'>Notification Settings</h4>

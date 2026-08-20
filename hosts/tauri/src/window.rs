@@ -52,6 +52,11 @@ pub fn window_ready(window: tauri::Window) {
     // production shows the window only once the renderer has painted, so it
     // cannot be moved around while still blank — same trick the Electron host used
     let _ = window.show();
+    // and a painted window is proof the renderer path works, which is how `auto`
+    // graphics knows not to fall back at the next launch
+    if let Ok(config_dir) = window.app_handle().path().app_config_dir() {
+        crate::graphics::started_successfully(&config_dir);
+    }
 }
 
 #[tauri::command]

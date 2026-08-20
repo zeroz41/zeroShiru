@@ -70,20 +70,30 @@ pub fn reset_log() -> ResetResult {
 /// The graphics mode in force, and the ones this platform offers. The frontend
 /// renders the selector from this rather than knowing the list itself.
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GraphicsInfo {
     pub mode: String,
     pub modes: Vec<&'static str>,
     /// Set when an environment variable is deciding, in which case the stored
     /// preference is being ignored and the UI says so.
     pub overridden: bool,
+    /// What is actually in force. `auto` decides from how the last launches went,
+    /// so the settings screen can say what it decided rather than only "Automatic".
+    pub effective: String,
+    /// Launches in a row that never drew a window. Non-zero means auto has fallen
+    /// back, which is worth telling the user: it costs them smoothness.
+    pub failed_starts: u32,
 }
 
 #[tauri::command]
 pub fn get_graphics(app: tauri::AppHandle) -> GraphicsInfo {
+    let dir = config_dir(&app);
     GraphicsInfo {
-        mode: graphics::stored_mode(&config_dir(&app)),
+        mode: graphics::stored_mode(&dir),
         modes: graphics::MODES.to_vec(),
         overridden: std::env::var_os(graphics::ENV_OVERRIDE).is_some(),
+        effective: graphics::effective_mode(&dir),
+        failed_starts: graphics::failed_starts(&dir),
     }
 }
 
