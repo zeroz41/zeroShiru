@@ -39,6 +39,10 @@
     // connectivity endpoint no-cors, and an opaque answer cannot tell a working
     // link from a captive portal answering for it
     probeNetwork: (timeoutMs) => invoke('probe_network', { timeoutMs }),
+    // an http(s) request made by the host rather than the page: extensions scrape sites that
+    // send no CORS headers, which the webview may send but never read. Public destinations
+    // only — the guard lives in the core, not here
+    request: (request) => invoke('http_request', { request }),
     // deep links (shiru://, magnet:) as raw URLs; routing lives in the renderer
     onProtocol: (callback) => { listen('shiru://protocol', (event) => callback(event.payload)) }
   }

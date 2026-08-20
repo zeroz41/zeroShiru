@@ -59,6 +59,14 @@ const commonDefaults = {
    * a webview ping, which can only ever learn less. See modules/reachability.js.
    */
   probeNetwork: async () => null,
+  /**
+   * An http(s) request made by the host instead of the page, for the sources a webview may
+   * send a request to but never read the answer from (no CORS headers, which is most of them).
+   * Null where the host has no native client: callers fall back to fetch and lose only what
+   * CORS was going to cost them anyway. See modules/extensions/transport.js.
+   * @type {null | ((request: { url: string, method?: string, headers?: Record<string,string>, body?: string, timeoutMs?: number }) => Promise<{ url: string, status: number, ok: boolean, headers: Record<string,string>, body: string, binary: boolean }>)}
+   */
+  request: null,
   /** raw shiru:// and magnet: URLs; routing lives in modules/protocol.js */
   onProtocol: noopVoid,
   /** @param {'stable' | 'nightly'} channel */

@@ -20,6 +20,8 @@ shiru-domain = { path = "../../crates/domain" }
 shiru-core = { path = "../../crates/core" }
 shiru-debrid = { path = "../../crates/debrid", features = ["native"] }
 shiru-networking = { path = "../../crates/networking", features = ["native"] }
+# page requests the webview cannot make itself, see src/net.rs
+reqwest = { workspace = true }
 shiru-media = { path = "../../crates/media" }
 shiru-torrent = { path = "../../crates/torrent", features = ["native"] }
 shiru-platform-contracts = { path = "../../crates/platform-contracts" }

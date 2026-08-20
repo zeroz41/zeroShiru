@@ -72,6 +72,7 @@ pub fn run() {
             commands::route_playback,
             commands::open_uri,
             net::probe_network,
+            net::http_request,
             debrid::debrid_validate,
             debrid::debrid_list_availability,
             debrid::debrid_check_availability,

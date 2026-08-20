@@ -64,7 +64,10 @@ class Worker {
       if (opts.bypassCORS) {
         try { validated = await Promise.race([this.source.validate(), this.#terminated()]) } catch {}
         if (!validated) {
-          globalThis.fetch = createBridge() // hacky Android workaround for Access-Control-Allow-Origin error.
+          // The source could not be read from here. Most cannot: a content source scrapes sites
+          // that send no CORS headers, so the webview sends the request and withholds the answer.
+          // Ask the main thread to have the host make it instead.
+          globalThis.fetch = createBridge()
           validated = await Promise.race([this.source.validate(), this.#terminated()])
         }
       } else validated = await Promise.race([this.source.validate(), this.#terminated()])

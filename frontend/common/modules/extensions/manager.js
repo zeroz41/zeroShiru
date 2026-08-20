@@ -6,6 +6,8 @@ import { settings } from '@/modules/settings.js'
 import { SUPPORTS } from '@/modules/support.js'
 import { writable } from 'simple-store-svelte'
 import { toast } from 'svelte-sonner'
+import { normalizeMethod, requestVia } from '@/modules/extensions/transport.js'
+import { COMMON } from '@/modules/bridge.js'
 import { wrap } from 'comlink'
 import { parse } from 'tldts'
 import Debug from 'debug'
@@ -366,7 +368,7 @@ class ExtensionManager {
         await cache.cacheEntry(caches.EXTENSIONS, key, { mappings: true }, newCode, Date.now() + getRandomInt(7, 14) * 24 * 60 * 60 * 1_000)
         try {
           if (this.#pendingWorkers.get(key) !== worker && this.activeWorkers.value[key] !== worker && this.inactiveWorkers.value[key] !== worker) return
-          const initialize = await worker.initialize(key, extension.type, newCode, { settings: settings.value.extensionsNew[key]?.settings ?? {}, bypassCORS: SUPPORTS.isAndroid })
+          const initialize = await worker.initialize(key, extension.type, newCode, { settings: settings.value.extensionsNew[key]?.settings ?? {}, bypassCORS: SUPPORTS.isAndroid || !!COMMON.request })
           if (!settings.value.extensionsNew[key]?.enabled) {
             debug(`Extension ${key} was disabled during code fetch, terminating...`)
             worker.terminate()
@@ -637,7 +639,7 @@ class ExtensionManager {
               /** @type {RemoteObject<Promise<comlink.Remote<import('@/modules/extensions/worker.js').Worker>>> & ProxyMethods} */
               const remoteWorker = await wrap(worker)
               this.#pendingWorkers.set(key, remoteWorker)
-              const initialize = await remoteWorker.initialize(key, extension.type, modules[key], { settings: settings.value.extensionsNew[key]?.settings ?? {}, bypassCORS: SUPPORTS.isAndroid })
+              const initialize = await remoteWorker.initialize(key, extension.type, modules[key], { settings: settings.value.extensionsNew[key]?.settings ?? {}, bypassCORS: SUPPORTS.isAndroid || !!COMMON.request })
               if (this.whenReady !== generation) {
                 remoteWorker.terminate()
                 return
@@ -889,20 +891,18 @@ class ExtensionManager {
     }
 
     try {
-      const response = await fetch(url, {
-        method: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(options?.method?.toUpperCase()) ? options.method.toUpperCase() : 'GET',
-        headers: options?.headers || {},
-        body: options?.body
+      // the host makes it where it can: a webview may send a request to a source that has no
+      // CORS headers but is never allowed to read the answer, which reads as an unreachable
+      // source. See modules/extensions/transport.js
+      const response = await requestVia(url, options, {
+        hostRequest: COMMON.request,
+        fetch: (target, init) => fetch(target, {
+          method: normalizeMethod(init?.method),
+          headers: init?.headers || {},
+          body: init?.body
+        }),
+        blocked: (target) => this.isPrivateOrLocal(target)
       })
-
-      if (this.isPrivateOrLocal(response.url)) {
-        worker.postMessage({
-          type: 'RESULT',
-          requestId,
-          error: 'Access denied: request was redirected to a private or local network address.'
-        })
-        return
-      }
 
       const text = await response.text()
       let json
