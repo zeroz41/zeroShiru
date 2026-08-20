@@ -88,3 +88,44 @@ export function describeAvailability (state, title = 'your debrid service') {
       return { label: 'Unchecked', description: `${title} has not been asked about this release. It may still stream.` }
   }
 }
+
+/**
+ * What to tell the user when a check could not be answered, or null when the failure is an answer
+ * about a release rather than a problem with the service.
+ *
+ * Badges going quiet used to be indistinguishable from every release being uncached: the check
+ * failed, the failure went to a debug log nobody reads, and the list simply showed nothing while
+ * a backing-off timer asked again forever. A service that has stopped answering — one of its
+ * endpoints hanging while the rest work is a real and common shape — should say so once.
+ *
+ * @param {{ kind?: string, message?: string }} [error] - A core error, `{ kind, message }`.
+ * @param {string} [title] - The service's display name.
+ * @returns {{ title: string, description: string } | null}
+ */
+export function outageNotice (error, title = 'your debrid service') {
+  switch (error?.kind) {
+    case 'auth':
+      return {
+        title: `${title} rejected the key`,
+        description: `${error.message || 'The API key was not accepted.'}\nCheck it in the debrid settings.`
+      }
+    case 'timeout':
+      return {
+        title: `${title} is not answering`,
+        description: 'Cached badges will be missing until it does. Playback is unaffected for releases it has already answered about.'
+      }
+    case 'network':
+      return {
+        title: `${title} could not be reached`,
+        description: 'Cached badges will be missing until the connection comes back.'
+      }
+    case 'service':
+      return {
+        title: `${title} returned an error`,
+        description: `${error.message || 'The service could not process the request.'}\nCached badges will be missing until it recovers.`
+      }
+    // 'not-cached', 'unavailable' and 'rejected' are answers about a release, not outages
+    default:
+      return null
+  }
+}

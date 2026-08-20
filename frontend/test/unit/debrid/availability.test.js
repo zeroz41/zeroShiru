@@ -11,6 +11,7 @@ import {
   describeAvailability,
   isAvailability,
   normalizeAvailability,
+  outageNotice,
   streamsInstantly
 } from '../../../common/modules/debrid/availability.js'
 
@@ -65,4 +66,41 @@ test('every state has wording that names the service and never says "undefined"'
   }
   // the UI passes the title straight from a store that is null before a service is picked
   assert.doesNotMatch(describeAvailability(Availability.CACHED, undefined).description, /undefined/)
+})
+
+// Why badges go missing. TorBox's /torrents/checkcached began accepting authenticated requests
+// and never answering them (its account listing kept working, so nothing else looked wrong).
+// Every check timed out, the failure went to a debug log, and the results list showed no cached
+// badges at all — indistinguishable from a library where nothing is cached.
+test('a service that stops answering is worth saying out loud', () => {
+  const notice = outageNotice({ kind: 'timeout', message: 'request timed out after 30000ms' }, 'TorBox')
+  assert.ok(notice, 'silence is the one failure the user cannot see for themselves')
+  assert.match(notice.title, /TorBox/)
+  assert.match(notice.title, /not answering/i)
+})
+
+test('a rejected key says so, since that one is the user\'s to fix', () => {
+  const notice = outageNotice({ kind: 'auth', message: 'Invalid API key' }, 'TorBox')
+  assert.match(notice.title, /rejected the key/i)
+  assert.match(notice.description, /Invalid API key/)
+  assert.match(notice.description, /settings/i, 'tell them where to fix it')
+})
+
+test('an unreachable service is distinguished from an unanswering one', () => {
+  assert.match(outageNotice({ kind: 'network' }, 'TorBox').title, /could not be reached/i)
+  assert.match(outageNotice({ kind: 'service', message: 'DATABASE_ERROR' }, 'TorBox').description, /DATABASE_ERROR/)
+})
+
+test('answers about a release are not outages', () => {
+  // these say something true about the release, and the badges already show it
+  for (const kind of ['not-cached', 'unavailable', 'rejected']) {
+    assert.equal(outageNotice({ kind }, 'TorBox'), null, kind)
+  }
+  assert.equal(outageNotice(undefined), null)
+  assert.equal(outageNotice({}), null)
+})
+
+test('the service is named, so the user knows who went quiet', () => {
+  assert.match(outageNotice({ kind: 'timeout' }, 'Real-Debrid').title, /Real-Debrid/)
+  assert.match(outageNotice({ kind: 'timeout' }).title, /your debrid service/)
 })

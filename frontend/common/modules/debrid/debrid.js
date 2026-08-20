@@ -9,7 +9,7 @@ import { writable } from 'simple-store-svelte'
 import { derived } from 'svelte/store'
 import { toast } from 'svelte-sonner'
 import { DEBRID } from '@/modules/bridge.js'
-import { Availability, describeAvailability, normalizeAvailability } from '@/modules/debrid/availability.js'
+import { Availability, describeAvailability, normalizeAvailability, outageNotice } from '@/modules/debrid/availability.js'
 import { routeDebrid, debridKey } from '@/modules/debrid/route.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
@@ -273,9 +273,11 @@ export async function checkDebridAvailability (hashes) {
   try {
     const answered = await DEBRID.checkAvailability(current.id, current.apiKey, hashes)
     busy = answered.busy // a check already owned the service, so this call only read memory back
+    outageReported = false // it is talking again, so a later silence is worth saying out loud
     if (isCurrent(current)) publish(answered)
   } catch (error) {
     debug('Availability check failed:', error)
+    reportOutage(error)
   } finally {
     debridChecking.update(count => count - 1)
   }
@@ -291,6 +293,21 @@ export async function checkDebridAvailability (hashes) {
   else retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY)
   debug(`${left.length} of ${pending.length} releases unanswered, asking again in ${retryDelay}ms`)
   retry = setTimeout(() => checkDebridAvailability(hashes), retryDelay)
+}
+
+/**
+ * Whether the user has already been told the service went quiet. Said once per outage: the check
+ * retries on a backing off timer, and a toast per attempt would be its own kind of broken.
+ */
+let outageReported = false
+
+/** Says once that the service is not answering, so missing badges are not a silent mystery. */
+function reportOutage (error) {
+  if (outageReported) return
+  const notice = outageNotice(error, serviceTitle())
+  if (!notice) return
+  outageReported = true
+  toast.error(notice.title, { description: notice.description, duration: 12_000 })
 }
 
 /** Drops a pending retry, for when the results it described are no longer on screen. */

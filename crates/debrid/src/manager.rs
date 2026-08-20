@@ -74,6 +74,35 @@ impl ManagedProvider {
         self.provider.client()
     }
 
+    /// Turns a magnet into player-ready files, and gives up if the service will not.
+    ///
+    /// Every other budget in `Timeouts` bounds one round trip, but a resolve is a chain of
+    /// them — add the magnet, poll until it settles, then ask for a link per file. A service
+    /// that answers each of those slowly, or accepts the connection and never answers at all,
+    /// can therefore leave somebody watching a black screen for minutes while nothing is
+    /// wrong as far as any single request is concerned. This is the end-to-end bound, so a
+    /// silent service becomes a message rather than a wait with no end.
+    pub async fn resolve(
+        &self,
+        magnet: &str,
+        opts: &crate::ResolveOptions,
+    ) -> Result<crate::DebridResolved, DebridError> {
+        let budget = self.client().config.timeouts.resolve;
+        let platform = self.client().platform().clone();
+        let work = self.provider.resolve(magnet, opts);
+        futures::pin_mut!(work);
+        match futures::future::select(work, Box::pin(platform.sleep(budget))).await {
+            futures::future::Either::Left((result, _)) => result,
+            futures::future::Either::Right(_) => Err(DebridError::Timeout {
+                message: format!(
+                    "{} did not answer with a playable link within {}s",
+                    self.provider.config().title,
+                    budget / 1_000
+                ),
+            }),
+        }
+    }
+
     /// Whether a check that owns the account is running right now. A caller that
     /// finds one running knows its own answers were only read from memory.
     pub fn sweeping(&self) -> bool {
@@ -295,6 +324,20 @@ mod tests {
         "cccccccccccccccccccccccccccccccccccccccc",
     ];
 
+    /// A service that accepts the connection and never answers — which is not the same as
+    /// one that is down, and is the shape that leaves a player waiting on nothing.
+    struct Silent;
+
+    #[async_trait::async_trait]
+    impl HttpTransport for Silent {
+        async fn execute(
+            &self,
+            _request: shiru_networking::HttpRequest,
+        ) -> Result<shiru_networking::HttpResponse, shiru_networking::TransportError> {
+            futures::future::pending().await
+        }
+    }
+
     fn torbox_with(routes: Vec<Route>) -> ManagedProvider {
         let transport = Arc::new(MockTransport::new(routes));
         let platform = Arc::new(ManualClock::new());
@@ -478,5 +521,35 @@ mod tests {
         let asked: Vec<String> = HASHES.iter().map(|h| h.to_string()).collect();
         let result = managed.check_availability(&asked, |_, _| {}).await;
         assert!(matches!(result, Err(DebridError::Auth { .. })));
+    }
+
+    #[tokio::test]
+    async fn a_service_that_never_answers_ends_as_a_message_rather_than_a_wait() {
+        // the black screen this was written for: play a release, the service accepts every
+        // request and answers none, and nothing anywhere says so
+        let managed = ManagedProvider::new(
+            create_provider("torbox", "key".into(), Arc::new(Silent), Arc::new(ManualClock::new())).unwrap(),
+        );
+        let error = managed
+            .resolve("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", &Default::default())
+            .await
+            .expect_err("a service that says nothing cannot have resolved anything");
+        assert!(matches!(error, DebridError::Timeout { .. }), "got {error:?}");
+        let message = error.to_string();
+        assert!(message.contains("TorBox"), "the message names who went quiet: {message}");
+        assert!(message.contains("60s"), "and how long it was given: {message}");
+    }
+
+    #[tokio::test]
+    async fn a_service_that_answers_is_left_alone() {
+        let managed = torbox_with(vec![
+            Route::json("torrents/mylist", 200, r#"{"success":true,"data":[]}"#),
+            Route::json("torrents/createtorrent", 200, r#"{"success":false,"error":"DATABASE_ERROR"}"#),
+        ]);
+        let error = managed
+            .resolve("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", &Default::default())
+            .await
+            .expect_err("the script refuses the add");
+        assert!(!matches!(error, DebridError::Timeout { .. }), "the service answered, so this is its answer: {error:?}");
     }
 }

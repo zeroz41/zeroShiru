@@ -23,6 +23,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 const API: &str = "https://api.torbox.app/v1/api";
+
+/// How long the account endpoint is given before the listing is asked instead. Short, because
+/// failing it costs nothing: `validate` falls through to a request that answers the same
+/// question, so the budget for the whole operation stays as generous as any other.
+const ACCOUNT_TIMEOUT_MS: u64 = 10_000;
 /// The whole account in one request; the API pages at 1000.
 const LIST_LIMIT: u64 = 1_000;
 /// 1 auto, 2 always, 3 never. Shiru only streams, so never seed.
@@ -431,7 +436,21 @@ impl DebridProvider for TorBox {
     }
 
     async fn validate(&self) -> Result<AccountInfo, DebridError> {
-        let user = self.request(&format!("{API}/user/me?settings=false"), RequestOpts::default()).await?;
+        let opts = RequestOpts { timeout_ms: Some(ACCOUNT_TIMEOUT_MS), ..RequestOpts::default() };
+        let user = match self.request(&format!("{API}/user/me?settings=false"), opts).await {
+            Ok(user) => user,
+            // TorBox has had `/user/me` accept authenticated requests and never answer them while
+            // the rest of the API kept working. The question being asked is only "does this key
+            // work", and a listing that comes back answers it: the key is good and the account is
+            // reachable, we just cannot name the plan it is on. Refusing to configure a working
+            // key because one endpoint is unwell helps nobody — but a key the service actively
+            // refuses is still refused, which is the arm below.
+            Err(error @ (DebridError::Timeout { .. } | DebridError::Service { .. })) => {
+                self.account_torrents(None, false).await.map_err(|_| error)?;
+                return Ok(AccountInfo { username: "TorBox user".into(), expires: None });
+            }
+            Err(error) => return Err(error),
+        };
         if user.is_null() {
             return Err(DebridError::Auth {
                 message: "TorBox did not recognise this API key".into(),
@@ -702,6 +721,28 @@ mod tests {
         let error = TorBoxDialect.map_error(500, Some(&json));
         assert!(matches!(error, DebridError::Service { .. }));
         assert!(error.to_string().contains("disk fell over"));
+    }
+
+    #[tokio::test]
+    async fn a_key_still_validates_when_only_the_account_endpoint_is_unwell() {
+        // TorBox, live on 2026-08-19: `/user/me` accepted authenticated requests and never
+        // answered them, while `/torrents/mylist` kept working. The key was fine; the app just
+        // could not be told so, and the settings screen refused to accept it.
+        let (torbox, _) = service(vec![
+            Route::timeout("/user/me", 30_000),
+            Route::json("/torrents/mylist", 200, &ok(json!([]))),
+        ]);
+        let account = torbox.validate().await.expect("a listing that answers proves the key works");
+        assert_eq!(account.username, "TorBox user", "the plan cannot be named, but the key is good");
+    }
+
+    #[tokio::test]
+    async fn a_key_the_service_refuses_is_still_refused() {
+        let (torbox, _) = service(vec![
+            Route::timeout("/user/me", 30_000),
+            Route::offline("/torrents/mylist"),
+        ]);
+        assert!(torbox.validate().await.is_err(), "nothing answered, so nothing was proven");
     }
 
     #[tokio::test]

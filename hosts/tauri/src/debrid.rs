@@ -227,7 +227,7 @@ pub async fn debrid_resolve(
         }),
         max_files: None,
     };
-    let resolved = managed.provider().resolve(&magnet, &opts).await.map_err(failure)?;
+    let resolved = managed.resolve(&magnet, &opts).await.map_err(failure)?;
     // the account just gained a torrent, so the cached listing no longer describes it
     managed.forget_listing();
     // playing it proves the service holds it, which is the best answer there is

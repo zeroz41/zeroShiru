@@ -62,11 +62,18 @@ pub struct Timeouts {
     pub poll: u64,
     /// Tighter than `select`: a probe that drags on spends requests playback needs.
     pub probe: u64,
+    /// The whole of one resolve, end to end. Every other budget here bounds a single
+    /// round trip, and a resolve is many of them — add the magnet, poll until it settles,
+    /// then a link request per file. A service answering slowly, or not at all, could
+    /// therefore keep somebody staring at a black screen for minutes with nothing said.
+    /// Generous, because a slow service is still worth waiting for; finite, because a
+    /// silent one is not.
+    pub resolve: u64,
 }
 
 impl Default for Timeouts {
     fn default() -> Self {
-        Timeouts { request: 30_000, select: 12_000, ready: 5_000, poll: 1_000, probe: 10_000 }
+        Timeouts { request: 30_000, select: 12_000, ready: 5_000, poll: 1_000, probe: 10_000, resolve: 60_000 }
     }
 }
 
