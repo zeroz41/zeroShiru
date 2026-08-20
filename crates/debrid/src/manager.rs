@@ -88,7 +88,7 @@ impl ManagedProvider {
         opts: &crate::ResolveOptions,
     ) -> Result<crate::DebridResolved, DebridError> {
         let budget = self.client().config.timeouts.resolve;
-        let platform = self.client().platform().clone();
+        let platform = self.client().platform();
         let work = self.provider.resolve(magnet, opts);
         futures::pin_mut!(work);
         match futures::future::select(work, Box::pin(platform.sleep(budget))).await {
