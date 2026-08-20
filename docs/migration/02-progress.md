@@ -126,6 +126,13 @@ Nothing was wrong on our side, but the app handled it terribly, so three things 
   short budget and falls through to the listing, which answers the same question. A key the service
   actively refuses is still refused.
 
+- **A close the renderer cannot answer still closes the window.** Every close was prevented and
+  handed to the frontend's quit/minimize modal, with nothing behind it: a renderer that was busy,
+  black or simply had no handler registered left a window that could not be closed at all. The
+  renderer now acknowledges the close it takes (`exit_intent_ack`, called after its callback so a
+  handler that throws leaves the fallback armed), it gets as long as it likes to ask the user, and
+  an unacknowledged close goes through after 4 seconds. Asking twice exits immediately.
+
 ## Known behavior changes (deliberate, from the clean rewrite)
 
 - Session state lives in Rust (`shiru-session.json` next to the download dir);
