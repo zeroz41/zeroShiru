@@ -129,13 +129,18 @@ pub fn run() {
             // run after ALL of Tauri's own bootstrap (window.__TAURI__ included), and
             // config windows offer no way to attach one. Keep the settings in sync
             // with the frontend's expectations, not with a config block.
-            tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("app.html".into()))
-                .title("zeroShiru")
-                .inner_size(1280.0, 800.0)
-                .min_inner_size(320.0, 390.0)
-                .background_color(tauri::window::Color(0x17, 0x19, 0x1c, 0xff))
-                .initialization_script(bridge_script())
-                .build()?;
+            let window =
+                tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("app.html".into()))
+                    .title("zeroShiru")
+                    .inner_size(1280.0, 800.0)
+                    .min_inner_size(320.0, 390.0)
+                    .background_color(tauri::window::Color(0x17, 0x19, 0x1c, 0xff))
+                    .initialization_script(bridge_script())
+                    .build()?;
+            #[cfg(target_os = "linux")]
+            window::use_native_decorations(&window);
+            #[cfg(not(target_os = "linux"))]
+            let _ = window;
 
             #[cfg(desktop)]
             {

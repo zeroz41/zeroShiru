@@ -4848,6 +4848,7 @@ name = "shiru-tauri"
 version = "6.8.0"
 dependencies = [
  "discord-rich-presence",
+ "gtk",
  "libc",
  "open",
  "reqwest 0.12.28",

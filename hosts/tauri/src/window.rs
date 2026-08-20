@@ -117,6 +117,40 @@ pub fn notify(app: tauri::AppHandle, title: String, body: Option<String>) {
     let _ = builder.show();
 }
 
+/// Hands the titlebar back to the compositor where the compositor will draw one.
+///
+/// On Wayland, tao installs a GTK HeaderBar of its own on every window it creates. A
+/// window holding a titlebar widget has declared itself client-side decorated, so the
+/// compositor never offers its native titlebar — on KDE that is a grey GTK bar where
+/// Breeze should be. GDK knows whether the compositor prefers to decorate (KWin says
+/// so through `org_kde_kwin_server_decoration_manager`); when it does, take tao's
+/// widget back out and announce server-side decorations for the already-realized
+/// window. Where the compositor will not decorate (GNOME has no such protocol), tao's
+/// bar is the only titlebar the window will ever have, so it stays. X11 windows never
+/// had the widget and the window manager always decorates: nothing to do.
+#[cfg(target_os = "linux")]
+pub fn use_native_decorations(window: &tauri::WebviewWindow) {
+    use gtk::glib::translate::ToGlibPtr;
+    use gtk::prelude::*;
+    extern "C" {
+        fn gdk_wayland_display_prefers_ssd(display: *mut gtk::gdk::ffi::GdkDisplay) -> gtk::glib::ffi::gboolean;
+        fn gdk_wayland_window_announce_ssd(window: *mut gtk::gdk::ffi::GdkWindow);
+    }
+    let Ok(gtk_window) = window.gtk_window() else { return };
+    let display = gtk_window.display();
+    if display.backend().is_wayland() {
+        let prefers_ssd = unsafe { gdk_wayland_display_prefers_ssd(display.to_glib_none().0) } != 0;
+        if prefers_ssd {
+            gtk_window.set_titlebar(None::<&gtk::Widget>);
+            // tao realized the window while its HeaderBar was in place, and that is
+            // when GTK announced client-side mode — announce the truth over it
+            if let Some(gdk_window) = gtk_window.window() {
+                unsafe { gdk_wayland_window_announce_ssd(gdk_window.to_glib_none().0) };
+            }
+        }
+    }
+}
+
 /// How long the renderer gets to answer a close before the window closes anyway.
 const EXIT_INTENT_GRACE_MS: u64 = 4_000;
 
