@@ -39,7 +39,10 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     outDir: join(here, '../../dist/web'),
-    emptyOutDir: false,
+    // vite refuses to clean an outDir outside the project root unless told to, and left
+    // alone this one kept every chunk of every build ever made: 699 files and 293MB, all
+    // but a handful of them unreachable, every one of them shipped inside the installers
+    emptyOutDir: true,
     target: 'chrome128',
     sourcemap: true,
     rollupOptions: {
