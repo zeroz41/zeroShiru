@@ -68,6 +68,15 @@ below that needs a person at a desktop.
      and treats a timeout as no answer rather than an outage.
    - an offline start rendered the home banner with no media at all, throwing on every
      field it read. The list preparation moved to `common/modules/banner.js`.
+   - extensions could not read most of the sites they scrape. Electron ran with web security
+     off; a real webview enforces CORS, and a source like nyaa.si sends no CORS headers, so the
+     request went out and the answer was withheld — which reads as "the source is unreachable".
+     The host now makes those requests itself (`net::http_request` behind `COMMON.request`,
+     `modules/extensions/transport.js` choosing the path). A native client has no same-origin
+     rules to enforce, so `crates/networking/src/guard.rs` stands in their place: public http(s)
+     only, every redirect hop judged like the first, loopback / private / link-local refused.
+     Verified in the window: nyaa.si RSS returns 71KB where the webview reads nothing, while
+     loopback, the router and the cloud metadata address are refused.
    - nothing below the fold started loading until it was reached: the observers watched
      the viewport while the pages scroll inside a div, so everything past that div's edge
      was clipped before `rootMargin` applied. `common/modules/preload.js` roots them at
