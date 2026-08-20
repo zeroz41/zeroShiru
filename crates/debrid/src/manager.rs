@@ -233,17 +233,27 @@ impl ManagedProvider {
         answer: &mut impl FnMut(&str, Availability),
     ) -> Result<(), DebridError> {
         let max_batch = self.provider.config().max_batch;
-        for chunk in hashes.chunks(max_batch) {
+        // The chunks are independent reads of the same account, so they are asked for
+        // together rather than one after another. How many actually travel at once is
+        // the client limiter's decision, not this loop's — it was the waiting between
+        // chunks that made a long results list badge itself in visible waves.
+        let answer = &Mutex::new(answer);
+        let asked = futures::future::join_all(hashes.chunks(max_batch).map(|chunk| async move {
             let states = self.provider.check_availability_batch(chunk).await?;
             for hash in chunk {
                 let state = states.get(hash).copied().unwrap_or(Availability::Unknown);
                 self.client().remember(hash, state);
                 if state != Availability::Unknown {
-                    answer(hash, state);
+                    (answer.lock().unwrap())(hash, state);
                 }
             }
-        }
-        Ok(())
+            Ok(())
+        }))
+        .await;
+        // a chunk that failed leaves its own hashes unknown, which is exactly the
+        // re-askable state they should be in; the failure is still reported so the UI
+        // schedules its retry, and the chunks that did answer keep their answers
+        asked.into_iter().collect::<Result<Vec<()>, DebridError>>().map(|_| ())
     }
 
     /// Probes hashes a few at a time, stopping early once the service is in no state
@@ -413,6 +423,69 @@ mod tests {
         let answers = managed.check_availability(&asked, |_, _| {}).await.unwrap();
         assert_eq!(answers.len(), 80);
         assert!(answers.values().all(|state| *state == Availability::Available));
+    }
+
+    /// Answers a cache check only once every chunk of the sweep has arrived together.
+    /// Code that waits for one chunk before sending the next never gets that far and
+    /// hangs, which the timeout below turns into a failure.
+    struct ChunksMustOverlap {
+        arrived: tokio::sync::Barrier,
+    }
+
+    #[async_trait::async_trait]
+    impl HttpTransport for ChunksMustOverlap {
+        async fn execute(
+            &self,
+            _request: shiru_networking::HttpRequest,
+        ) -> Result<shiru_networking::HttpResponse, shiru_networking::TransportError> {
+            self.arrived.wait().await;
+            Ok(shiru_networking::HttpResponse {
+                status: 200,
+                headers: HashMap::new(),
+                body: br#"{"success":true,"data":[]}"#.to_vec(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_long_results_list_asks_about_its_hashes_together_rather_than_a_chunk_at_a_time() {
+        // waiting out a round trip between chunks is what made a big list badge itself in
+        // visible waves; the client's limiter is what decides how many actually travel
+        let asked: Vec<String> = (0..200).map(|n| format!("{n:040x}")).collect();
+        let transport = Arc::new(ChunksMustOverlap {
+            // 200 hashes at TorBox's max_batch of 75 is three requests, which is also
+            // exactly what its limiter lets overlap
+            arrived: tokio::sync::Barrier::new(3),
+        });
+        let managed = ManagedProvider::new(
+            create_provider("torbox", "key".into(), transport, Arc::new(ManualClock::new())).unwrap(),
+        );
+        let answers = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            managed.check_availability(&asked, |_, _| {}),
+        )
+        .await
+        .expect("the chunks never overlapped, so the sweep is still waiting on the first one")
+        .unwrap();
+        assert_eq!(answers.len(), 200, "and every hash is still answered");
+    }
+
+    #[tokio::test]
+    async fn a_chunk_that_fails_does_not_take_the_chunks_that_answered_with_it() {
+        // 80 hashes at a max_batch of 75 is two chunks. The link drops for the chunk
+        // holding the eightieth hash, and answers the one holding the first seventy five
+        let managed = torbox_with(vec![
+            Route::offline("000000000000000000000000000000000000004f"),
+            Route::json("checkcached", 200, r#"{"success":true,"data":[]}"#),
+        ]);
+        let asked: Vec<String> = (0..80).map(|n| format!("{n:040x}")).collect();
+        let failed = managed.check_availability(&asked, |_, _| {}).await;
+        assert!(failed.is_err(), "the caller is told to come back, since not everything was asked");
+        assert_eq!(
+            managed.unknown_hashes(&asked).len(),
+            5,
+            "but the chunk that did answer is remembered rather than thrown away with the one that did not"
+        );
     }
 
     #[tokio::test]

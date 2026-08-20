@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use shiru_core::{pick_pack, EpisodeNotInPack};
 use shiru_debrid::manager::{create_provider, ManagedProvider, PROVIDER_IDS};
 use shiru_debrid::platform::NativePlatform;
-use shiru_debrid::{DebridError, ResolveOptions};
+use shiru_debrid::{AvailabilityCheck, DebridError, ResolveOptions};
 use shiru_domain::{to_player_file, Availability, PlayerFile};
 use shiru_networking::NativeTransport;
 use std::collections::HashMap;
@@ -182,9 +182,22 @@ pub async fn debrid_list_availability(
     Ok(AvailabilityReply { answers, names: managed.client().release_names(), busy: false })
 }
 
-/// Asks the service about the given releases, cheapest way it supports. Answers
-/// are also pushed one at a time on `shiru://debrid` so a slow probing sweep
-/// badges the list as it goes.
+/// Asks the service about the given releases, cheapest way it supports.
+///
+/// A probing sweep is minutes long — it spends several requests per release — so its
+/// answers are pushed one at a time on `shiru://debrid` and the list badges itself as
+/// it goes. A batch service answers seventy five releases in one request and hands the
+/// whole map back from this command, so pushing those one by one is the same answer
+/// twice: once as an event the page has to render, and again as the return value. That
+/// was the results list re-deriving itself a hundred times over for nothing.
+/// Whether this service's answers are worth pushing one at a time as they land. A probing
+/// sweep spends several requests per release and takes minutes, so the list badges itself as
+/// it goes; a batch service answers seventy five at once and hands the whole map back from
+/// the command, where pushing each one separately is the same answer twice.
+fn pushes_as_it_goes(config: &shiru_debrid::ProviderConfig) -> bool {
+    config.availability_check == AvailabilityCheck::Probe
+}
+
 #[tauri::command]
 pub async fn debrid_check_availability(
     app: tauri::AppHandle,
@@ -196,12 +209,15 @@ pub async fn debrid_check_availability(
     let Hashes(hashes) = hashes;
     let managed = state.managed(&service, &api_key)?;
     let busy = managed.sweeping();
+    let pushes_as_it_goes = pushes_as_it_goes(managed.provider().config());
     let answers = managed
         .check_availability(&hashes, |hash, state| {
-            let _ = app.emit(
-                DEBRID_EVENT,
-                serde_json::json!({ "type": "availability", "data": { "hash": hash, "state": state } }),
-            );
+            if pushes_as_it_goes {
+                let _ = app.emit(
+                    DEBRID_EVENT,
+                    serde_json::json!({ "type": "availability", "data": { "hash": hash, "state": state } }),
+                );
+            }
         })
         .await
         .inspect_err(|error| tracing::warn!(target: "debrid", %service, asked = hashes.len(), %error, "availability check failed"))
@@ -300,6 +316,18 @@ pub struct ResolvedReply {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_probing_service_badges_the_list_as_it_goes() {
+        // a batch answer arrives whole and is returned by the command itself; pushing each
+        // hash separately made the results list re-derive itself once per release
+        let transport = std::sync::Arc::new(shiru_networking::NativeTransport::new());
+        let platform = std::sync::Arc::new(shiru_debrid::platform::NativePlatform);
+        for (service, streams) in [("torbox", false), ("premiumize", false), ("alldebrid", false), ("realdebrid", true)] {
+            let provider = create_provider(service, "key".into(), transport.clone(), platform.clone()).unwrap();
+            assert_eq!(pushes_as_it_goes(provider.config()), streams, "{service}");
+        }
+    }
 
     #[test]
     fn the_catalog_offers_every_provider_in_menu_order() {

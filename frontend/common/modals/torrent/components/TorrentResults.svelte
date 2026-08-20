@@ -241,9 +241,26 @@
   let batch = search.media.status === 'FINISHED' && (!settings.value.preferDubs || dubFinished()) && (!movie || getMediaMaxEp(search.media) > 1)
 
   const results = writable({})
+  /**
+   * Whether what is on screen belongs to a search that has been superseded. Changing the
+   * quality asks the sources a different question, so the answers really do have to be
+   * replaced — but blanking the list at the moment the question changes left the user
+   * looking at fifteen skeletons for as long as the sources took, throwing away results
+   * that were still perfectly good to look at in the meantime. The old list stays until
+   * the first of the new answers arrives to take its place.
+   */
+  let supersede = false
+
+  /** The list this write extends: the visible one, or a clean slate when it superseded it. */
+  function existing(result) {
+    if (!supersede) return result?.torrents ?? []
+    supersede = false
+    return []
+  }
+
   function addResults(newItems, source) {
     if (!newItems?.length) return ''
-    results.update(r => ({ ...r, torrents: [...(r?.torrents ?? []), ...newItems.map(item => ({ ...item, source }))] }))
+    results.update(r => ({ ...r, torrents: [...existing(r), ...newItems.map(item => ({ ...item, source }))] }))
     return ''
   }
 
@@ -288,13 +305,15 @@
         source: { managed: true, name: `Local (${torrent.staging ? 'Staging' : torrent.seeding ? 'Seeding' : torrent.current ? 'Now Playing' : 'Completed'})` }
       })
     }
-    if (cachedTorrents.length) results.update(result => ({ ...result, torrents: [...(result?.torrents ?? []), ...cachedTorrents] }))
+    if (cachedTorrents.length) results.update(result => ({ ...result, torrents: [...existing(result), ...cachedTorrents] }))
   }
 
   async function queryExtensions(request, resolution) {
     scrollTop()
     if ($debridEnabled) refreshDebridAvailability()
-    $results = {}
+    askedHashes = null // a different question, so its answers are worth asking about again
+    supersede = true
+    results.update(r => ({ ...r, resolved: false }))
     const cachedHashes = []
     for (const resolvedHash of getHash(search?.media?.id, { episode: search?.episode, client: true, batchGuess: true }, false, true, true) ?? []) {
       if (resolvedHash) {
@@ -429,7 +448,19 @@
   // search asks the service six overlapping questions inside a second, which is how an
   // account gets rate limited
   const askAboutResults = debounce(hashes => checkDebridAvailability(hashes), 250)
-  $: if ($debridEnabled && ($results?.resolved || sortedResults.length)) askAboutResults(sortedResults.map(result => result.hash))
+  /** The releases the service was last asked about, as a set: re-sorting is not a new question. */
+  let askedHashes = null
+  $: if ($debridEnabled && ($results?.resolved || sortedResults.length)) {
+    const hashes = sortedResults.map(result => result.hash)
+    // a service that answers by adding magnets bites from the front of the list, so for
+    // those the order genuinely is the question; everything else answers the whole set
+    const orderMatters = Boolean($debridTransport?.checksAddMagnets)
+    const key = orderMatters ? hashes.join() : [...hashes].sort().join()
+    if (key !== askedHashes) {
+      askedHashes = key
+      askAboutResults(hashes)
+    }
+  }
   $: queryResults = listResults(sortedResults, $debridEnabled ? $debridAvailability : undefined, debridFilters)
   // every state and its count, for the tooltip on the cached filter
   $: availabilitySummary = AVAILABILITY_ORDER.map(state => `${queryResults?.counts?.[state] ?? 0} ${describeAvailability(state, $debridTransport?.title).label}`).join(' · ')

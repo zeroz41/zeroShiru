@@ -375,6 +375,9 @@ function recordAvailability (magnetOrHash, state) {
 /** @type {Map<string, string> | null} Answers waiting to reach the store. */
 let queued = null
 
+/** How long answers are collected for before one write reaches the UI. */
+export const QUEUE_WINDOW = 50
+
 /**
  * Collects answers arriving together into one store write, so a batch answer does not re-render
  * the list once per hash. A probing service answers slowly enough that each still lands alone.
@@ -384,11 +387,13 @@ let queued = null
 function queueAvailability (hash, state) {
   if (!queued) {
     queued = new Map()
-    queueMicrotask(() => {
+    // a task, not a microtask: each answer crosses from the host as its own event, so a
+    // microtask drains between every one of them and coalesces nothing at all
+    setTimeout(() => {
       const answers = queued
       queued = null
       publishAvailability(answers)
-    })
+    }, QUEUE_WINDOW)
   }
   queued.set(hash, state)
 }

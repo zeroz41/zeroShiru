@@ -16,7 +16,7 @@ import { toast } from 'svelte-sonner'
 import {
   streamDebrid, resolveDebridFiles, checkDebridAvailability, cancelDebridAvailability,
   refreshDebridAvailability, testDebrid, debridAvailability, debridReleaseNames,
-  debridEnabled, debridTransport, debridOptions
+  debridEnabled, debridTransport, debridOptions, QUEUE_WINDOW
 } from '@/modules/debrid/debrid.js'
 import { Availability } from '@/modules/debrid/availability.js'
 import { get } from 'svelte/store'
@@ -161,21 +161,38 @@ test('answers and release names from the core reach the stores', async () => {
   cancelDebridAvailability()
 })
 
+/** The queue window the store writes are collected into, plus room to fire. */
+const settled = () => new Promise(resolve => setTimeout(resolve, QUEUE_WINDOW + 20))
+
 test('answers pushed while a check is still running badge the list as they land', async () => {
   assert.ok(DEBRID.publishAvailability, 'the module subscribes to the push channel at import')
   DEBRID.publishAvailability(HASH, 'cached')
-  await Promise.resolve() // the store write is queued into one microtask
-  await Promise.resolve()
+  await settled()
   assert.equal(debridAvailability.value.get(HASH), Availability.CACHED)
+})
+
+test('answers that arrive as separate events still reach the list as one write', async () => {
+  // each answer crosses from the host as its own event, so collecting them in a microtask
+  // coalesced nothing: a sweep of a long list re-rendered the results once per hash
+  const hashes = ['a', 'b', 'c'].map(letter => letter.repeat(40))
+  let writes = 0
+  const stop = debridAvailability.subscribe(() => { writes++ })
+  writes = 0 // the subscription itself fires once
+  for (const hash of hashes) {
+    DEBRID.publishAvailability(hash, 'cached')
+    await new Promise(resolve => setTimeout(resolve, 0)) // a task apiece, as the host delivers them
+  }
+  await settled()
+  stop()
+  assert.equal(writes, 1, `three answers must cost one render, took ${writes}`)
+  for (const hash of hashes) assert.equal(debridAvailability.value.get(hash), Availability.CACHED)
 })
 
 test('an unknown state clears a badge rather than painting a wrong one', async () => {
   DEBRID.publishAvailability(HASH, 'cached')
-  await Promise.resolve()
-  await Promise.resolve()
+  await settled()
   DEBRID.publishAvailability(HASH, 'nonsense from a future service')
-  await Promise.resolve()
-  await Promise.resolve()
+  await settled()
   assert.equal(debridAvailability.value.has(HASH), false)
 })
 

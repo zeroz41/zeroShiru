@@ -42,11 +42,12 @@
   import { loadedTorrent, completedTorrents, seedingTorrents, stagingTorrents } from '@/modules/torrent.js'
   import { since, monthDay, matchPhrase, capitalize } from '@/modules/util.js'
   import { click } from '@/modules/lib/click.js'
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount, onDestroy, tick } from 'svelte'
   import { episodeByAirDate } from '@/modules/extensions/handler.js'
   import { liveAnimeProgress } from '@/modules/anime/animeprogress.js'
   import { getHash } from '@/modules/anime/animehash.js'
   import { episodesList } from '@/modules/episodes.js'
+  import { firstPaintAt } from '@/modules/lib/progressive.js'
   import { getAniMappings, hasZeroEpisode, durationMap } from '@/modules/anime/anime.js'
   import EpisodeListSk from '@/components/skeletons/EpisodeListSk.svelte'
   import TorrentButton from '@/components/TorrentButton.svelte'
@@ -110,6 +111,11 @@
       return episodeData
     }
 
+    // independent of everything below and network-bound, so it runs alongside the
+    // episode data rather than after it; awaited where its answer is first needed
+    const zeroEpisodeAsked = hasZeroEpisode(media, mappings)
+    zeroEpisodeAsked.catch(() => {}) // awaited below; this only stops an unhandled rejection while it races
+
     /** @type {{ zeroEpisode: object; airingAt: number; episode: number; filler?: boolean; dubAiring?: object; }[]} */
     let result = Array.from({ length: (newEpisodeCount > episodeCount ? newEpisodeCount : episodeCount) }, (_, i) => ({
       episode: i + 1, image: null, summary: null, rating: null, title: null, length: null, airdate: null, airingAt: null, filler: episodesList.getSingleEpisode(idMal, (i + 1)), dubAiring: dubbedEpisode(i, media)
@@ -154,10 +160,14 @@
     let lastValidAirDate = null
     let lastDuration = durationMap[media?.format]
     let zeroAsFirstEpisode
-    const zeroEpisode = await hasZeroEpisode(media, mappings)
+    const zeroEpisode = await zeroEpisodeAsked
     if (cancelled()) return null
     if (zeroEpisode) alEpisodes.unshift({ episode: 0, title: zeroEpisode[0].title, airingAt: media.airingSchedule?.nodes?.find(node => node.episode === 1)?.airingAt || zeroEpisode[0].airingAt, filler: episodesList.getSingleEpisode(idMal, 0), dubAiring: dubbedEpisode(0, media)})
-    for (const { episode, title: oldTitle, airingAt, filler, dubAiring } of alEpisodes?.length ? alEpisodes : [{ episode: 1, title: null, airingAt: null, filler: null, dubAiring: null }]) {
+    const rows = alEpisodes?.length ? alEpisodes : [{ episode: 1, title: null, airingAt: null, filler: null, dubAiring: null }]
+    const paintAt = firstPaintAt(rows.length, maxEpisodes)
+    let built = 0
+    let painted = false
+    for (const { episode, title: oldTitle, airingAt, filler, dubAiring } of rows) {
       if (cancelled()) return null
       const airingPromise = await airingAt
       const alDate = airingPromise && new Date(typeof airingPromise === 'number' ? (airingPromise || 0) * 1000 : (airingPromise || 0))
@@ -208,7 +218,18 @@
 
       const episodeNumber = episode - (zeroAsFirstEpisode ? 1 : 0)
       const foundTitle = (media?.status === 'FINISHED' || (validatedAiringAt && new Date(validatedAiringAt).getTime() <= (Date.now() + 7 * 24 * 60 * 60 * 1000))) ? title || newTitle?.jp || oldTitle?.jp : null
+      built++
       result[episodeNumber - (!zeroEpisode ? 1 : 0)] = { zeroEpisode, episode: episodeNumber, image: (media?.status === 'FINISHED' || (validatedAiringAt && new Date(validatedAiringAt).getTime() <= (Date.now() + 7 * 24 * 60 * 60 * 1000))) ? episode === 0 ? zeroEpisode[0]?.thumbnail : result.some((ep) => ep.image === (image || streamingThumbnail) && ep.episode !== episodeNumber) ? null : (image || streamingThumbnail) : null, summary: (media?.status === 'FINISHED' || (validatedAiringAt && new Date(validatedAiringAt).getTime() <= Date.now()) || ((episode === 0 || episode === 1) && !validatedAiringAt && media?.status === 'RELEASING')) ? episode === 0 ? (zeroSummary || summary || overview) : result.some((ep) => ep.summary === (summary || overview) && ep.episode !== episodeNumber) ? null : (summary || overview) : `This episode ${validatedAiringAt || (media?.status === 'NOT_YET_RELEASED' && (media?.startDate?.month || media?.season || media?.seasonYear)) ? `will be released ${validatedAiringAt || media?.startDate?.month ? `${validatedAiringAt ? `on` : `in`} ${monthDay(validatedAiringAt || new Date(media.startDate.year, media.startDate.month, media.startDate.day), !validatedAiringAt)}` : `in ${media?.season ? capitalize(media?.season?.toLowerCase()) : ''} ${media?.seasonYear || ''}`}.` : ` is in production and does not have an estimated release date.`}`, rating, title: foundTitle && media?.episodes === 1 && (foundTitle.match(/ web|web |movie/i) || foundTitle.toLowerCase() === 'web') ? 'The Movie' : foundTitle, length: media?.status === 'FINISHED' || validatedAiringAt ? lastDuration : null, airdate: validatedAiringAt, airingAt: validatedAiringAt, filler, dubAiring: !zeroEpisode ? _dubAiring : dubbedEpisode(episodeNumber - 1, media) }
+      // every row that fits on screen is ready, so show them and let the rest fill in
+      // behind. The loop stays ordered — each air date is validated against the last —
+      // this only stops the user waiting on rows they cannot see yet
+      if (!painted && built >= paintAt) {
+        painted = true
+        episodeList = result
+        currentEpisodes = result.slice(0, maxEpisodes)
+        await tick()
+        if (cancelled()) return null
+      }
     }
 
     if (cancelled()) return null
@@ -278,21 +299,12 @@
 </script>
 
 <div bind:this={container} class='episode-list overflow-y-auto overflow-x-hidden {$$restProps.class}' on:scroll={handleScroll}>
-  {#await (episodeLoad || mobileWait(() => episodeList?.length > 0 || !episodeList)?.then(() => episodeList))}
-    {#each Array.from({ length: media?.status !== 'NOT_YET_RELEASED' ? Math.max(Math.min(episodeCount || 0, maxEpisodes), 1) : 1 }) as _}
-      <div class='w-full px-20 my-20 content-visibility-auto scale h-150' class:h-165={SUPPORTS.isAndroid}>
-        <EpisodeListSk />
-      </div>
-    {/each}
-  {:then _}
-    {#if episodeList}
+  {#if currentEpisodes?.length}
       {#each currentEpisodes as { zeroEpisode, episode, image, summary, rating, title, length, airdate, filler, dubAiring}, index}
         {#await Promise.all([title, filler, dubAiring, currentEpisodes[episodeOrder ? index - 1 : index + 1]?.dubAiring])}
-          {#each Array.from({length: Math.min(episodeCount || 0, maxEpisodes)}) as _, index}
-            <div class='w-full px-20 content-visibility-auto scale h-150' class:h-165={SUPPORTS.isAndroid} class:my-20={!mobileList || index !== 0}>
-              <EpisodeListSk/>
-            </div>
-          {/each}
+          <div class='w-full px-20 content-visibility-auto scale h-150' class:h-165={SUPPORTS.isAndroid} class:my-20={!mobileList || index !== 0}>
+            <EpisodeListSk/>
+          </div>
         {:then [title, filler, dubAiring, nextDubAiring]}
           {#if media?.status === 'FINISHED' || (episodeOrder ? (index === 0 || ((currentEpisodes[index - 1]?.airdate && (new Date(currentEpisodes[index - 1].airdate).getTime() <= new Date().getTime())) || (media?.status !== 'NOT_YET_RELEASED' && airdate && currentEpisodes[index - 1]?.airdate && (currentEpisodes[index - 1]?.airdate === airdate)) || (nextDubAiring?.airdate && new Date(nextDubAiring.airdate).getTime() === new Date(dubAiring.airdate).getTime()))) : (index === currentEpisodes.length - 1 || (currentEpisodes[index + 1]?.airdate && (new Date(currentEpisodes[index + 1]?.airdate).getTime() <= new Date().getTime())) || (currentEpisodes[index + 1]?.airdate && currentEpisodes[index + 1]?.airdate === airdate) || (nextDubAiring?.airdate && new Date(nextDubAiring.airdate).getTime() === new Date(dubAiring.airdate).getTime())))}
             {@const unreleased = media?.status !== 'FINISHED' && ((airdate && new Date(airdate).getTime() > new Date()) || (!airdate && (episode > 1 || media?.status === 'NOT_YET_RELEASED')))}
@@ -409,8 +421,15 @@
           {/if}
         {/await}
       {/each}
-    {/if}
-  {/await}
+  {:else}
+    {#await (episodeLoad || mobileWait(() => episodeList?.length > 0 || !episodeList)?.then(() => episodeList))}
+      {#each Array.from({ length: media?.status !== 'NOT_YET_RELEASED' ? Math.max(Math.min(episodeCount || 0, maxEpisodes), 1) : 1 }) as _}
+        <div class='w-full px-20 my-20 content-visibility-auto scale h-150' class:h-165={SUPPORTS.isAndroid}>
+          <EpisodeListSk />
+        </div>
+      {/each}
+    {:then _}{/await}
+  {/if}
 </div>
 
 <style>
