@@ -1,5 +1,6 @@
 <script>
   import { FileQuestion } from 'lucide-svelte'
+  import { COMMON } from '@/modules/bridge.js'
   export let name = null
   export let icon = null
 </script>
@@ -10,7 +11,7 @@
       <div class='skeloader h-25 w-250 mw-full rounded bg-ske'/>
       <div class='d-flex ml-auto'>
         {#if icon && icon !== 'none'}
-          <img class='wh-25' src={(!icon.startsWith('http') ? 'data:image/png;base64,' : '') + icon} alt={name} title={name}>
+          <img class='wh-25' src={COMMON.mediaSrc((!icon.startsWith('http') ? 'data:image/png;base64,' : '') + icon)} alt={name} title={name}>
         {:else if icon === 'none'}
           <FileQuestion size='2.5rem' />
         {/if}

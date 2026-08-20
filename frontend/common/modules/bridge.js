@@ -43,6 +43,15 @@ const torrentDefaults = {
 const commonDefaults = {
   getAppVersion: noopAsyncString,
   getPlatformInfo: () => ({ platform: '', arch: '', development: false, capabilities: {} }),
+  /**
+   * The URL an <img> should actually load for a remote image. Hosts with a native
+   * media cache rewrite http(s) URLs into their caching scheme so the same art is
+   * downloaded once, ever; everywhere else the URL passes through untouched and the
+   * webview's own cache does what it can. Non-network sources (local fallbacks,
+   * data: URIs) always pass through.
+   * @type {(url: any) => any}
+   */
+  mediaSrc: (url) => url,
   getDeviceInfo: noopAsyncVoid,
   exportLog: noopAsyncVoid,
   resetLog: noopAsyncVoid,

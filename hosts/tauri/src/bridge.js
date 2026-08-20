@@ -33,9 +33,14 @@
     }
   }
 
+  // remote art goes through the host's capped disk cache. The scheme's shape is a
+  // platform fact: WebKit and WKWebView serve custom schemes as-is, WebView2 maps
+  // them onto http://<scheme>.localhost
+  const mediaBase = platformInfo.platform === 'windows' ? 'http://shiru-media.localhost/' : 'shiru-media://localhost/'
   window.common = {
     getAppVersion: () => invoke('get_app_version'),
     getPlatformInfo: () => platformInfo,
+    mediaSrc: (url) => typeof url === 'string' && /^https?:\/\//.test(url) ? mediaBase + encodeURIComponent(url) : url,
     isWindowVisible: async () => true,
     openURI: (uri) => invoke('open_uri', { uri }).catch(() => {}),
     windowReady: () => invoke('window_ready'),

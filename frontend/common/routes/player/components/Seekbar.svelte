@@ -1,4 +1,5 @@
 <script>
+  import { COMMON } from '@/modules/bridge.js'
   import { toTS, clamp } from '@/modules/util.js'
   import { createEventDispatcher } from 'svelte'
 
@@ -193,7 +194,7 @@
     <div class='tooltip-inner position-absolute d-flex flex-column align-items-center'>
       <div class='font-size-16 text-break-word wm-250 text-truncate'>{getChapterTitleAtPosition(seek) || ''}</div>
       {#if getThumbnail && thumbnail}
-        <img class='thumbnail w-250' src={thumbnail} alt='Preview thumbnail'/>
+        <img class='thumbnail w-250' src={COMMON.mediaSrc(thumbnail)} alt='Preview thumbnail'/>
       {/if}
       {#if length}
         <div class='font-size-18 text-break-word wm-250 text-truncate'>{toTS(length * (seek / 100))}</div>

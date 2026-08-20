@@ -120,7 +120,7 @@ pub async fn http_request(request: FetchRequest) -> Result<FetchResponse, String
 
 /// The client for page requests. Redirects are followed, but every hop is checked: a public URL
 /// that redirects to `127.0.0.1` is the ordinary way this kind of command gets abused.
-fn client() -> &'static reqwest::Client {
+pub(crate) fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()

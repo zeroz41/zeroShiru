@@ -8,6 +8,7 @@ mod desktop;
 mod discord;
 mod graphics;
 mod logging;
+mod media_cache;
 mod net;
 #[cfg(desktop)]
 mod shell;
@@ -50,7 +51,15 @@ pub fn run() {
     // launch that never drew anything
     logging::init(&graphics::config_dir_for(identifier));
     graphics::apply(identifier);
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default()
+        // remote art is served through the host's capped disk cache, so the same
+        // cover is downloaded once, not once per session — see media_cache.rs
+        .register_asynchronous_uri_scheme_protocol(media_cache::SCHEME, |context, request, responder| {
+            let app = context.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(media_cache::respond(&app, request).await);
+            });
+        });
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
         // a second launch hands its URLs/args to the running instance
@@ -129,14 +138,26 @@ pub fn run() {
             // run after ALL of Tauri's own bootstrap (window.__TAURI__ included), and
             // config windows offer no way to attach one. Keep the settings in sync
             // with the frontend's expectations, not with a config block.
-            let window =
+            let window_builder =
                 tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("app.html".into()))
                     .title("zeroShiru")
                     .inner_size(1280.0, 800.0)
                     .min_inner_size(320.0, 390.0)
                     .background_color(tauri::window::Color(0x17, 0x19, 0x1c, 0xff))
-                    .initialization_script(bridge_script())
-                    .build()?;
+                    .initialization_script(bridge_script());
+            // The webview's storage was only ever persistent because WebKit derives a
+            // default directory from the GTK program name — rename the binary and every
+            // user starts over. Name the directory on purpose instead: the exact path
+            // the accidental scheme has always used, so nothing existing is orphaned.
+            // Linux only — Windows' WebView2 default is already the right LOCALAPPDATA
+            // profile, and moving it would orphan those users instead.
+            #[cfg(target_os = "linux")]
+            let window_builder = {
+                use tauri::Manager;
+                window_builder.data_directory(app.path().app_data_dir()?)
+            };
+            let window = window_builder.build()?;
+            media_cache::spawn_janitor(app.handle());
             #[cfg(target_os = "linux")]
             window::use_native_decorations(&window);
             #[cfg(not(target_os = "linux"))]
@@ -192,6 +213,14 @@ mod tests {
         let invoked = bridge_invocations(&script);
         let missing: Vec<&String> = invoked.iter().filter(|name| !registered.contains(name)).collect();
         assert!(missing.is_empty(), "bridge.js invokes commands that no handler registers: {missing:?}");
+    }
+
+    #[test]
+    fn the_bridge_rewrites_art_into_the_scheme_the_host_actually_serves() {
+        // a renamed scheme on either side would quietly turn every cover into a 404
+        let script = bridge_script();
+        assert!(script.contains(&format!("{}://localhost/", media_cache::SCHEME)));
+        assert!(script.contains(&format!("http://{}.localhost/", media_cache::SCHEME)), "WebView2 maps custom schemes onto http");
     }
 
     #[test]

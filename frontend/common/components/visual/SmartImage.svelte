@@ -1,5 +1,6 @@
 <script>
   import { nearViewport } from '@/modules/preload.js'
+  import { COMMON } from '@/modules/bridge.js'
 
   export let images = []
   /** Skip the wait: for art that is on screen from the start, like the home banner. */
@@ -29,7 +30,9 @@
       }
     } catch { image = `${index}_404.jpg` }
     if (typeof image === 'string' && image.includes('/cover/') && image.endsWith('/default.jpg')) image = 'no_image_cover.jpg'
-    resolvedImages[index] = image
+    // hosts with a native media cache serve remote art from disk; local fallbacks
+    // and data: URIs pass through untouched
+    resolvedImages[index] = COMMON.mediaSrc(image)
     loading = false
   }
   function handleError() {

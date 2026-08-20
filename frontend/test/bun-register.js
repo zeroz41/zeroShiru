@@ -48,7 +48,9 @@ const appStubs = {
     const noop = () => {}
     const handler = { get: (target, key) => key in target ? target[key] : noop }
     export const TORRENT = new Proxy({}, handler)
-    export const COMMON = new Proxy({}, handler)
+    // mediaSrc is the one COMMON member with a real default (identity), and a noop
+    // returning undefined would blank every <img> in component tests
+    export const COMMON = new Proxy({ mediaSrc: url => url }, handler)
     export const ANDROID = new Proxy({}, handler)
     export const DESKTOP = new Proxy({}, handler)
     // the debrid core, as the host injects it. Mutable so a test can answer for it:
