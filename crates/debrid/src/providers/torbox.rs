@@ -232,19 +232,31 @@ impl TorBox {
             Err(error) if error_code(&error) == Some("DUPLICATE_ITEM") => None,
             Err(error) => return Err(error),
         };
-        // the account now has a torrent the remembered listing does not
-        self.client.forget_listing().await;
         let id = created
             .as_ref()
             .and_then(|value| value.get("torrent_id"))
             .filter(|value| !value.is_null())
             .cloned();
         match self.await_torrent(id.as_ref(), hash).await {
-            Ok(torrent) => Ok((torrent, id.is_some())),
+            Ok(torrent) => {
+                // the account changed by exactly this entry, and this is that entry read
+                // back — amend the remembered listing rather than dropping it, so the
+                // next episode's resolve does not pay a fresh thousand-entry read for a
+                // change this client just made itself
+                self.client
+                    .amend_listing(torrent.clone(), |ours, theirs| {
+                        torrent_hash(ours).is_some() && torrent_hash(ours) == torrent_hash(theirs)
+                    })
+                    .await;
+                Ok((torrent, id.is_some()))
+            }
             Err(error) => {
                 // awaited, so this call has undone itself by the time it reports failure
                 if let Some(id) = id.as_ref() {
                     self.delete(id).await;
+                    // if the delete quietly failed the account holds a torrent the
+                    // listing does not; the next read is worth paying for
+                    self.client.forget_listing().await;
                 }
                 Err(error)
             }
@@ -362,10 +374,15 @@ impl TorBox {
     ) -> Result<DebridResolved, DebridError> {
         if torrent.is_none() {
             // ask before adding: the answer is free, and adding an uncached torrent spends
-            // from a much tighter allowance (60 an hour) than a cached add does
-            let answers = self.check_availability_batch(&[hash.to_string()]).await?;
-            if answers.get(hash) != Some(&Availability::Cached) {
-                return Err(DebridError::not_cached());
+            // from a much tighter allowance (60 an hour) than a cached add does. The sweep
+            // that filled the badge the user just clicked already asked, so a remembered
+            // Cached answer skips the roundtrip — if it went stale inside its TTL the add
+            // below still fails as not-cached, one hop later and rarely
+            if self.client.recall(hash) != Some(Availability::Cached) {
+                let answers = self.check_availability_batch(&[hash.to_string()]).await?;
+                if answers.get(hash) != Some(&Availability::Cached) {
+                    return Err(DebridError::not_cached());
+                }
             }
             let (found, was_added) = self.add(magnet_uri, hash).await?;
             *torrent = Some(found);
@@ -931,6 +948,49 @@ mod tests {
         // polling a fresh add bypasses TorBox's listing cache, or it would spin forever
         let poll = requests.iter().find(|request| request.url.contains("id=42") && !request.url.contains("requestdl")).unwrap();
         assert!(poll.url.contains("bypass_cache=true"));
+    }
+
+    #[tokio::test]
+    async fn a_release_the_sweep_already_proved_cached_is_not_rechecked_on_resolve() {
+        // the badge the user clicked was filled in by the availability sweep moments
+        // ago; asking the same question again put a roundtrip on the play path.
+        // No checkcached route at all: reaching for it would fail the resolve
+        let (torbox, transport) = service(vec![
+            Route::json("createtorrent", 200, &ok(json!({ "torrent_id": 42, "hash": HASH }))),
+            Route::json("requestdl", 200, &ok(json!("https://torbox.test/dl/0"))),
+            Route::json("id=42", 200, &ok(torrent(json!({})))),
+            Route::json("mylist", 200, &ok(json!([]))),
+        ]);
+        torbox.client.remember(HASH, Availability::Cached);
+        let resolved = torbox.resolve(MAGNET, &video_filter()).await.unwrap();
+        assert_eq!(resolved.files.len(), 2);
+        assert!(
+            !transport.urls().iter().any(|url| url.contains("checkcached")),
+            "the sweep's remembered answer is the same answer the roundtrip would give"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_next_episode_reuses_the_listing_the_last_add_amended() {
+        // adding used to drop the remembered listing, so back-to-back episode plays
+        // each paid a fresh thousand-entry account read for a change this client made
+        let (torbox, transport) = service(vec![
+            Route::json("checkcached", 200, &ok(json!([{ "hash": HASH }]))),
+            Route::json("createtorrent", 200, &ok(json!({ "torrent_id": 42, "hash": HASH }))),
+            Route::json("requestdl", 200, &ok(json!("https://torbox.test/dl/0"))),
+            Route::json("id=42", 200, &ok(torrent(json!({})))),
+            Route::json("mylist", 200, &ok(json!([]))),
+        ]);
+        torbox.resolve(MAGNET, &video_filter()).await.unwrap();
+        torbox.resolve(MAGNET, &video_filter()).await.unwrap();
+        let full_reads = transport
+            .urls()
+            .iter()
+            .filter(|url| url.contains("mylist") && !url.contains("id="))
+            .count();
+        assert_eq!(full_reads, 1, "the second play finds the torrent in the listing the first play amended");
+        let creates = transport.urls().iter().filter(|url| url.contains("createtorrent")).count();
+        assert_eq!(creates, 1, "and so it never adds the same torrent twice");
     }
 
     #[tokio::test]

@@ -989,6 +989,13 @@ export async function getKitsuMappings(anilistID) {
     concurrentRequests.delete(`kitsu-${anilistID}`)
   })
   concurrentRequests.set(`kitsu-${anilistID}`, requestPromise)
+  // an expired mapping still names the same episodes it named an hour ago: the
+  // list paints from it now, and the refetch above lands for the next open
+  const stale = cache.cachedEntry(caches.QUERY_MAPPINGS, `kitsu-${anilistID}`, true)
+  if (stale) {
+    requestPromise.catch(() => {})
+    return stale
+  }
   return requestPromise
 }
 
@@ -1064,6 +1071,13 @@ export async function getAniMappings(anilistID) {
     concurrentRequests.delete(`ani-${anilistID}`)
   })
   concurrentRequests.set(`ani-${anilistID}`, requestPromise)
+  // an expired mapping still names the same episodes it named an hour ago: the
+  // list paints from it now, and the refetch above lands for the next open
+  const stale = cache.cachedEntry(caches.QUERY_MAPPINGS, `ani-${anilistID}`, true)
+  if (stale) {
+    requestPromise.catch(() => {})
+    return stale
+  }
   return requestPromise
 }
 

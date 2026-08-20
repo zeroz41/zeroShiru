@@ -326,6 +326,25 @@ impl DebridClient {
         *self.listing.lock().await = None;
     }
 
+    /// Replaces or appends one entry in the remembered listing, for when the account
+    /// changed by exactly that entry. Forgetting instead means the next resolve pays a
+    /// thousand-entry re-read for a change this client just made and can describe —
+    /// which put that read back on the play path, ahead of the links the user is
+    /// waiting for. `same` says whether two entries describe the same torrent.
+    pub async fn amend_listing(&self, entry: Value, same: impl Fn(&Value, &Value) -> bool) {
+        let mut known = self.listing.lock().await;
+        if let Some((_, listing)) = known.as_mut() {
+            if let Some(items) = listing.as_array_mut() {
+                if let Some(existing) = items.iter_mut().find(|item| same(item, &entry)) {
+                    *existing = entry;
+                } else {
+                    items.push(entry);
+                }
+            }
+        }
+        // nothing remembered is nothing to amend: the next read pays for itself anyway
+    }
+
     /// Undoes something this client created on the account. Never fails: it runs from
     /// error paths, where it would mask the real failure. A removal that fails is
     /// remembered and retried, because the likeliest cause is the link dropping — and a

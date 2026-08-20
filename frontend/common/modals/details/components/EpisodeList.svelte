@@ -260,13 +260,17 @@
     return mobileWaiting
   }
 
+  let renderTimer = null
   onMount(() => {
-    setInterval(() => {
+    // ten times a second for the life of the component, not the life of the app:
+    // this used to leak one interval per opened details modal
+    renderTimer = setInterval(() => {
       if (!mobileList && episodeList?.length > maxEpisodes) renderVisible()
     }, 100)
   })
 
   onDestroy(() => {
+    clearInterval(renderTimer)
     mobileWaiting = null
     episodeList = []
     episodeLoad = null
