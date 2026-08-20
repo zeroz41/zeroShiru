@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import { audioSelectionWrites, safeGain, storedVolume } from '../../../common/modules/playback/audio.js'
 import { showsSpinner } from '../../../common/modules/playback/buffering.js'
 import { thumbnailHorizon, THUMBNAIL_LOOKAHEAD_SECONDS } from '../../../common/modules/playback/thumbnails.js'
+import { mediaErrorReport, stillFailing } from '../../../common/modules/playback/errors.js'
 
 const tracks = [{ id: 'jpn' }, { id: 'eng' }, { id: 'spa' }]
 
@@ -87,4 +88,39 @@ test('a volume read back from settings is a number, whatever was stored', () => 
   assert.equal(storedVolume('nonsense'), 1)
   assert.equal(storedVolume(-1), 1)
   assert.equal(storedVolume('3'), 1, 'the element only takes 0 to 1; the boost above that is a gain node')
+})
+
+// --- what an error from the video element is worth saying out loud ---
+
+test('a load of nothing is not a failed video', () => {
+  // starting a file tears the last one down by clearing the source, and the element
+  // calls that a failed load: one bogus "unsupported codec" toast per episode
+  assert.equal(mediaErrorReport({ code: 4, src: null }), null)
+  assert.equal(mediaErrorReport({ code: 4, src: '' }), null)
+  assert.equal(mediaErrorReport({ code: 0, src: 'https://cdn/a.mkv' }), null)
+  assert.equal(mediaErrorReport({}), null)
+})
+
+test('an abort is something the player did to itself', () => {
+  assert.equal(mediaErrorReport({ code: 1, src: 'https://cdn/a.mkv' }), null)
+})
+
+test('network and decode failures are reported at once, a source failure waits to be proven', () => {
+  assert.deepEqual(mediaErrorReport({ code: 2, src: 'https://cdn/a.mkv' }), { kind: 'network', confirm: false })
+  assert.deepEqual(mediaErrorReport({ code: 3, src: 'https://cdn/a.mkv' }), { kind: 'decode', confirm: false })
+  assert.deepEqual(mediaErrorReport({ code: 4, src: 'https://cdn/a.mkv' }), { kind: 'source', confirm: true })
+})
+
+test('a source that went on to play is not reported at all', () => {
+  const src = 'https://cdn/a.mkv'
+  assert.equal(stillFailing({ erroredSrc: src, currentSrc: src, readyState: 4 }), false, 'it played, whatever it said first')
+  assert.equal(stillFailing({ erroredSrc: src, currentSrc: src, readyState: 2 }), false)
+  assert.equal(stillFailing({ erroredSrc: src, currentSrc: 'https://cdn/b.mkv', readyState: 0 }), false, 'a different file now, so the old failure is moot')
+  assert.equal(stillFailing({ erroredSrc: null, currentSrc: src, readyState: 0 }), false)
+})
+
+test('a source that never got anywhere is still a failure', () => {
+  const src = 'https://cdn/broken.mkv'
+  assert.equal(stillFailing({ erroredSrc: src, currentSrc: src, readyState: 0 }), true)
+  assert.equal(stillFailing({ erroredSrc: src, currentSrc: src }), true)
 })

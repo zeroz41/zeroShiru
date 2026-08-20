@@ -109,13 +109,25 @@ TORRENT.start(_settings).then(() => {
 export async function add (torrentID, search, hash) {
   if (!torrentID) return
   debug('Adding torrent', JSON.stringify({ torrentID: typeof torrentID === 'string' ? torrentID : '.torrent data', search, hash }))
+  const cameFrom = page.value
   files.set([])
   page.navigateTo(page.PLAYER)
   media.value = search ? { media: (search.media || media.value?.media), episode: (search.episode || media.value?.episode), ...(media.value?.torrent ? { torrent: true } : { feed: true }) } : { torrent: true }
   requestPlayback(search) // an episode named here outranks the watch-status guess made once the files land
   if (hash && search) setHash(hash, { mediaId: search.media?.id, episode: search.episode, client: true })
   if (SUPPORTS.isAndroid && !settings.value.enableExternal) document.querySelector('.content-wrapper').requestFullscreen()
-  if (await streamDebrid(torrentID, hash, search)) return
+  if (await streamDebrid(torrentID, hash, search)) {
+    // Handled — but handled includes deciding that nothing will play: a release that
+    // does not hold the episode, or a service that will not stream it. The player was
+    // opened before any of that was known, and leaving it open on a file that is never
+    // coming is a spinner with no end and no explanation. The toast said what happened;
+    // this puts the user back where they can act on it.
+    if (!files.value?.length) {
+      debug('Nothing to play, leaving the player')
+      page.navigateTo(cameFrom && cameFrom !== page.PLAYER ? cameFrom : page.HOME)
+    }
+    return
+  }
   TORRENT.stream(torrentID)
 }
 

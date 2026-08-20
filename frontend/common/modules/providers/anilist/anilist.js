@@ -1,4 +1,5 @@
 import lavenshtein from 'js-levenshtein'
+import { retryWorthwhile } from '@/modules/lib/retry.js'
 import { writable } from 'simple-store-svelte'
 import Bottleneck from 'bottleneck'
 
@@ -184,6 +185,12 @@ class AnilistClient {
       const errorDebug = `Error: ${error.status || 429} - ${error.message || error.statusText || codes[error.status || 429]}`
 
       if (error.status === 429) { // rate limited...
+        // as patient as it asks for, but a limit that never lifts must not hold every
+        // query behind it forever. See modules/lib/retry.js
+        if (!retryWorthwhile({ retryCount: jobInfo.retryCount, limited: true })) {
+          debug(`Giving up on a rate limited request after ${jobInfo.retryCount + 1} attempts`, errorDebug)
+          return
+        }
         const time = (Number(error.headers.get('retry-after') || 60) + 1) * 1_000
         if (!this.rateLimitPromise) this.rateLimitPromise = sleep(time).then(() => { this.rateLimitPromise = null })
         return time

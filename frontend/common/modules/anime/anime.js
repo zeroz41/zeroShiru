@@ -1,4 +1,5 @@
 import { codes, DOMPARSER, getRandomInt, countdown, sleep, isValidNumber } from '@/modules/util.js'
+import { retryWorthwhile } from '@/modules/lib/retry.js'
 import { printError } from '@/modules/networking.js'
 import { anilistClient } from '@/modules/providers/anilist/anilist.js'
 import _anitomyscript from 'anitomyscript'
@@ -1007,9 +1008,15 @@ const aniLimiter = new Bottleneck({
   maxConcurrent: 20,
   minTime: 10
 })
-aniLimiter.on('failed', async (error) => {
+aniLimiter.on('failed', async (error, jobInfo) => {
   if (status.value === 'offline') throw new Error('Failed making request to api.ani.zip, network is offline... not retrying')
   if (error.status === 500) return 1
+  // waiting as long as it asks, as many times as is worth it — but not forever: anything
+  // awaiting these mappings waits with them. See modules/lib/retry.js
+  if (!retryWorthwhile({ retryCount: jobInfo?.retryCount, limited: true })) {
+    debug(`Giving up on api.ani.zip after ${(jobInfo?.retryCount ?? 0) + 1} attempts`)
+    return
+  }
   if (!error.statusText) {
     if (!aniRateLimitPromise) aniRateLimitPromise = sleep(10 * 1000).then(() => { aniRateLimitPromise = null })
     return 10 * 1000

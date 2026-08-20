@@ -98,7 +98,9 @@
     const _requestId = ++requestId
     const cancelled = () => _requestId !== requestId
 
-    const mappings = await getAniMappings(id) || {}
+    // the list is built from AniList's own schedule too, so a mappings API that is down
+    // costs titles and thumbnails rather than the whole list
+    const mappings = await getAniMappings(id).catch(() => null) || {}
     if (cancelled()) return null
     const { episodes, specialCount, episodeCount: newEpisodeCount } = mappings
     const getEpisode = (episode) => {

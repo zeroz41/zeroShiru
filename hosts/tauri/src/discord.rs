@@ -28,7 +28,25 @@ pub struct Presence {
     pub large_text: Option<String>,
     pub small_image: Option<String>,
     pub small_text: Option<String>,
+    /// When playback started, as a unix timestamp in milliseconds. Read leniently: the
+    /// page computes it from a playback position measured in fractional seconds, and a
+    /// presence that is a millisecond out is worth more than one that is rejected.
+    #[serde(default, deserialize_with = "lenient_millis")]
     pub start: Option<i64>,
+}
+
+/// Accepts a whole or fractional number of milliseconds, or nothing at all.
+fn lenient_millis<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::Number(number)) => number
+            .as_i64()
+            .or_else(|| number.as_f64().map(|millis| millis.round() as i64)),
+        _ => None,
+    })
 }
 
 #[derive(Default)]
@@ -122,4 +140,28 @@ pub fn clear_presence(state: tauri::State<'_, DiscordState>) {
     let mut inner = state.inner.lock().unwrap();
     inner.cached = None;
     DiscordState::apply(&mut inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The presence the page sends while something is playing: its start is computed from a
+    /// playback position in fractional seconds, so it arrives as a fraction of a millisecond.
+    #[test]
+    fn a_start_time_with_a_fraction_of_a_millisecond_is_still_a_start_time() {
+        let presence: Presence = serde_json::from_str(r#"{"start": 1787260099123.456}"#).unwrap();
+        assert_eq!(presence.start, Some(1_787_260_099_123));
+        // this is what used to be refused outright, once per playback update
+        let whole: Presence = serde_json::from_str(r#"{"start": 1787260099123}"#).unwrap();
+        assert_eq!(whole.start, Some(1_787_260_099_123));
+    }
+
+    #[test]
+    fn a_presence_without_a_start_time_is_not_a_failure() {
+        for body in [r#"{}"#, r#"{"start": null}"#, r#"{"details": "Watching"}"#] {
+            let presence: Presence = serde_json::from_str(body).expect(body);
+            assert_eq!(presence.start, None);
+        }
+    }
 }

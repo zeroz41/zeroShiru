@@ -277,9 +277,12 @@ fn season_episode(tokens: &[&Token]) -> Option<Vec<f64>> {
                 }
             }
         }
-        // 1x05
+        // 1x05 — but not 1920x1080, which is a frame size. A season is one or two
+        // digits; reading a width as one made every file in a pack claim episode 1080,
+        // so the episode being asked for was in none of them and the pack was refused
         if let Some((season, episodes)) = text.split_once('X') {
             if !season.is_empty()
+                && season.len() <= 2
                 && season.chars().all(|c| c.is_ascii_digit())
                 && !episodes.is_empty()
             {
@@ -447,6 +450,23 @@ mod tests {
         for name in ["Show - 5.mkv", "Show - 05.mkv", "Show - 005.mkv"] {
             assert_eq!(episodes(name), vec![5.0], "{name}");
         }
+    }
+
+    #[test]
+    fn a_frame_size_is_not_a_season_and_an_episode() {
+        // `1920x1080` used to read as season 1920 episode 1080, so every file in a pack
+        // claimed the same episode, the wanted one was in none of them, and the whole
+        // release was refused as not holding it
+        for name in [
+            "Show.-.05.1920x1080.x264.FLAC.mkv",
+            "[Group] Show 05 1280x720 AAC.mkv",
+            "Show - 05 [848x480].mkv",
+        ] {
+            assert_eq!(episodes(name), vec![5.0], "{name}");
+        }
+        // and the form it was written for still reads
+        assert_eq!(episodes("Show 1x05.mkv"), vec![5.0]);
+        assert_eq!(episodes("Show 12x05.mkv"), vec![5.0]);
     }
 
     #[test]

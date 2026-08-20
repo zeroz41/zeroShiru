@@ -2,6 +2,7 @@
   import { settings } from '@/modules/settings.js'
   import { audioSelectionWrites, safeGain, storedVolume } from '@/modules/playback/audio.js'
   import { showsSpinner, BUFFER_RECHECK_MS } from '@/modules/playback/buffering.js'
+  import { mediaErrorReport, stillFailing, CONFIRM_MS } from '@/modules/playback/errors.js'
   import { thumbnailHorizon } from '@/modules/playback/thumbnails.js'
   import { cache, caches } from '@/modules/cache.js'
   import { page, modal, playPage } from '@/modules/navigation.js'
@@ -12,7 +13,7 @@
   import AnimeResolver from '@/modules/anime/animeresolver.js'
   import { durationMap, getMediaMaxEp } from '@/modules/anime/anime.js'
   import { writable } from 'simple-store-svelte'
-  import { createEventDispatcher } from 'svelte'
+  import { createEventDispatcher, tick } from 'svelte'
   import Subtitles from '@/modules/subtitles.js'
   import DebridMetadata from '@/modules/debrid/metadata.js'
   import { debridTransport, debridPlayback } from '@/modules/debrid/debrid.js'
@@ -88,6 +89,7 @@
   let immerseTimeout = null
   let bufferTimeout = null
   let bufferRecheck = null
+  let sourceErrorTimeout = null
   let subHeaders = null
   let pip = false
   // const presentationRequest = null
@@ -232,7 +234,9 @@
         }
       }
     } else {
-      src = ''
+      // null removes the attribute; an EMPTY one is a load of nothing, which the element
+      // reports as a failed load — one bogus "unsupported" error per episode
+      src = null
       buffering = true
       current = null
       currentTime = 0
@@ -318,9 +322,13 @@
         subs = new Subtitles(video, files, current, handleHeaders)
         // every stream (debrid or the torrent gateway) is a range-served URL; parse embedded metadata from it
         if (current?.url) debridMeta = new DebridMetadata(current, files, subs, { getTime: () => currentTime, onChapters: _chapters => { chapters = _chapters; embeddedChapters = _chapters } })
+        await tick() // the attribute is written on the next flush; loading before it reloads the old one
         video.load()
         await loadAnimeProgress()
-      } else video.load()
+      } else {
+        await tick()
+        video.load()
+      }
     } else externalPlaying = false
     emit('current', current) // #handleCurrent in MediaHandler
     if (externalPlayback) {
@@ -1334,12 +1342,21 @@
   function getThumbnail (percent) {
     return thumbnailData.thumbnails[Math.floor(percent / 100 * safeduration / thumbnailData.interval)] || ' '
   }
+  /** A canvas the source tainted can never be read; it is not worth asking twice a second. */
+  let thumbnailsUnreadable = false
   function createThumbnail (vid = video) {
+    if (thumbnailsUnreadable) return
     if (vid?.readyState >= 2) {
       const index = Math.floor(vid.currentTime / thumbnailData.interval)
       if (!thumbnailData.thumbnails[index]) {
-        thumbnailData.context.drawImage(vid, 0, 0, 200, thumbnailData.canvas.height)
-        thumbnailData.canvas.toBlob(blob => thumbnailData.thumbnails[index] = URL.createObjectURL(blob), 'image/jpeg')
+        try {
+          thumbnailData.context.drawImage(vid, 0, 0, 200, thumbnailData.canvas.height)
+          thumbnailData.canvas.toBlob(blob => thumbnailData.thumbnails[index] = URL.createObjectURL(blob), 'image/jpeg')
+        } catch (error) {
+          // this used to throw on every timeupdate for the rest of the episode
+          thumbnailsUnreadable = true
+          debug('Seek previews are off for this file: the canvas cannot be read', error)
+        }
       }
     }
   }
@@ -1355,7 +1372,7 @@
   }
   let thumbnailProcess = null
   async function generateThumbnails() {
-    if (externalPlayback || SUPPORTS.isAndroid) return // TODO: Generate and show thumbnails on android when seeking.
+    if (externalPlayback || SUPPORTS.isAndroid || thumbnailsUnreadable) return // TODO: Generate and show thumbnails on android when seeking.
     debug('Starting thumbnail generation...')
     if (thumbnailProcess && thumbnailProcess.running) {
       debug('Detected a currently running thumbnail generation process, interrupting...')
@@ -1367,6 +1384,10 @@
     thumbnailProcess = { videoDraw: document.createElement('video'), running: true }
     const videoDraw = thumbnailProcess.videoDraw
     thumbnailData.video = videoDraw
+    // same origin rules as the player's own element: this one draws into the shared
+    // thumbnail canvas, and a single cross-origin draw taints it for the rest of the
+    // episode — after which every toBlob throws, including the player's own
+    videoDraw.crossOrigin = 'anonymous'
     videoDraw.src = current.url
     videoDraw.preload = 'auto'
     videoDraw.volume = 0
@@ -1419,11 +1440,18 @@
             debug('Thumbnail generation process was interrupted due to a change in the video url, exiting...')
             return
           }
-          thumbnailData.context.drawImage(videoDraw, 0, 0, 200, thumbnailData.canvas.height)
-          thumbnailData.canvas.toBlob(blob => {
-            thumbnailData.thumbnails[index] = URL.createObjectURL(blob)
-            captureThumbnail()
-          }, 'image/jpeg')
+          try {
+            thumbnailData.context.drawImage(videoDraw, 0, 0, 200, thumbnailData.canvas.height)
+            thumbnailData.canvas.toBlob(blob => {
+              thumbnailData.thumbnails[index] = URL.createObjectURL(blob)
+              captureThumbnail()
+            }, 'image/jpeg')
+          } catch (error) {
+            thumbnailsUnreadable = true
+            thumbnailProcess.running = false
+            videoDraw.remove()
+            debug('Seek previews are off for this file: the canvas cannot be read', error)
+          }
         }
       }
       captureThumbnail()
@@ -1492,6 +1520,9 @@
   }
   function checkError ({ target }) {
     // video playback failed - show a message saying why
+    if (!mediaErrorReport({ code: target.error?.code, src })) {
+      return debug('Ignoring a media error with nothing loaded, which is the player between files', target.error)
+    }
     switch (target.error?.code) {
       case target.error.MEDIA_ERR_ABORTED:
         debug('You aborted the video playback.')
@@ -1514,16 +1545,26 @@
           onDismiss: () => target.load()
         })
         break
-      case target.error.MEDIA_ERR_SRC_NOT_SUPPORTED:
-        if (target.error.message !== 'MEDIA_ELEMENT_ERROR: Empty src attribute') {
+      case target.error.MEDIA_ERR_SRC_NOT_SUPPORTED: {
+        // Not believed yet: starting a file tears the last one down, and the element
+        // calls a load of nothing a failure. Matching the engine's wording for that was
+        // the old filter, and this engine words it differently, so it never matched.
+        // Whether it plays is the same question everywhere. See modules/playback/errors.js
+        const erroredSrc = target.currentSrc || src
+        clearTimeout(sourceErrorTimeout)
+        sourceErrorTimeout = setTimeout(() => {
+          if (!stillFailing({ erroredSrc, currentSrc: video?.currentSrc || src, readyState: video?.readyState })) {
+            return debug('The element reported an unsupported source and then played it anyway, so nothing is wrong', erroredSrc)
+          }
           debug('The video could not be loaded, either because the server or network failed or because the format is not supported.', target.error)
           saveAnimeProgress(true)
           toast.error('Video Codec Unsupported', {
-            description: 'The video could not be loaded, either because the server or network failed or because the format is not supported. Try a different release by disabling Autoplay Torrents in RSS settings.',
+            description: `The video could not be loaded, either because the server or network failed or because the format is not supported. Try a different release${isDebrid ? '.' : ' by disabling Autoplay Torrents in RSS settings.'}`,
             duration: 30_000
           })
-        }
+        }, CONFIRM_MS)
         break
+      }
       default:
         debug('An unknown video playback error occurred.')
         break
@@ -1570,8 +1611,10 @@
       const details = np.title || undefined
       const timeLeft = safeduration - targetTime
       const timestamps = !paused ? {
-        start: Date.now() - (targetTime > 0 ? targetTime * 1_000 : 0),
-        end: Date.now() + timeLeft * 1_000
+        // whole milliseconds: the playback position is fractional seconds, and Discord
+        // takes a unix timestamp, not a fraction of one
+        start: Math.round(Date.now() - (targetTime > 0 ? targetTime * 1_000 : 0)),
+        end: Math.round(Date.now() + timeLeft * 1_000)
       } : undefined
        activity = {
         details,

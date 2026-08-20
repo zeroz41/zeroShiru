@@ -1,6 +1,7 @@
 import { cache, caches } from '@/modules/cache.js'
 import { codes, getRandomInt, sleep, isValidNumber } from '@/modules/util.js'
 import { printError, status, isOffline } from '@/modules/networking.js'
+import { retryWorthwhile } from '@/modules/lib/retry.js'
 import Bottleneck from 'bottleneck'
 import Debug from 'debug'
 const debug = Debug('ui:episodes')
@@ -22,10 +23,15 @@ class Episodes {
     concurrentRequests = new Map()
 
     constructor() {
-        this.limiter.on('failed', async (error) => {
+        this.limiter.on('failed', async (error, jobInfo) => {
             let info = (await error.json()) || error
             if (await isOffline(info)) throw new Error('Failed making episode request, network is offline... not retrying.')
             if (info.status === 500) return 1
+            // bounded: an episode list that waits on Jikan forever never appears at all
+            if (!retryWorthwhile({ retryCount: jobInfo?.retryCount, limited: true })) {
+                debug(`Giving up on jikan after ${(jobInfo?.retryCount ?? 0) + 1} attempts`)
+                return
+            }
 
             const time = ((error.headers.get('retry-after') || 2) + 1) * 1000
             if (!this.rateLimitPromise) this.rateLimitPromise = sleep(time).then(() => { this.rateLimitPromise = null })

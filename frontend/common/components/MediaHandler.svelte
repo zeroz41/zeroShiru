@@ -2,7 +2,7 @@
   import { writable } from 'simple-store-svelte'
   import AnimeResolver from '@/modules/anime/animeresolver.js'
   import { setHash, getHash, getId } from '@/modules/anime/animehash.js'
-  import { videoRx, matchPhrase, isValidNumber } from '@/modules/util.js'
+  import { videoRx, matchPhrase, isValidNumber, sleep } from '@/modules/util.js'
   import { tick } from 'svelte'
   import { toast } from 'svelte-sonner'
   import { anilistClient } from '@/modules/providers/anilist/anilist.js'
@@ -77,12 +77,23 @@
     return true
   }
 
+  /** How long the zero episode lookup may hold playback up before it is given up on. */
+  const ZERO_EPISODE_DEADLINE = 8_000
   const zeroEpisodes = new Map()
   export async function checkForZero(media) {
     if (zeroEpisodes.has(`${media?.id}`)) {
         return zeroEpisodes.get(`${media?.id}`)
     }
-    const promiseData = (async () => await hasZeroEpisode(media))()
+    // Playback waits on this to number the episodes, so it cannot be allowed to wait on a
+    // metadata API that is down or rate limiting: a missing zero episode makes the numbering
+    // slightly wrong, while a hung lookup means nothing plays at all and nothing says why.
+    const promiseData = Promise.race([
+      hasZeroEpisode(media).catch(error => {
+        debug('Could not tell whether this has a zero episode, assuming it does not:', error)
+        return null
+      }),
+      sleep(ZERO_EPISODE_DEADLINE).then(() => null)
+    ])
     zeroEpisodes.set(`${media?.id}`, promiseData)
     return promiseData
   }
@@ -465,7 +476,14 @@
     processed.set([...result, ...otherFiles])
     processedFiles.set([...sortFiles(videoFiles, newPlaying)])
     await tick()
-    const file = (newPlaying?.episode && (result.find(({ media }) => media.episode === newPlaying.episode) || result.find(({ media }) => media.episode === 1))) || result[0]
+    // The file the request actually asked for, when it survived the filtering above:
+    // matching by episode number again could pick a different file carrying the same
+    // number (a special, a second season, a duplicate resolution). And when no file
+    // carries the wanted number, this used to fall back to EPISODE ONE, which is how a
+    // click on episode seven of a pack quietly played the first episode instead.
+    const file = (targetFile && result.includes(targetFile) && targetFile) ||
+      (newPlaying?.episode && result.find(({ media }) => media.episode === newPlaying.episode)) ||
+      result[0]
     if (!file) throw new Error('No playable files were detected in this torrent. Choose another release.')
     playFile(file || 0)
     await handleMedia(file?.media, newPlaying)
