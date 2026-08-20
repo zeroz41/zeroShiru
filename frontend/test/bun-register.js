@@ -75,6 +75,8 @@ const appStubs = {
   '@/modules/networking.js': `
     import { writable } from 'simple-store-svelte'
     export const status = writable('online')
+    export const printedErrors = []
+    export function printError (...args) { printedErrors.push(args) }
   `
 }
 

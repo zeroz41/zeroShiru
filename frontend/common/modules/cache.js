@@ -64,14 +64,19 @@ export const caches = Object.freeze({
   QUERY_FOLLOWING: { key: 'query_following', expiryOffset: 30 * 24 * 60 * 60 * 1_000, maxEntries: 2_000 }, // evict after 30 days.
   QUERY_RECOMMENDATIONS: { key: 'query_recommendations', expiryOffset: 30 * 24 * 60 * 60 * 1_000, maxEntries: 500 }, // evict after 30 days.
   // SHARED DB
+  // `swr` marks stores whose entries may be served stale while a refetch replaces
+  // them in the background (see cacheEntry): metadata that is the same show art and
+  // episode lists it was an hour ago, where painting immediately beats blocking on
+  // the network. User-owned stores (lists, notifications, following) never opt in —
+  // when those are refetched it is because the fresh answer is the point.
   MEDIA_CACHE: { key: 'medias', shared: true, expiryOffset: 120 * 24 * 60 * 60 * 1_000, maxEntries: 10_000 }, // evict after 120 days.
   EXTENSIONS: { key: 'extensions', shared: true },
-  QUERY_MAPPINGS: { key: 'query_mappings', shared: true, expiryOffset: 120 * 24 * 60 * 60 * 1_000, maxEntries: 5_000 }, // evict after 120 days.
-  QUERY_COMPOUND: { key: 'query_compound', shared: true, expiryOffset: 7 * 24 * 60 * 60 * 1_000, maxEntries: 500 }, // evict after 7 days.
-  QUERY_EPISODES: { key: 'query_episodes', shared: true, expiryOffset: 60 * 24 * 60 * 60 * 1_000, maxEntries: 1_000 }, // evict after 60 days.
-  QUERY_SEARCH_IDS: { key: 'query_search_ids', shared: true, expiryOffset: 30 * 24 * 60 * 60 * 1_000, maxEntries: 1_000 }, // evict after 30 days.
-  QUERY_SEARCH: { key: 'query_search', shared: true, expiryOffset: 30 * 24 * 60 * 60 * 1_000, maxEntries: 1_000 }, // evict after 30 days.
-  QUERY_RSS: { key: 'query_rss', shared: true, expiryOffset: 30 * 24 * 60 * 60 * 1_000, maxEntries: 1_000 }, // evict after 30 days.
+  QUERY_MAPPINGS: { key: 'query_mappings', shared: true, swr: true, expiryOffset: 120 * 24 * 60 * 60 * 1_000, maxEntries: 5_000 }, // evict after 120 days.
+  QUERY_COMPOUND: { key: 'query_compound', shared: true, swr: true, expiryOffset: 7 * 24 * 60 * 60 * 1_000, maxEntries: 500 }, // evict after 7 days.
+  QUERY_EPISODES: { key: 'query_episodes', shared: true, swr: true, expiryOffset: 60 * 24 * 60 * 60 * 1_000, maxEntries: 1_000 }, // evict after 60 days.
+  QUERY_SEARCH_IDS: { key: 'query_search_ids', shared: true, swr: true, expiryOffset: 30 * 24 * 60 * 60 * 1_000, maxEntries: 1_000 }, // evict after 30 days.
+  QUERY_SEARCH: { key: 'query_search', shared: true, swr: true, expiryOffset: 30 * 24 * 60 * 60 * 1_000, maxEntries: 1_000 }, // evict after 30 days.
+  QUERY_RSS: { key: 'query_rss', shared: true, swr: true, expiryOffset: 30 * 24 * 60 * 60 * 1_000, maxEntries: 1_000 }, // evict after 30 days.
 })
 
 /**
@@ -277,6 +282,25 @@ function getBatchWriter(dbName) {
 }
 
 /**
+ * Flushes every batch writer immediately. A page that is going away — reload,
+ * navigation, window close — will not live to see a pending flush timer fire, and
+ * anything still queued is a cache the next boot legitimately reports as empty.
+ */
+export function flushAllWriters() {
+  for (const writer of batchWriters.values()) writer.flushNow()
+}
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  // pagehide is the last reliable signal in a webview; visibilitychange->hidden
+  // additionally covers being backgrounded, where mobile may never fire pagehide
+  window.addEventListener('pagehide', flushAllWriters)
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flushAllWriters()
+    })
+  }
+}
+
+/**
  * Wraps an IndexedDB transaction in a Promise.
  * Resolves when the transaction completes successfully and rejects if the transaction aborts or errors.
  *
@@ -321,12 +345,12 @@ function readAllFrom(source, storeKey) {
  * This groups multiple writes into a single IndexedDB transaction and retries failed writes by re-enqueuing them.
  *
  * @param {string} dbName The unique name of the database.
- * @param {number} [firstFlushDelay=10000] Delay in ms before the first flush before flushing writes to IndexedDB.
+ * @param {number} [firstFlushDelay=1500] Delay in ms before the first flush before flushing writes to IndexedDB.
  * @param {number} [subsequentFlushDelay=1500] Delay in ms for subsequent flushes before flushing writes to IndexedDB.
  * @param {number} [resetDelay=5000] Delay in ms after which retry counts are reset.
  * @returns {Object} Batch writer with methods {@link enqueue}, {@link flushNow}, and {@link pendingCount}.
  */
-function createBatchWriter(dbName, firstFlushDelay = 10_000, subsequentFlushDelay = 1_500, resetDelay = 5_000) {
+function createBatchWriter(dbName, firstFlushDelay = 1_500, subsequentFlushDelay = 1_500, resetDelay = 5_000) {
   const pending = new Map()
   const retryMap = new Map()
   let flushTimer = null
@@ -1116,6 +1140,16 @@ class Cache {
     })()
     this.#pending.set(`${cache.key}:${key}`, promiseData)
     promiseData.finally(() => this.#pending.delete(`${cache.key}:${key}`))
+    // Stale-while-revalidate: when the caller handed us a request still in flight
+    // and this store allows it, an expired entry answers immediately — the exact
+    // same art and metadata that was on screen last session — while the request
+    // above lands the fresh copy for the next read. An already-resolved value
+    // (a completed download being recorded) is fresher than anything stored, so
+    // it is never traded for a stale row; nor is an explicit cache bypass.
+    if (cache.swr && typeof data?.then === 'function' && !vars?.skipCache) {
+      const stale = this.cachedEntry(cache, key, true)
+      if (stale) return stale
+    }
     return promiseData
   }
 }

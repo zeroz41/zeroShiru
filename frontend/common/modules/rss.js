@@ -88,15 +88,29 @@ class RSSMediaManager {
 
   async getContentChanged (page, perPage, url, ignoreChanged = false) {
     let content
-    try {
-      content = await getRSSContent(url)
-    } catch (e) {
-      const cachedEntry = await cache.cachedEntry(caches.QUERY_RSS, `${btoa(url)}`, true)
-      if (cachedEntry) {
-        debug(`Failed to request RSS feed for ${url}, this is likely due to an outage... falling back to cached data.`)
-        content = DOMPARSER(cachedEntry, 'text/xml')
+    let fromCache = false
+    // First look at a feed this process has never seen: a fresh cached copy paints
+    // the rail immediately instead of blocking on the network. Only the first —
+    // resultMap is set after that, and the 30s poller keeps going to the network,
+    // so a new episode still shows up within a poll of being published.
+    if (!ignoreChanged && !this.resultMap[url]) {
+      const cachedFeed = await cache.cachedEntry(caches.QUERY_RSS, `${btoa(url)}`, false)
+      if (cachedFeed) {
+        content = DOMPARSER(cachedFeed, 'text/xml')
+        fromCache = true
       }
-      else throw e
+    }
+    if (!content) {
+      try {
+        content = await getRSSContent(url)
+      } catch (e) {
+        const cachedEntry = await cache.cachedEntry(caches.QUERY_RSS, `${btoa(url)}`, true)
+        if (cachedEntry) {
+          debug(`Failed to request RSS feed for ${url}, this is likely due to an outage... falling back to cached data.`)
+          content = DOMPARSER(cachedEntry, 'text/xml')
+        }
+        else throw e
+      }
     }
     if (!content) return false
 
@@ -104,7 +118,8 @@ class RSSMediaManager {
     const pullDate = +(new Date(content.querySelector('pubDate').textContent))
     if (!ignoreChanged && this.resultMap[url]?.date === pubDate) return false
 
-    cache.cacheEntry(caches.QUERY_RSS, `${btoa(url)}`, { mappings: true }, new XMLSerializer().serializeToString(content), Date.now() + getRandomInt(10, 15) * 60 * 1000)
+    // re-writing a copy that came from the store would only push its expiry out
+    if (!fromCache) cache.cacheEntry(caches.QUERY_RSS, `${btoa(url)}`, { mappings: true }, new XMLSerializer().serializeToString(content), Date.now() + getRandomInt(10, 15) * 60 * 1000)
     return { content, pubDate, pullDate }
   }
 

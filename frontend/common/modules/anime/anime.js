@@ -971,7 +971,10 @@ export async function getKitsuMappings(anilistID) {
         }
       }
       const date = new Date()
-      const media = cache.getMedia(anilistID)
+      // getMedia answers {} for anything not already in the media cache, which made
+      // every unknown series read as airing and take the short TTL; requestMedia
+      // consults the same cache first and only then the (itself cached) ID lookup
+      const media = (await cache.requestMedia(anilistID).catch(() => null)) || cache.getMedia(anilistID)
       const cacheDuration = media?.status === 'FINISHED' && media?.endDate && (date.getFullYear() - media.endDate.year) * 12 + (date.getMonth() + 1 - media.endDate.month) > 12 ? getRandomInt(24, 48) * 60 * 60 * 1_000 : getRandomInt(30, 60) * 60 * 1_000
       return cache.cacheEntry(caches.QUERY_MAPPINGS, `kitsu-${anilistID}`, {}, json, date.getTime() + cacheDuration) // caches currently airing series for 30 to 60 minutes, or 24 to 48 hours for series that finished at least a year ago (its highly unlikely the mappings will change drastically at that point).
     } catch (e) {
@@ -1043,7 +1046,10 @@ export async function getAniMappings(anilistID) {
         }
       }
       const date = new Date()
-      const media = cache.getMedia(anilistID)
+      // getMedia answers {} for anything not already in the media cache, which made
+      // every unknown series read as airing and take the short TTL; requestMedia
+      // consults the same cache first and only then the (itself cached) ID lookup
+      const media = (await cache.requestMedia(anilistID).catch(() => null)) || cache.getMedia(anilistID)
       const cacheDuration = media?.status === 'FINISHED' && media?.endDate && (date.getFullYear() - media.endDate.year) * 12 + (date.getMonth() + 1 - media.endDate.month) >= 12 ? getRandomInt(24, 48) * 60 * 60 * 1_000 : getRandomInt(30, 60) * 60 * 1_000
       return cache.cacheEntry(caches.QUERY_MAPPINGS, `ani-${anilistID}`, {}, json, date.getTime() + cacheDuration) // caches currently airing series for 30 to 60 minutes, or 24 to 48 hours for series that finished at least a year ago (its highly unlikely the mappings will change drastically at that point).
     } catch (e) {

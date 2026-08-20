@@ -209,7 +209,9 @@ class AnimeSchedule {
     async getFeed(feed) {
         let res = {}
         try {
-            res = await fetch(`${atob('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL1JvY2tpbkNoYW9zL0FuaVNjaGVkdWxlL21hc3Rlci9yYXc=')}/${feed}.json?timestamp=${new Date().getTime()}`, { method: 'GET' })
+            // no cache-buster: the 60s manifest memo is the freshness gate, and raw
+            // GitHub answers a revalidation with a 304 instead of the whole feed
+            res = await fetch(`${atob('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL1JvY2tpbkNoYW9zL0FuaVNjaGVkdWxlL21hc3Rlci9yYXc=')}/${feed}.json`, { method: 'GET' })
         } catch (e) {
             if (!res || res.status !== 404) throw e
         }

@@ -38,11 +38,16 @@ class MALDubs {
     async getMALDubs() {
         debug('Getting MyAnimeList Dubs IDs')
         try {
+            // the entry this method writes below was never read back on the happy
+            // path, so every boot downloaded the same dub list it downloaded last
+            // boot. Honour it: a fresh copy answers outright, and only expiry (or
+            // nothing stored at all) reaches for the network.
+            const fresh = await cache.cachedEntry(caches.QUERY_RSS, 'MALDubs', status.value === 'offline')
+            if (fresh) return fresh
             const cachedEntry = await cache.cachedEntry(caches.QUERY_RSS, 'MALDubs', true)
-            if (status.value === 'offline' && cachedEntry) return cachedEntry
             let res = {}
             try {
-                res = await fetch(`${atob('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL01BTC1EdWJzL01BTC1EdWJzL21haW4vZGF0YS9kdWJJbmZvLmpzb24=')}?timestamp=${new Date().getTime()}`)
+                res = await fetch(atob('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL01BTC1EdWJzL01BTC1EdWJzL21haW4vZGF0YS9kdWJJbmZvLmpzb24='))
             } catch (error) {
                 if (!res || res.status !== 404) throw error
             }
