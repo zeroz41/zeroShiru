@@ -124,8 +124,18 @@ export function outageNotice (error, title = 'your debrid service') {
         title: `${title} returned an error`,
         description: `${error.message || 'The service could not process the request.'}\nCached badges will be missing until it recovers.`
       }
-    // 'not-cached', 'unavailable' and 'rejected' are answers about a release, not outages
-    default:
+    // answers about a release rather than problems with the service
+    case 'not-cached':
+    case 'unavailable':
+    case 'rejected':
       return null
+    // anything else is a failure nobody wrote a case for — an IPC call that never got
+    // as far as the service, a bad argument, a bug here. It used to say nothing at all,
+    // which looks exactly like a library where nothing is cached
+    default:
+      return {
+        title: `${title} could not be checked`,
+        description: `${error?.message || String(error ?? 'The check failed for an unknown reason.')}\nCached badges will be missing until it works again.`
+      }
   }
 }

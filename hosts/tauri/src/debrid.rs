@@ -5,7 +5,7 @@
 //! Provider instances are cached per (service, key) so that memory survives
 //! across calls, mirroring the service lifecycle the JS layer used to have.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use shiru_core::{pick_pack, EpisodeNotInPack};
 use shiru_debrid::manager::{create_provider, ManagedProvider, PROVIDER_IDS};
 use shiru_debrid::platform::NativePlatform;
@@ -105,6 +105,29 @@ pub fn catalog() -> Vec<ServiceInfo> {
         .collect()
 }
 
+
+/// Hashes as the results list actually has them: an entry a source could not give
+/// an info hash for is a `null` in that array, and a strict `Vec<String>` rejects
+/// the whole call over it — one hashless release would leave every badge on the
+/// screen empty, silently, because the failure is not about any release. Anything
+/// that is not a string is dropped and the rest of the list is still answered.
+fn lenient_hashes<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let raw = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(raw.into_iter().filter_map(|value| match value {
+        serde_json::Value::String(hash) => Some(hash),
+        _ => None,
+    })
+    .collect())
+}
+
+/// The hash arguments of a command, so the lenient reading is written once.
+#[derive(Deserialize)]
+pub struct Hashes(#[serde(deserialize_with = "lenient_hashes")] pub Vec<String>);
+
 #[derive(Serialize)]
 pub struct AccountReply {
     pub username: String,
@@ -142,7 +165,12 @@ pub async fn debrid_list_availability(
     api_key: String,
 ) -> Result<AvailabilityReply, DebridFailure> {
     let managed = state.managed(&service, &api_key)?;
-    let answers = managed.list_availability().await.map_err(failure)?;
+    let answers = managed
+        .list_availability()
+        .await
+        .inspect_err(|error| tracing::warn!(target: "debrid", %service, %error, "account listing failed"))
+        .map_err(failure)?;
+    tracing::info!(target: "debrid", %service, held = answers.len(), "account listing");
     Ok(AvailabilityReply { answers, names: managed.client().release_names(), busy: false })
 }
 
@@ -155,8 +183,9 @@ pub async fn debrid_check_availability(
     state: tauri::State<'_, DebridState>,
     service: String,
     api_key: String,
-    hashes: Vec<String>,
+    hashes: Hashes,
 ) -> Result<AvailabilityReply, DebridFailure> {
+    let Hashes(hashes) = hashes;
     let managed = state.managed(&service, &api_key)?;
     let busy = managed.sweeping();
     let answers = managed
@@ -167,7 +196,17 @@ pub async fn debrid_check_availability(
             );
         })
         .await
+        .inspect_err(|error| tracing::warn!(target: "debrid", %service, asked = hashes.len(), %error, "availability check failed"))
         .map_err(failure)?;
+    tracing::info!(
+        target: "debrid",
+        %service,
+        asked = hashes.len(),
+        answered = answers.len(),
+        cached = answers.values().filter(|state| **state == Availability::Cached).count(),
+        busy,
+        "availability check"
+    );
     Ok(AvailabilityReply { answers, names: managed.client().release_names(), busy })
 }
 
@@ -178,9 +217,9 @@ pub async fn debrid_unknown_hashes(
     state: tauri::State<'_, DebridState>,
     service: String,
     api_key: String,
-    hashes: Vec<String>,
+    hashes: Hashes,
 ) -> Result<Vec<String>, DebridFailure> {
-    Ok(state.managed(&service, &api_key)?.unknown_hashes(&hashes))
+    Ok(state.managed(&service, &api_key)?.unknown_hashes(&hashes.0))
 }
 
 /// Records an answer the app proved for itself — playing a release is the most
@@ -281,5 +320,20 @@ mod tests {
             kinds,
             ["auth", "network", "timeout", "not-cached", "unavailable", "rejected", "service"]
         );
+    }
+    #[test]
+    fn a_results_list_holding_a_hashless_release_is_still_answered() {
+        // exactly what reaches the command: `sortedResults.map(result => result.hash)`
+        // over a list where one source could not name an info hash
+        let payload = serde_json::json!([
+            "dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c",
+            null,
+            "0795e58989ca49f7a2fb556c445e60c9f653be08"
+        ]);
+        let Hashes(hashes) = serde_json::from_value(payload).expect("one hashless entry cannot refuse the whole list");
+        assert_eq!(hashes.len(), 2, "the releases that do have a hash are still asked about");
+
+        let strict: Result<Vec<String>, _> = serde_json::from_value(serde_json::json!(["a", null]));
+        assert!(strict.is_err(), "and this is what used to happen instead");
     }
 }

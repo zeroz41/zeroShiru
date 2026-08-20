@@ -190,6 +190,39 @@ test('badges from a request that outlived its account are dropped', async () => 
   assert.equal(debridAvailability.value.size, 0, "badging a new account with the old account's answers is worse than no badges")
 })
 
+test('a release with no hash cannot silence the whole list', async () => {
+  // one source listing an entry it has no info hash for used to cross the seam as a null
+  // in a typed array, where the host refused the call outright: every badge on the screen
+  // stayed empty, and the failure said nothing about any release so nothing was said at all
+  let asked = null
+  DEBRID.unknownHashes = async (service, apiKey, hashes) => { asked = hashes; return hashes }
+  DEBRID.checkAvailability = async (service, apiKey, hashes) => ({
+    answers: Object.fromEntries(hashes.map(hash => [hash, 'cached'])),
+    names: {},
+    busy: false
+  })
+
+  await checkDebridAvailability([HASH, undefined, null, '', 'b'.repeat(40)])
+  assert.deepEqual(asked, [HASH, 'b'.repeat(40)], 'the releases that do have a hash are still asked about')
+  assert.equal(debridAvailability.value.get(HASH), Availability.CACHED)
+  cancelDebridAvailability()
+
+  // and a list with nothing askable in it costs no request at all
+  asked = null
+  await checkDebridAvailability([undefined, null])
+  assert.equal(asked, null)
+})
+
+test('a check that fails for no named reason still tells the user once', async () => {
+  DEBRID.unknownHashes = async (service, apiKey, hashes) => hashes
+  DEBRID.checkAvailability = async () => { throw new TypeError('invalid args for command debrid_check_availability') }
+  toast.shown.length = 0
+  await checkDebridAvailability([HASH])
+  cancelDebridAvailability()
+  assert.equal(toast.shown.length, 1, 'missing badges must never be indistinguishable from nothing being cached')
+  assert.match(toast.shown[0].description, /invalid args/)
+})
+
 test('nothing is asked while offline, or with cache checking turned off', async () => {
   let asked = 0
   DEBRID.checkAvailability = async () => { asked++; return { answers: {}, names: {}, busy: false } }

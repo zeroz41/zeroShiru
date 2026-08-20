@@ -256,18 +256,46 @@ let retry = null
 let retryDelay = RETRY_DELAY
 
 /**
+ * The hashes out of a results list that a service can actually be asked about. A source is
+ * free to list a release it has no info hash for — a link to a torrent file, an entry whose
+ * feed left the field out — and those are not questions. They used to cross the host seam as
+ * nulls in a typed array, where one of them failed the whole call and left every badge on the
+ * screen empty, silently, because the failure said nothing about any release.
+ * @param {(string | undefined | null)[]} hashes
+ * @returns {string[]}
+ */
+function askable (hashes) {
+  const asked = (hashes || []).filter(hash => typeof hash === 'string' && hash)
+  if (asked.length !== (hashes?.length ?? 0)) debug(`${(hashes?.length ?? 0) - asked.length} of ${hashes?.length} results have no hash to ask about`)
+  return asked
+}
+
+/**
  * Asks the service about the releases on screen, so badges say what it can actually do with them
  * rather than only what the account has touched. Answers are remembered by the core, so browsing
  * the same show again is free. A service may answer only part of the list, so whatever is left is
  * asked about again on a backing off timer until it is done or the user moves on.
- * @param {string[]} hashes - Candidates, most relevant first, since probing bites from the front.
+ * @param {(string | undefined | null)[]} results - Result hashes, most relevant first, since probing
+ *   bites from the front. Entries without a hash are dropped rather than asked about.
  */
-export async function checkDebridAvailability (hashes) {
+export async function checkDebridAvailability (results) {
   cancelDebridAvailability() // this list supersedes whatever the last one was waiting to retry
   const current = account()
-  if (!current || !settings.value.debridCacheCheck || status.value === 'offline') return
+  // every reason not to ask is said out loud: an empty badge column has looked the same
+  // for all of them, and telling them apart from the outside is impossible
+  const declined = !current
+    ? 'no debrid account is configured'
+    : !settings.value.debridCacheCheck
+      ? 'cache checking is turned off in settings'
+      : status.value === 'offline'
+        ? 'the app believes it is offline'
+        : null
+  if (declined) return debug(`Not asking about ${results?.length ?? 0} releases: ${declined}`)
+  const hashes = askable(results)
+  if (!hashes.length) return debug('Not asking: none of the results carry an info hash')
   const pending = await DEBRID.unknownHashes(current.id, current.apiKey, hashes)
-  if (!pending.length) return // everything here already has an answer
+  if (!pending.length) return debug(`All ${hashes.length} releases already have an answer`)
+  debug(`Asking ${serviceTitle()} about ${pending.length} of ${hashes.length} releases`)
   let busy = false
   debridChecking.update(count => count + 1)
   try {

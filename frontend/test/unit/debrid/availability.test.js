@@ -96,8 +96,16 @@ test('answers about a release are not outages', () => {
   for (const kind of ['not-cached', 'unavailable', 'rejected']) {
     assert.equal(outageNotice({ kind }, 'TorBox'), null, kind)
   }
-  assert.equal(outageNotice(undefined), null)
-  assert.equal(outageNotice({}), null)
+})
+
+test('a failure nobody wrote a case for still says something', () => {
+  // the shape that hurt: a call that failed before it reached the service at all — a bad
+  // argument, a host command that errored — carries no kind, and used to be silent, which
+  // is indistinguishable from a library where nothing is cached
+  assert.match(outageNotice(new TypeError('invalid args for command'), 'TorBox').title, /could not be checked/i)
+  assert.match(outageNotice(new TypeError('invalid args for command'), 'TorBox').description, /invalid args/)
+  assert.match(outageNotice({}, 'TorBox').title, /TorBox/)
+  assert.ok(outageNotice(undefined), 'even a failure with nothing in it is worth one line')
 })
 
 test('the service is named, so the user knows who went quiet', () => {
