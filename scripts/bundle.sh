@@ -42,9 +42,25 @@ if [ "$(uname -s)" = Linux ]; then
             echo "$0: if the AppImage fails to bundle, re-run this script." >&2
         fi
     fi
-    # No-op once applied: the patched line no longer matches.
+    # Each patch is a no-op once applied: the matched line no longer exists.
     if [ -f "$gtk_plugin" ]; then
         sed -i 's|find "$directory" \\( -type l|find "$directory" -maxdepth 1 \\( -type l|' "$gtk_plugin"
+
+        # The plugin's AppRun hook forces every launch onto XWayland, a workaround
+        # for a real crash that was never the backend's fault: the plugin bundles
+        # libwayland-client, and a copy older than the host's EGL stack dies in
+        # wl_proxy_* the moment GTK opens a Wayland display. Fix the cause instead:
+        # never bundle libwayland (every distro that ships GTK3 ships it, and the
+        # host copy always matches the host EGL), and let GDK pick its backend the
+        # way it does outside an AppImage -- Wayland on Wayland, X11 elsewhere --
+        # while still honouring a GDK_BACKEND the user set themselves.
+        sed -i 's|^export GDK_BACKEND=x11.*|export GDK_BACKEND="${GDK_BACKEND:-wayland,x11}"|' "$gtk_plugin"
+        if ! grep -q 'libwayland-\*' "$gtk_plugin"; then
+            printf '\n%s\n%s\n' \
+                '# a bundled libwayland is the crash the x11 forcing used to paper over' \
+                'find "$APPDIR"/usr/lib* -maxdepth 1 -name '"'"'libwayland-*'"'"' -delete' \
+                >> "$gtk_plugin"
+        fi
     fi
 fi
 
