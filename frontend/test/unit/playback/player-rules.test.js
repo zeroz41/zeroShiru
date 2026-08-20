@@ -3,7 +3,7 @@
 // loading spinner stuck forever, and thumbnail drawing raced the stream it was drawn from.
 import { test } from 'bun:test'
 import assert from 'node:assert/strict'
-import { audioSelectionWrites, safeGain, storedVolume } from '../../../common/modules/playback/audio.js'
+import { audioSelectionWrites, safeGain, storedVolume, describeTracks, AUDIO_FLUSH_NUDGE } from '../../../common/modules/playback/audio.js'
 import { showsSpinner } from '../../../common/modules/playback/buffering.js'
 import { thumbnailHorizon, THUMBNAIL_LOOKAHEAD_SECONDS } from '../../../common/modules/playback/thumbnails.js'
 import { mediaErrorReport, stillFailing } from '../../../common/modules/playback/errors.js'
@@ -123,4 +123,17 @@ test('a source that never got anywhere is still a failure', () => {
   const src = 'https://cdn/broken.mkv'
   assert.equal(stillFailing({ erroredSrc: src, currentSrc: src, readyState: 0 }), true)
   assert.equal(stillFailing({ erroredSrc: src, currentSrc: src }), true)
+})
+
+test('the flush after an audio switch is a real seek and an unnoticeable one', () => {
+  // the pipeline acts on a stream selection at its next flush; the original code seeked
+  // from a stale cached position, which jumped playback backwards by however stale it was
+  assert.ok(AUDIO_FLUSH_NUDGE > 0, 'setting the same position may not count as a seek at all')
+  assert.ok(AUDIO_FLUSH_NUDGE <= 0.1, 'and anything bigger is a visible jump backwards')
+})
+
+test('the track list reads as a line a log can carry', () => {
+  assert.equal(describeTracks([{ id: 'jpn', language: 'ja', enabled: true }, { id: 'eng', language: 'en', enabled: false }]), 'jpn(ja)* eng(en)')
+  assert.equal(describeTracks([]), 'none')
+  assert.equal(describeTracks(null), 'none')
 })

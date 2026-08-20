@@ -64,3 +64,22 @@ export function storedVolume (stored) {
   if (!Number.isFinite(volume) || volume < 0) return 1
   return Math.min(1, volume)
 }
+
+/**
+ * How far back to nudge the playback position after switching audio track.
+ *
+ * The media pipeline underneath acts on a stream selection at its next flush, so without
+ * one the switch can land late, land silently, or not land at all — which is why the
+ * original code followed every switch with a seek, calling itself a "stupid fix because
+ * video freezes up when changing tracks". That seek read a position the page had cached
+ * rather than the one the element was at, so it also jumped playback backwards by however
+ * stale that value was. The flush is worth keeping; reading the element's own position is
+ * what makes it harmless. A twentieth of a second is enough to be a seek and too little
+ * to be noticed.
+ */
+export const AUDIO_FLUSH_NUDGE = 0.05
+
+/** The track list as one line, for the log: which are enabled is the whole question. */
+export function describeTracks (tracks) {
+  return [...(tracks || [])].map(track => `${track.id}${track.language ? `(${track.language})` : ''}${track.enabled ? '*' : ''}`).join(' ') || 'none'
+}

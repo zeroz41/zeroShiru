@@ -1,6 +1,6 @@
 <script>
   import { settings } from '@/modules/settings.js'
-  import { audioSelectionWrites, safeGain, storedVolume } from '@/modules/playback/audio.js'
+  import { audioSelectionWrites, safeGain, storedVolume, describeTracks, AUDIO_FLUSH_NUDGE } from '@/modules/playback/audio.js'
   import { showsSpinner, BUFFER_RECHECK_MS } from '@/modules/playback/buffering.js'
   import { mediaErrorReport, stillFailing, CONFIRM_MS } from '@/modules/playback/errors.js'
   import { thumbnailHorizon } from '@/modules/playback/thumbnails.js'
@@ -669,14 +669,22 @@
   }
   function selectAudio (id) {
     if (id == null || !video?.audioTracks) return
-    // the wanted track goes on before the others go off: an instant with nothing
-    // selected is what silenced the element, and the seek that used to paper over the
-    // freeze it caused only made it worse. See modules/playback/audio.js
-    const writes = audioSelectionWrites([...video.audioTracks], id)
+    const tracks = [...video.audioTracks]
+    // the wanted track goes on before the others go off, so there is never an instant
+    // with nothing selected — that instant is what silenced the element
+    const writes = audioSelectionWrites(tracks, id)
+    if (!writes.length) return
+    const before = describeTracks(tracks)
     for (const write of writes) {
-      const track = [...video.audioTracks].find(track => track.id === write.id)
+      const track = tracks.find(track => track.id === write.id)
       if (track) track.enabled = write.enabled
     }
+    // and then a flush, because the pipeline acts on the selection at the next one. From
+    // the element's own position, not a remembered one. See modules/playback/audio.js
+    const at = video.currentTime
+    if (Number.isFinite(at)) video.currentTime = Math.max(0, at - AUDIO_FLUSH_NUDGE)
+    // switching audio has been broken twice; this is the line that says what happened
+    console.warn(`[audio] switch to ${id} at ${Number.isFinite(at) ? at.toFixed(2) : '?'}s: ${before} -> ${describeTracks([...video.audioTracks])}`)
   }
   function selectVideo (id) {
     if (id != null) {
