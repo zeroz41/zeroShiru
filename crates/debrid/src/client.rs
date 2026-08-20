@@ -1,18 +1,17 @@
-//! The request machinery every provider shares: authentication schemes, body
-//! encoding, latency-stretched poll budgets, availability memory and the account
-//! listing cache. Port of the stateful half of common/modules/debrid/service.js.
-//!
-//! Rate limiting note: the JS layer wraps requests in Bottleneck. The Rust port
-//! keeps concurrency/pacing simpler (a semaphore plus min-gap) — the per-provider
-//! reservoir numbers live in ProviderConfig for when a fuller limiter is needed.
+//! The request machinery every provider shares: rate limiting, retries,
+//! authentication schemes, body encoding, latency-stretched poll budgets,
+//! availability memory and the account listing cache. Port of the stateful half of
+//! common/modules/debrid/service.js.
 
 use crate::error::DebridError;
+use crate::limiter::{Limiter, Limits};
 use crate::platform::Platform;
 use crate::{AuthScheme, BodyEncoding, ProviderConfig};
 use serde_json::Value;
-use shiru_domain::{parse_hash, Availability};
+use shiru_domain::{parse_hash, Availability, DebridFile};
 use shiru_networking::{Body, HttpRequest, HttpResponse, HttpTransport, Method};
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -22,6 +21,28 @@ const MAX_STRETCH: f64 = 3.0;
 /// How many times a removal this client owes the account is retried before it is
 /// written off. A service that will not take the removal is not worth asking forever.
 const MAX_CLEANUP_ATTEMPTS: usize = 3;
+
+/// How many times a request refused for going too fast is sent again.
+const RATE_LIMIT_RETRIES: u32 = 2;
+
+/// How long to wait out a `429` that arrived without a `retry-after` header.
+const RATE_LIMIT_FALLBACK_MS: u64 = 5_000;
+
+/// The longest `retry-after` worth obeying. TorBox has answered a link-request burst
+/// with `retry-after: 300`, and honouring it froze every request on the account —
+/// playback included — for five minutes. Past this, failing fast beats waiting: the
+/// error says what happened, and waiting less than asked would only collect another 429.
+const RATE_LIMIT_MAX_WAIT_MS: u64 = 30_000;
+
+/// How long to leave a request that timed out before trying it once more. A round trip
+/// that never came back says nothing about the service, so it is worth one more ask —
+/// unlike an unreachable one, where retrying only delays the error the app already knows.
+const NETWORK_RETRY_DELAY_MS: u64 = 3_000;
+
+/// How long the account listing is reused. Matched to the badge refresh interval: both
+/// the badge sweep and every resolve want it, and reading it per play put a full account
+/// listing on the play path.
+const LISTING_TTL_MS: u64 = 60_000;
 
 /// Per-request overrides, mirroring the JS request options object.
 #[derive(Default, Clone)]
@@ -79,6 +100,14 @@ pub struct DebridClient {
     /// Removals that failed, to try again. Keyed by the whole request, since services
     /// that name the torrent in the body would otherwise all collide on one url.
     orphans: Mutex<HashMap<String, (String, RequestOpts, usize)>>,
+    /// Everything this account sends goes through here, so a season pack's worth of
+    /// link requests can go out together without tripping the service's allowance.
+    limiter: Limiter,
+    /// The account's own torrent listing, read at most once per `LISTING_TTL_MS` and
+    /// shared by every caller. An async lock rather than a plain one, so a second
+    /// caller arriving mid-read waits for that read instead of starting another —
+    /// which is what the JS got from sharing the promise.
+    listing: futures::lock::Mutex<Option<(u64, Value)>>,
 }
 
 impl DebridClient {
@@ -88,6 +117,11 @@ impl DebridClient {
         transport: Arc<dyn HttpTransport>,
         platform: Arc<dyn Platform>,
     ) -> Self {
+        let limiter = Limiter::new(Limits {
+            max_concurrent: config.max_concurrent,
+            min_time_ms: config.min_time_ms,
+            reservoir: config.reservoir,
+        });
         DebridClient {
             config,
             api_key,
@@ -97,6 +131,8 @@ impl DebridClient {
             availability: Mutex::new(HashMap::new()),
             release_names: Mutex::new(HashMap::new()),
             orphans: Mutex::new(HashMap::new()),
+            limiter,
+            listing: futures::lock::Mutex::new(None),
         }
     }
 
@@ -145,11 +181,65 @@ impl DebridClient {
         }
     }
 
-    /// One authenticated round trip, with the provider's error conventions applied.
+    /// One authenticated request, paced against the service's allowance and retried
+    /// where retrying is what the service asked for.
+    ///
+    /// Two failures are worth another go and nothing else is. A `429` is the service
+    /// saying "not that fast", which is a request about timing rather than a verdict
+    /// on the request — so it waits out the `retry-after` (pausing every other request
+    /// on the account with it, since they would only collect their own 429) and asks
+    /// again, unless the wait it asked for is longer than anyone should sit through. A
+    /// timeout is a round trip that never came back, which says nothing at all, so it
+    /// gets exactly one more. Everything else — auth, a 500, an unreachable host — is
+    /// an answer, and repeating the question does not improve it.
     pub async fn request(&self, dialect: &dyn Dialect, url: &str, opts: RequestOpts) -> Result<Value, DebridError> {
         if self.api_key.is_empty() {
             return Err(DebridError::Auth { message: "No debrid API key configured".into(), status: None, code: None });
         }
+        let mut rate_limited = 0;
+        let mut timed_out = 0;
+        loop {
+            // the permit lives exactly as long as the round trip, so a request that
+            // failed hands its place back before anything waits on the retry
+            let outcome = {
+                let _permit = self.limiter.acquire(self.platform.as_ref()).await;
+                self.attempt(dialect, url, &opts).await
+            };
+            let (error, retry_after) = match outcome {
+                Ok(value) => return Ok(value),
+                Err(failure) => failure,
+            };
+            if error.throttled() && rate_limited < RATE_LIMIT_RETRIES {
+                let wait = retry_after.map(|seconds| seconds * 1_000).unwrap_or(RATE_LIMIT_FALLBACK_MS);
+                if wait > RATE_LIMIT_MAX_WAIT_MS {
+                    tracing::warn!(target: "debrid", service = self.config.id, wait, "rate limited for longer than is worth waiting out");
+                    return Err(error);
+                }
+                tracing::debug!(target: "debrid", service = self.config.id, wait, "rate limited, holding every request on this account");
+                self.limiter.pause_for(self.platform.as_ref(), wait);
+                self.platform.sleep(wait).await;
+                rate_limited += 1;
+                continue;
+            }
+            if matches!(error, DebridError::Timeout { .. }) && timed_out < 1 {
+                self.platform.sleep(NETWORK_RETRY_DELAY_MS).await;
+                timed_out += 1;
+                continue;
+            }
+            return Err(error);
+        }
+    }
+
+    /// One authenticated round trip, with the provider's error conventions applied.
+    /// Reports the `retry-after` alongside the error, because only the caller above
+    /// knows whether this request has any retries left to spend on it.
+    async fn attempt(
+        &self,
+        dialect: &dyn Dialect,
+        url: &str,
+        opts: &RequestOpts,
+    ) -> Result<Value, (DebridError, Option<u64>)> {
+        let opts = opts.clone();
         let auth = opts.auth.unwrap_or(self.config.auth);
         let auth_param = opts.auth_param.unwrap_or(self.config.auth_param);
         let (authorized_url, headers) = self.authorize(url, auth, auth_param);
@@ -166,36 +256,74 @@ impl DebridClient {
             timeout_ms,
         };
         let sent = self.platform.now_ms();
-        let response = self.transport.execute(request).await.map_err(|error| match error {
-            shiru_networking::TransportError::Timeout(ms) => {
-                DebridError::Timeout { message: format!("request timed out after {ms}ms") }
-            }
-            shiru_networking::TransportError::Network(message) => DebridError::Network { message },
-        })?;
+        let response = self
+            .transport
+            .execute(request)
+            .await
+            .map_err(|error| match error {
+                shiru_networking::TransportError::Timeout(ms) => {
+                    DebridError::Timeout { message: format!("request timed out after {ms}ms") }
+                }
+                shiru_networking::TransportError::Network(message) => DebridError::Network { message },
+            })
+            .map_err(|error| (error, None))?;
         // only round trips that came back, so a timeout cannot inflate it
         self.observe_latency(self.platform.now_ms().saturating_sub(sent));
         self.finish(dialect, response)
     }
 
-    fn finish(&self, dialect: &dyn Dialect, response: HttpResponse) -> Result<Value, DebridError> {
+    fn finish(
+        &self,
+        dialect: &dyn Dialect,
+        response: HttpResponse,
+    ) -> Result<Value, (DebridError, Option<u64>)> {
         if !response.ok() {
             let json: Option<Value> = serde_json::from_slice(&response.body).ok();
-            let mut error = dialect.map_error(response.status, json.as_ref());
-            if response.status == 429 {
-                // surface retry-after so a limiter layer can decide what to do with it
-                if let (Some(after), DebridError::Service { message, .. }) =
-                    (response.header("retry-after"), &mut error)
-                {
-                    *message = format!("{message} (retry-after: {after})");
-                }
-            }
-            return Err(error);
+            let error = dialect.map_error(response.status, json.as_ref());
+            // a retry-after in seconds; anything else (an HTTP date, junk) reads as absent
+            // and the caller falls back to its own wait
+            let retry_after = (response.status == 429)
+                .then(|| response.header("retry-after").and_then(|value| value.trim().parse::<u64>().ok()))
+                .flatten();
+            return Err((error, retry_after));
         }
         if response.status == 204 || response.body.is_empty() {
             return Ok(Value::Null);
         }
         let json: Value = serde_json::from_slice(&response.body).unwrap_or(Value::Null);
-        dialect.unwrap(json)
+        dialect.unwrap(json).map_err(|error| (error, None))
+    }
+
+    /// The account's own torrent listing, read at most once per TTL and shared by every
+    /// caller. Both the badge refresh and every resolve want it, and reading it per play
+    /// put a full account listing on the play path — on TorBox that is a thousand-entry
+    /// response before the first link request even goes out. An entry can be a minute
+    /// stale, so callers confirm one before acting on its id.
+    ///
+    /// `fresh` forces a read, for polling a change just made.
+    pub async fn listing<F, Fut>(&self, fresh: bool, fetch: F) -> Result<Value, DebridError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Value, DebridError>>,
+    {
+        let mut known = self.listing.lock().await;
+        if !fresh {
+            if let Some((at, listing)) = known.as_ref() {
+                if self.platform.now_ms().saturating_sub(*at) < LISTING_TTL_MS {
+                    return Ok(listing.clone());
+                }
+            }
+        }
+        // a failed read is never remembered: the next caller asks again rather than
+        // inheriting a failure for a minute
+        let listing = fetch().await?;
+        *known = Some((self.platform.now_ms(), listing.clone()));
+        Ok(listing)
+    }
+
+    /// Drops the remembered listing, because the account just changed.
+    pub async fn forget_listing(&self) {
+        *self.listing.lock().await = None;
     }
 
     /// Undoes something this client created on the account. Never fails: it runs from
@@ -333,6 +461,34 @@ impl DebridClient {
     }
 }
 
+/// Turns candidates into stream links, skipping ones the service cannot serve — packs
+/// do contain dead files, and one must not fail the whole resolve. Auth failures still
+/// abort, since every other link would fail the same way. Port of the JS base class's
+/// `mapFiles`.
+///
+/// Concurrent, and deliberately so. Sending a pack's links one at a time costs a full
+/// round trip each before playback can start; sending them together costs one, and the
+/// limiter — not this function — is what keeps that inside the service's allowance.
+/// `join_all` polls in order, so the first candidate is the first to take a slot, which
+/// is how providers put the episode the user actually asked for at the front of the queue.
+pub async fn map_files<'a, T, F, Fut>(candidates: &'a [T], to_file: F) -> Result<Vec<DebridFile>, DebridError>
+where
+    F: Fn(&'a T) -> Fut,
+    Fut: Future<Output = Result<Option<DebridFile>, DebridError>>,
+{
+    let attempts = futures::future::join_all(candidates.iter().map(&to_file)).await;
+    let mut files = Vec::with_capacity(attempts.len());
+    for attempt in attempts {
+        match attempt {
+            Ok(Some(file)) => files.push(file),
+            Ok(None) => {}
+            Err(error @ DebridError::Auth { .. }) => return Err(error),
+            Err(error) => tracing::debug!(target: "debrid", %error, "skipping a file the service would not link"),
+        }
+    }
+    Ok(files)
+}
+
 fn flatten(fields: &[(String, Value)]) -> Vec<(String, String)> {
     let mut flat = Vec::new();
     for (key, value) in fields {
@@ -398,6 +554,7 @@ mod connection {
             max_probes: 10,
             max_concurrent: 4,
             min_time_ms: 250,
+            reservoir: None,
         };
         DebridClient::new(
             config,
@@ -543,5 +700,158 @@ mod connection {
         let after = torbox.client().budget(READY);
         assert!(after > before, "a slow link buys more time, {before}ms -> {after}ms");
         assert!(after <= READY * 3, "but never more than the cap");
+    }
+}
+
+/// What pacing and retries do to the traffic this client puts on an account — the half
+/// of the JS base class that went missing in the port, and the half TorBox reacts to.
+#[cfg(test)]
+mod pacing {
+    use super::*;
+    use crate::providers::torbox::TorBox;
+    use crate::testing::{ManualClock, MockTransport, Route};
+    use crate::DebridProvider;
+
+    fn torbox(routes: Vec<Route>) -> (TorBox, Arc<MockTransport>, Arc<ManualClock>) {
+        let transport = Arc::new(MockTransport::new(routes));
+        let clock = Arc::new(ManualClock::new());
+        (TorBox::new("key".into(), transport.clone(), clock.clone()), transport, clock)
+    }
+
+    #[tokio::test]
+    async fn a_request_refused_for_going_too_fast_is_made_again_after_the_wait_it_asked_for() {
+        let (torbox, transport, clock) = torbox(vec![Route::json("checkcached", 429, r#"{"error":"RATE_LIMIT"}"#)
+            .with_headers(vec![("retry-after", "2")])]);
+        let started = clock.now_ms();
+        let hashes = vec!["a".repeat(40)];
+        let failed = torbox.check_availability_batch(&hashes).await;
+
+        assert!(failed.is_err(), "it keeps failing, so eventually it gives up");
+        assert_eq!(transport.urls().len(), 3, "the first ask plus two more");
+        assert!(clock.now_ms() - started >= 4_000, "and it waited the two seconds it was told, each time");
+    }
+
+    #[tokio::test]
+    async fn a_wait_longer_than_anyone_should_sit_through_is_reported_instead_of_waited_out() {
+        // measured live: a link burst earned retry-after: 300. Honouring that froze every
+        // request on the account — playback included — for five minutes
+        let (torbox, transport, clock) = torbox(vec![Route::json("checkcached", 429, r#"{"error":"RATE_LIMIT"}"#)
+            .with_headers(vec![("retry-after", "300")])]);
+        let started = clock.now_ms();
+        assert!(torbox.check_availability_batch(&[ "a".repeat(40)]).await.is_err());
+        assert_eq!(transport.urls().len(), 1, "asking again would only collect another one");
+        assert!(clock.now_ms() - started < 30_000, "and nothing was made to wait for it");
+    }
+
+    #[tokio::test]
+    async fn a_round_trip_that_never_came_back_is_worth_exactly_one_more_ask() {
+        let (torbox, transport, _clock) = torbox(vec![Route::timeout("checkcached", 30_000)]);
+        assert!(torbox.check_availability_batch(&["a".repeat(40)]).await.is_err());
+        assert_eq!(transport.urls().len(), 2, "a timeout says nothing, so it is asked once more");
+    }
+
+    #[tokio::test]
+    async fn a_service_that_answered_is_not_asked_the_same_question_twice() {
+        // auth, a 500, an unreachable host: all answers. Repeating the question does not
+        // improve any of them, and doing so is how a retry loop becomes the outage
+        for route in [
+            Route::json("checkcached", 401, r#"{"error":"BAD_TOKEN"}"#),
+            Route::json("checkcached", 500, r#"{"error":"DATABASE_ERROR"}"#),
+            Route::offline("checkcached"),
+        ] {
+            let (torbox, transport, _clock) = torbox(vec![route]);
+            assert!(torbox.check_availability_batch(&["a".repeat(40)]).await.is_err());
+            assert_eq!(transport.urls().len(), 1);
+        }
+    }
+
+    /// Answers the account listing at once, but holds every link request until
+    /// `max_concurrent` of them have arrived together. Sequential code never gets that
+    /// far, so it hangs — which the timeout in the test turns into a failure.
+    struct LinksMustOverlap {
+        listing: String,
+        arrived: tokio::sync::Barrier,
+    }
+
+    #[async_trait::async_trait]
+    impl shiru_networking::HttpTransport for LinksMustOverlap {
+        async fn execute(
+            &self,
+            request: shiru_networking::HttpRequest,
+        ) -> Result<HttpResponse, shiru_networking::TransportError> {
+            let body = if request.url.contains("requestdl") {
+                self.arrived.wait().await;
+                r#"{"success":true,"data":"https://cdn/x.mkv"}"#.to_string()
+            } else {
+                self.listing.clone()
+            };
+            Ok(HttpResponse { status: 200, headers: HashMap::new(), body: body.into_bytes() })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_pack_asks_for_its_links_together_rather_than_one_round_trip_at_a_time() {
+        // this is what the limiter buys back: the JS sent these concurrently and stayed
+        // inside the allowance because Bottleneck paced them. Sequential was the port's
+        // stand-in for pacing, and it cost a full round trip per episode of the pack
+        // before playback could start — on a slow link, most of a minute of black screen
+        let files: Vec<String> = (1..=6)
+            .map(|n| format!(r#"{{"id":{n},"name":"Pack/Show - 0{n}.mkv","size":100,"mimetype":"video/x-matroska"}}"#))
+            .collect();
+        let listing = format!(
+            r#"{{"success":true,"data":[{{"id":7,"hash":"{}","name":"Pack","download_present":true,"download_finished":true,"progress":1,"files":[{}]}}]}}"#,
+            "a".repeat(40),
+            files.join(",")
+        );
+        let transport = Arc::new(LinksMustOverlap {
+            listing,
+            // TorBox's own max_concurrent: the most the limiter will let overlap
+            arrived: tokio::sync::Barrier::new(3),
+        });
+        let torbox = TorBox::new("key".into(), transport, Arc::new(ManualClock::new()));
+        let resolved = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            torbox.resolve(&format!("magnet:?xt=urn:btih:{}", "a".repeat(40)), &Default::default()),
+        )
+        .await
+        .expect("the links went out one at a time, so none of them ever met another")
+        .expect("a cached pack resolves");
+        assert_eq!(resolved.files.len(), 6, "and every file still comes back");
+    }
+
+    #[tokio::test]
+    async fn the_account_listing_is_read_once_a_minute_and_not_once_per_play() {
+        // reading it per play put a thousand-entry response ahead of the links the user is
+        // actually waiting for, every single time they pressed play
+        let torrent = format!(
+            r#"{{"id":7,"hash":"{}","name":"Show","download_present":true,"download_finished":true,"progress":1,"files":[{{"id":1,"name":"Show/Show - 01.mkv","size":100}}]}}"#,
+            "a".repeat(40)
+        );
+        let (torbox, transport, clock) = torbox(vec![
+            Route::json("torrents/mylist", 200, &format!(r#"{{"success":true,"data":[{torrent}]}}"#)),
+            Route::json("requestdl", 200, r#"{"success":true,"data":"https://cdn/x.mkv"}"#),
+        ]);
+        let magnet = format!("magnet:?xt=urn:btih:{}", "a".repeat(40));
+
+        torbox.list_availability().await.unwrap();
+        let after_badges = transport.urls().iter().filter(|url| url.contains("mylist")).count();
+        torbox.resolve(&magnet, &Default::default()).await.unwrap();
+        let after_play = transport.urls().iter().filter(|url| url.contains("mylist")).count();
+        // the play still confirms the entry by id, which is a one-torrent read, but it does
+        // not pay for the whole account again
+        assert_eq!(
+            transport.urls().iter().filter(|url| url.contains("mylist") && !url.contains("&id=")).count(),
+            after_badges,
+            "the play reused the listing the badge refresh had already paid for"
+        );
+        assert!(after_play > after_badges, "it did still confirm the one torrent it wanted");
+
+        clock.advance(61_000);
+        torbox.list_availability().await.unwrap();
+        assert_eq!(
+            transport.urls().iter().filter(|url| url.contains("mylist") && !url.contains("&id=")).count(),
+            after_badges + 1,
+            "and a minute later it is read again"
+        );
     }
 }

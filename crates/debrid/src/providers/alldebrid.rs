@@ -228,6 +228,7 @@ impl AllDebrid {
             max_probes: 10,
             max_concurrent: 3, // no documented allowance, so be modest
             min_time_ms: 250,
+            reservoir: None,
         };
         AllDebrid { client: DebridClient::new(config, api_key.to_string(), transport, platform) }
     }
@@ -263,8 +264,8 @@ impl AllDebrid {
                 },
             )
             .await?;
-        // TODO(manager): the JS base forgets its cached account listing here; the cached
-        // listing lives in the manager layer once it exists.
+        // the account now holds magnets the remembered listing does not
+        self.client.forget_listing().await;
         Ok(data.get("magnets").and_then(Value::as_array).cloned().unwrap_or_default())
     }
 
@@ -317,16 +318,18 @@ impl AllDebrid {
     }
 
     /// The magnet ids on the account, as strings so they compare however the API types them.
-    /// The JS reads these through the base class's cached `listing({ fresh: true })`; both call
-    /// sites force a fresh read, so a plain fetch per call is equivalent here.
-    /// TODO(manager): route through the shared listing cache once the manager layer holds one.
+    /// Deliberately a fresh read — both call sites are about to change the account and need to
+    /// know what was already on it, and a minute-old answer would have this call delete a
+    /// magnet the user added since. It still refreshes the shared listing on the way past.
     async fn account_ids(&self) -> Result<HashSet<String>, DebridError> {
-        Ok(self
-            .magnets(None)
-            .await?
-            .iter()
-            .filter_map(|entry| id_string(entry.get("id")))
-            .collect())
+        let listing = self
+            .client
+            .listing(true, || async { Ok(Value::Array(self.magnets(None).await?)) })
+            .await?;
+        Ok(listing
+            .as_array()
+            .map(|entries| entries.iter().filter_map(|entry| id_string(entry.get("id"))).collect())
+            .unwrap_or_default())
     }
 
     /// Turns one wanted file into a direct stream link, or `None` when AllDebrid answers
@@ -351,22 +354,11 @@ impl AllDebrid {
         Ok(Some(DebridFile { name, path: file.path.clone(), size, url: link.to_string(), r#type: None }))
     }
 
-    /// Turns the wanted files into direct stream links, skipping dead ones — packs do contain
-    /// dead files, and one must not fail the whole resolve. Auth failures still abort, since
-    /// every other link would fail the same way. Port of the base class's mapFiles.
-    /// Sequential rather than concurrent like the JS Promise.all: the rate limiter would
-    /// serialize most of it anyway, and it keeps this crate free of a futures dependency.
+    /// Turns the wanted files into direct stream links, all at once and paced by the
+    /// limiter — a pack unlocked one link at a time costs a full round trip per episode
+    /// before playback can start.
     async fn unlock_links(&self, wanted: &[TreeFile]) -> Result<Vec<DebridFile>, DebridError> {
-        let mut files = Vec::new();
-        for file in wanted {
-            match self.unlock(file).await {
-                Ok(Some(unlocked)) => files.push(unlocked),
-                Ok(None) => {}
-                Err(error @ DebridError::Auth { .. }) => return Err(error),
-                Err(_) => {} // skip this file, the rest of the pack may still stream
-            }
-        }
-        Ok(files)
+        crate::client::map_files(wanted, |file| self.unlock(file)).await
     }
 
     /// Best-effort removal, never failing the caller: it runs where an error would mask the

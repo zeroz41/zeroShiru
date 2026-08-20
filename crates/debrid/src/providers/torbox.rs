@@ -134,6 +134,9 @@ impl TorBox {
             max_probes: 10,
             max_concurrent: 3,
             min_time_ms: 200,
+            // documented allowance is 300 a minute per endpoint; spending it as if it
+            // covered all of them keeps a season pack's worth of link requests well inside
+            reservoir: Some((300, 60_000)),
         };
         TorBox { client: DebridClient::new(config, api_key, transport, platform) }
     }
@@ -144,9 +147,6 @@ impl TorBox {
 
     /// The account's torrents. TorBox caches this itself, which is faster for the badge
     /// listing; `bypass_cache` is only worth its latency when polling a change just made.
-    ///
-    /// TODO(manager port): the JS base class shares one TTL-cached listing between badges
-    /// and playback; until the manager layer lands, every call fetches the listing anew.
     async fn account_torrents(&self, id: Option<&Value>, fresh: bool) -> Result<Vec<Value>, DebridError> {
         let mut query = format!("limit={LIST_LIMIT}");
         if let Some(id) = id {
@@ -164,12 +164,25 @@ impl TorBox {
         })
     }
 
+    /// The whole account, read at most once a minute and shared between the badge
+    /// refresh and every resolve. Reading it per play put a thousand-entry response on
+    /// the play path, ahead of the link requests the user is actually waiting for.
+    async fn listing(&self) -> Result<Vec<Value>, DebridError> {
+        let cached = self
+            .client
+            .listing(false, || async {
+                Ok(Value::Array(self.account_torrents(None, false).await?))
+            })
+            .await?;
+        Ok(cached.as_array().cloned().unwrap_or_default())
+    }
+
     /// The account's entry for an info hash, which is how a release already there is reused
     /// rather than added twice. Read back by id because the listing can be a minute stale, so
     /// one deleted elsewhere must read as absent rather than fail the resolve.
     async fn existing_torrent(&self, hash: &str) -> Result<Option<Value>, DebridError> {
         let known = self
-            .account_torrents(None, false)
+            .listing()
             .await?
             .into_iter()
             .find(|torrent| torrent_hash(torrent).as_deref() == Some(hash));
@@ -183,6 +196,12 @@ impl TorBox {
             .unwrap_or_default()
             .into_iter()
             .next();
+        if confirmed.is_none() {
+            // the listing named a torrent that is gone, so it is describing an account
+            // that no longer exists; the next read is worth paying for
+            tracing::debug!(target: "debrid", "TorBox listing named a torrent that is gone, adding the magnet instead");
+            self.client.forget_listing().await;
+        }
         Ok(confirmed)
     }
 
@@ -213,6 +232,8 @@ impl TorBox {
             Err(error) if error_code(&error) == Some("DUPLICATE_ITEM") => None,
             Err(error) => return Err(error),
         };
+        // the account now has a torrent the remembered listing does not
+        self.client.forget_listing().await;
         let id = created
             .as_ref()
             .and_then(|value| value.get("torrent_id"))
@@ -276,8 +297,7 @@ impl TorBox {
             // stable sort, so everything but the played file keeps torrent order in the queue
             ordered.sort_by_key(|file| file.path != target);
         }
-        let mut files = Vec::new();
-        for file in ordered {
+        let mut files = crate::client::map_files(&ordered, |file| async move {
             // this one endpoint takes the key as a query parameter instead of a bearer header
             let url = format!(
                 "{API}/torrents/requestdl?torrent_id={}&file_id={}&redirect=false",
@@ -289,21 +309,17 @@ impl TorBox {
                 auth_param: Some("token"),
                 ..RequestOpts::default()
             };
-            match self.request(&url, opts).await {
-                Ok(Value::String(link)) => files.push(DebridFile {
-                    name: file.path.rsplit('/').next().unwrap_or("").to_string(),
-                    path: file.path.clone(),
-                    size: file.size,
-                    url: link,
-                    r#type: file.mime.clone(),
-                }),
-                Ok(_) => {} // not a link, drop the file like the JS null return
-                // every other link would fail the same way, so this is not per-file to skip
-                Err(error @ DebridError::Auth { .. }) => return Err(error),
-                // packs do contain dead files, and one must not fail the whole resolve
-                Err(_) => {}
-            }
-        }
+            // not a link is a file to drop, like the JS null return
+            let Value::String(link) = self.request(&url, opts).await? else { return Ok(None) };
+            Ok(Some(DebridFile {
+                name: file.path.rsplit('/').next().unwrap_or("").to_string(),
+                path: file.path.clone(),
+                size: file.size,
+                url: link,
+                r#type: file.mime.clone(),
+            }))
+        })
+        .await?;
         // hand the caller torrent order back, whatever order the requests went out in
         let position: HashMap<&str, usize> = wanted
             .iter()
@@ -446,7 +462,7 @@ impl DebridProvider for TorBox {
             // key because one endpoint is unwell helps nobody — but a key the service actively
             // refuses is still refused, which is the arm below.
             Err(error @ (DebridError::Timeout { .. } | DebridError::Service { .. })) => {
-                self.account_torrents(None, false).await.map_err(|_| error)?;
+                self.listing().await.map_err(|_| error)?;
                 return Ok(AccountInfo { username: "TorBox user".into(), expires: None });
             }
             Err(error) => return Err(error),
@@ -471,7 +487,7 @@ impl DebridProvider for TorBox {
 
     async fn list_availability(&self) -> Result<HashMap<String, Availability>, DebridError> {
         let mut known = HashMap::new();
-        for torrent in self.account_torrents(None, false).await? {
+        for torrent in self.listing().await? {
             let Some(hash) = torrent_hash(&torrent) else { continue };
             known.insert(hash.clone(), torrent_availability(&torrent));
             if let Some(name) = torrent.get("name").and_then(Value::as_str) {

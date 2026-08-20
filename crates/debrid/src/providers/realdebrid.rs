@@ -204,11 +204,11 @@ impl RealDebrid {
             check_adds_magnets: true,
             max_batch: 100,
             max_probes: 10,
-            // documented allowance is 250 requests per minute, keep some headroom. The JS
-            // limiter also runs a 200-per-minute reservoir; those numbers belong to the
-            // limiter layer when it grows one.
+            // documented allowance is 250 requests per minute; 200 keeps the headroom the
+            // JS limiter kept, since a probe sweep and a resolve can want the account at once
             max_concurrent: 4,
             min_time_ms: 150,
+            reservoir: Some((200, 60_000)),
         };
         RealDebrid { client: DebridClient::new(config, api_key.to_string(), transport, platform) }
     }
@@ -246,11 +246,12 @@ impl RealDebrid {
         self.client.release(&RdDialect, &url, opts).await;
     }
 
-    /// The account's torrent listing, the whole account in one request.
-    /// TODO(manager): the JS base class shares one listing read per minute
-    /// (`listing()`/`forgetListing`); until that layer exists this fetches per call.
+    /// The account's torrent listing, the whole account in one request, read at most
+    /// once a minute and shared between the badge refresh and every resolve. Reading it
+    /// per play put a full account listing ahead of the links the user is waiting for.
     async fn fetch_listing(&self) -> Result<Value, DebridError> {
-        self.get(&format!("{API}/torrents?limit={LIST_LIMIT}")).await
+        let url = format!("{API}/torrents?limit={LIST_LIMIT}");
+        self.client.listing(false, || self.get(&url)).await
     }
 
     /// The account's entry for an info hash, or `None`. Read back by id because the listing
@@ -270,8 +271,12 @@ impl RealDebrid {
         let Some(id) = listed_id else { return Ok(None) };
         match self.get(&format!("{API}/torrents/info/{id}")).await {
             Ok(info) => Ok(Some(parse_info(&info))),
-            // the account listing named a torrent that is gone, add the magnet instead
-            Err(error) if error.status() == Some(404) => Ok(None),
+            // the account listing named a torrent that is gone, so it is describing an
+            // account that no longer exists: add the magnet, and pay for the next read
+            Err(error) if error.status() == Some(404) => {
+                self.client.forget_listing().await;
+                Ok(None)
+            }
             Err(error) => Err(error),
         }
     }
@@ -311,7 +316,8 @@ impl RealDebrid {
                 code: None,
             });
         };
-        // TODO(manager): forget the shared account listing here — it now misses this torrent
+        // the account now has a torrent the remembered listing does not
+        self.client.forget_listing().await;
         let selected = async {
             let budget = self.client.budget(self.client.config.timeouts.select);
             let info = self.await_status(&torrent_id, "waiting_files_selection", budget, reads).await?;
@@ -395,7 +401,8 @@ impl RealDebrid {
                 code: None,
             });
         }
-        let selected: Vec<&TorrentFile> = info.files.iter().filter(|file| file.selected).collect();
+        let selected: &Vec<&TorrentFile> =
+            &info.files.iter().filter(|file| file.selected).collect();
         let aligned = info.links.len() == selected.len();
         let candidates: Vec<Candidate> = if aligned {
             selected
@@ -414,20 +421,13 @@ impl RealDebrid {
         let target_index = target
             .and_then(|wanted| candidates.iter().position(|candidate| candidate.path.as_deref() == Some(wanted.path.as_str())));
         let windowed = window_files(&candidates, target_index, max_files);
-        // the JS mapFiles unrestricts concurrently through the rate limiter; sequential here
-        // until the limiter layer exists. TODO(manager): unrestrict concurrently again
-        let mut files = Vec::new();
-        for candidate in windowed {
-            let unrestricted = match self
+        // one round trip per link, all of them at once and paced by the limiter: a pack
+        // unrestricted one link at a time costs a full round trip per episode before
+        // playback can start, which on a slow link is most of a minute of black screen
+        crate::client::map_files(windowed, |candidate| async move {
+            let unrestricted = self
                 .post(&format!("{API}/unrestrict/link"), vec![("link".into(), Value::String(candidate.link.clone()))])
-                .await
-            {
-                Ok(value) => value,
-                // every other link would fail the same way, so this is not per-file
-                Err(error @ DebridError::Auth { .. }) => return Err(error),
-                // packs do contain dead files, and one must not fail the whole resolve
-                Err(_) => continue,
-            };
+                .await?;
             let name = candidate
                 .path
                 .as_deref()
@@ -437,16 +437,16 @@ impl RealDebrid {
                 .or_else(|| text(&unrestricted, "filename"))
                 .unwrap_or_default();
             if name.is_empty() {
-                continue;
+                return Ok(None);
             }
             if candidate.path.is_none() && !file_filter(&name) {
-                continue;
+                return Ok(None);
             }
             // RD packed the selection into an archive
             if is_archive(&name) && !selected.iter().any(|file| file.path.ends_with(&name)) {
-                continue;
+                return Ok(None);
             }
-            files.push(DebridFile {
+            Ok(Some(DebridFile {
                 path: candidate.path.clone().unwrap_or_else(|| format!("/{name}")),
                 size: unrestricted
                     .get("filesize")
@@ -456,9 +456,9 @@ impl RealDebrid {
                 url: text(&unrestricted, "download").unwrap_or_default(),
                 r#type: text(&unrestricted, "mimeType"),
                 name,
-            });
-        }
-        Ok(files)
+            }))
+        })
+        .await
     }
 
     /// The resolve body; `added` carries the id of any torrent this call put on the account,
@@ -478,10 +478,6 @@ impl RealDebrid {
         let filter = |name: &str| opts.file_filter.as_ref().map_or(true, |filter| filter(name));
         let filter: &(dyn Fn(&str) -> bool + Sync) = &filter;
         let max_files = opts.max_files.unwrap_or(self.client.config.max_files);
-
-        // TODO(manager): a cache probe of this same release deletes its own torrent when it
-        // finishes; the manager layer awaits any in-flight probe of this hash first, rather
-        // than reusing an id that is seconds from disappearing.
 
         // reuse a torrent that is already on the account instead of adding a duplicate
         let existing = self.existing_torrent(hash.as_deref()).await?;

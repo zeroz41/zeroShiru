@@ -135,7 +135,11 @@ impl Platform for ManualClock {
         self.now.load(Ordering::SeqCst)
     }
 
+    /// Moves the clock instead of waiting — but still yields, so a test can watch two
+    /// requests genuinely overlap. A sleep that never hands the executor back would make
+    /// every concurrency question in this crate untestable.
     async fn sleep(&self, ms: u64) {
         self.advance(ms);
+        tokio::task::yield_now().await;
     }
 }

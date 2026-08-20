@@ -17,15 +17,16 @@ use std::sync::{Arc, Mutex};
 /// offers them. The one list; hosts enumerate it rather than naming services.
 pub const PROVIDER_IDS: [&str; 4] = ["alldebrid", "premiumize", "realdebrid", "torbox"];
 
-/// How long the account listing is reused. Matched to the badge refresh interval:
-/// both the badge sweep and every resolve want it, and reading it per play put a
-/// full listing on the play path.
-const LISTING_TTL_MS: u64 = 60_000;
-
 /// Consecutive unanswered probes before a sweep gives up.
 const MAX_PROBE_FAILURES: usize = 3;
 /// Probes running at once. Small, since each briefly owns a torrent on the account.
 const MAX_PROBE_CONCURRENCY: usize = 3;
+/// How long a resolve waits for a probe of the same release to finish before going
+/// ahead anyway. A probe owns a torrent on the account until it tears it down, and a
+/// resolve that reuses that id gets a torrent deleted out from under it mid-play.
+const PROBE_HANDOVER_MS: u64 = 5_000;
+/// How often that wait looks again.
+const PROBE_HANDOVER_POLL_MS: u64 = 100;
 
 /// Builds a provider by its settings id. The one place the concrete types appear.
 pub fn create_provider(
@@ -50,10 +51,9 @@ pub struct ManagedProvider {
     /// Whether a check that adds magnets is running, since only one may be.
     sweeping: AtomicBool,
     /// Hashes being probed right now. The JS shares the pending promise; here a
-    /// second asker simply skips the hash — it stays unknown and re-checkable.
+    /// second asker skips the hash rather than asking about it twice — it stays
+    /// unknown and re-checkable, and skipping is not a failure to answer.
     in_flight: Mutex<std::collections::HashSet<String>>,
-    /// The account listing and when it was read, reused for LISTING_TTL_MS.
-    listing: Mutex<Option<(u64, HashMap<String, Availability>)>>,
 }
 
 impl ManagedProvider {
@@ -62,7 +62,6 @@ impl ManagedProvider {
             provider,
             sweeping: AtomicBool::new(false),
             in_flight: Mutex::new(Default::default()),
-            listing: Mutex::new(None),
         }
     }
 
@@ -89,9 +88,10 @@ impl ManagedProvider {
     ) -> Result<crate::DebridResolved, DebridError> {
         let budget = self.client().config.timeouts.resolve;
         let platform = self.client().platform();
+        self.await_probe(magnet).await;
         let work = self.provider.resolve(magnet, opts);
         futures::pin_mut!(work);
-        match futures::future::select(work, Box::pin(platform.sleep(budget))).await {
+        let resolved = match futures::future::select(work, Box::pin(platform.sleep(budget))).await {
             futures::future::Either::Left((result, _)) => result,
             futures::future::Either::Right(_) => Err(DebridError::Timeout {
                 message: format!(
@@ -100,6 +100,34 @@ impl ManagedProvider {
                     budget / 1_000
                 ),
             }),
+        }?;
+        // enforced here rather than trusted to each provider: a debrid link is account
+        // bound, so a cleartext one puts the user's traffic and their link on the wire in
+        // the clear, and that must not depend on a provider having remembered to check
+        let files = crate::secure_files(resolved.files, self.provider.config().title)?;
+        Ok(crate::DebridResolved { files, ..resolved })
+    }
+
+    /// Waits out a probe of this same release before resolving it.
+    ///
+    /// A probe on a service with no cache endpoint works by putting the magnet on the
+    /// account, reading the status back and taking it off again. A resolve that starts
+    /// while one is in the air finds that torrent, reuses its id, and then has it
+    /// deleted out from under it as the probe finishes — which reaches the user as a
+    /// play that dies a second after it starts, for a release that is definitely
+    /// cached. Waiting is bounded: a probe that outlives the budget is one this resolve
+    /// will simply have to race, and a resolve that adds the magnet again is recoverable
+    /// where a resolve that waits forever is not.
+    async fn await_probe(&self, magnet: &str) {
+        let Some(hash) = shiru_domain::parse_hash(magnet) else { return };
+        let platform = self.client().platform();
+        let deadline = platform.now_ms() + PROBE_HANDOVER_MS;
+        while self.in_flight.lock().unwrap().contains(&hash) {
+            if platform.now_ms() >= deadline {
+                tracing::debug!(target: "debrid", %hash, "resolving while a probe of the same release is still running");
+                return;
+            }
+            platform.sleep(PROBE_HANDOVER_POLL_MS).await;
         }
     }
 
@@ -109,29 +137,22 @@ impl ManagedProvider {
         self.sweeping.load(Ordering::SeqCst)
     }
 
-    /// What the account itself says: the free badge source. Read at most once per
-    /// TTL and shared by every caller — the badge refresh and every resolve both
-    /// want it, and reading it per play would put a full listing on the play path.
-    /// Answers land in the availability memory, so later checks are free.
+    /// What the account itself says: the free badge source. The listing behind it is
+    /// read at most once a minute and shared with every resolve, in the client — the
+    /// badge refresh and the play path both want it, and reading it per play would put
+    /// a full account listing ahead of the links the user is waiting for. Answers land
+    /// in the availability memory, so later checks are free.
     pub async fn list_availability(&self) -> Result<HashMap<String, Availability>, DebridError> {
-        let now = self.client().platform().now_ms();
-        if let Some((at, known)) = self.listing.lock().unwrap().as_ref() {
-            if now.saturating_sub(*at) < LISTING_TTL_MS {
-                return Ok(known.clone());
-            }
-        }
-        // a failed read is never remembered: the next caller asks again
         let known = self.provider.list_availability().await?;
         for (hash, state) in &known {
             self.client().remember(hash, *state);
         }
-        *self.listing.lock().unwrap() = Some((now, known.clone()));
         Ok(known)
     }
 
     /// Drops the remembered listing, because the account just changed.
-    pub fn forget_listing(&self) {
-        *self.listing.lock().unwrap() = None;
+    pub async fn forget_listing(&self) {
+        self.client().forget_listing().await;
     }
 
     /// The given hashes nothing is known about yet, in the order supplied. Callers
@@ -235,7 +256,11 @@ impl ManagedProvider {
     ) -> Result<(), DebridError> {
         // worker pool without a runtime dependency: shared queue, N concurrent futures
         let queue = Mutex::new(hashes.to_vec());
-        let answered = Mutex::new(Vec::<(String, Availability)>::new());
+        // each answer is published the moment it lands rather than when the sweep ends.
+        // A probing service takes several requests per release, so a list of ten is the
+        // better part of a minute — badging it all at once at the end reads, for that
+        // whole minute, exactly like a service that holds nothing
+        let answer = Mutex::new(answer);
         let failures = Mutex::new(0usize);
         let stopped = Mutex::new(Option::<DebridError>::None);
 
@@ -248,13 +273,17 @@ impl ManagedProvider {
                     return;
                 };
                 match self.probe(&hash).await {
-                    Ok(state) => {
-                        answered.lock().unwrap().push((hash, state));
+                    Ok(Some(state)) => {
+                        (answer.lock().unwrap())(&hash, state);
                         *failures.lock().unwrap() = 0;
                     }
+                    // somebody else is already asking about this one. Not an answer, and
+                    // emphatically not a failure to get one: counting it would let two
+                    // overlapping checks stop each other after three shared hashes
+                    Ok(None) => {}
                     Err(error) => {
                         let auth = matches!(error, DebridError::Auth { .. });
-                        let throttled = error.throttled();
+                        let throttled = self.provider.throttled(&error);
                         let mut count = failures.lock().unwrap();
                         *count += 1;
                         // an auth failure means every other probe would fail too
@@ -270,9 +299,6 @@ impl ManagedProvider {
         let workers = hashes.len().min(MAX_PROBE_CONCURRENCY).max(1);
         futures::future::join_all((0..workers).map(|_| worker())).await;
 
-        for (hash, state) in answered.into_inner().unwrap() {
-            answer(&hash, state);
-        }
         match stopped.into_inner().unwrap() {
             Some(error @ DebridError::Auth { .. }) => Err(error),
             _ => Ok(()),
@@ -280,17 +306,13 @@ impl ManagedProvider {
     }
 
     /// Runs one probe. Only a reported state or a definite error counts as an answer;
-    /// anything else errors, so the release stays re-checkable.
-    async fn probe(&self, hash: &str) -> Result<Availability, DebridError> {
-        {
-            let mut in_flight = self.in_flight.lock().unwrap();
-            if !in_flight.insert(hash.to_string()) {
-                return Err(DebridError::Service {
-                    message: format!("a probe for {hash} is already running"),
-                    status: None,
-                    code: None,
-                });
-            }
+    /// anything else errors, so the release stays re-checkable. `Ok(None)` means a probe
+    /// of this hash is already in the air — the JS waited on that same promise, which is
+    /// not expressible without keeping the future itself, and skipping is equivalent from
+    /// the caller's side: the hash stays unknown and the next pass picks it up.
+    async fn probe(&self, hash: &str) -> Result<Option<Availability>, DebridError> {
+        if !self.in_flight.lock().unwrap().insert(hash.to_string()) {
+            return Ok(None);
         }
         let outcome = async {
             let state = match self.provider.probe_availability(hash).await {
@@ -305,7 +327,7 @@ impl ManagedProvider {
                 });
             }
             self.client().remember(hash, state);
-            Ok(state)
+            Ok(Some(state))
         }
         .await;
         self.in_flight.lock().unwrap().remove(hash);
@@ -420,7 +442,7 @@ mod tests {
         managed.list_availability().await.unwrap();
         assert_eq!(transport.urls().len(), 2, "and one after it does");
 
-        managed.forget_listing();
+        managed.forget_listing().await;
         managed.list_availability().await.unwrap();
         assert_eq!(transport.urls().len(), 3, "an account that just changed is read again");
     }

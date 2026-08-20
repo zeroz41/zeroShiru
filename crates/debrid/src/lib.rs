@@ -6,6 +6,7 @@
 //! test/unit/debrid/ are the behavioural reference.
 
 pub mod client;
+pub mod limiter;
 pub mod manager;
 pub mod error;
 pub mod platform;
@@ -14,7 +15,7 @@ pub mod providers;
 #[cfg(test)]
 pub mod testing;
 
-pub use client::{DebridClient, Dialect, PlainDialect, RequestOpts};
+pub use client::{map_files, DebridClient, Dialect, PlainDialect, RequestOpts};
 pub use error::DebridError;
 pub use manager::{create_provider, ManagedProvider};
 pub use platform::Platform;
@@ -106,6 +107,9 @@ pub struct ProviderConfig {
     /// Max concurrent requests / min gap between requests, for the rate limiter.
     pub max_concurrent: usize,
     pub min_time_ms: u64,
+    /// The allowance a service publishes, as `(requests, window_ms)`. `None` where the
+    /// service documents none and the concurrency/spacing limits are the whole story.
+    pub reservoir: Option<(u32, u64)>,
 }
 
 impl ProviderConfig {
@@ -168,6 +172,13 @@ pub trait DebridProvider: Send + Sync {
     /// account while answering implement it; the rest have nothing to undo. The manager
     /// calls it before a check adds anything new.
     async fn retry_cleanup(&self) {}
+
+    /// Whether an error means the service wants fewer requests rather than that this
+    /// release is a problem — a sweep stops on one. A `429` always counts; providers
+    /// whose APIs say it in their own error codes instead override this and say so.
+    fn throttled(&self, error: &DebridError) -> bool {
+        error.throttled()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,7 +235,7 @@ mod tests {
             id: "x", title: "X", auth: AuthScheme::Bearer, auth_param: "apikey",
             encoding: BodyEncoding::Form, timeouts: Timeouts::default(), nominal_latency: 300,
             max_files: 60, availability_check: AvailabilityCheck::Probe, check_adds_magnets: true, max_batch: 100,
-            max_probes: 10, max_concurrent: 4, min_time_ms: 250,
+            max_probes: 10, max_concurrent: 4, min_time_ms: 250, reservoir: None,
         };
         assert!(config.check_adds_magnets);
         assert_eq!(config.max_ask(), 10);

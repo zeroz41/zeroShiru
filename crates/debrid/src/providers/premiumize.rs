@@ -5,8 +5,8 @@
 //! The easiest service to support, having kept the endpoints the others dropped:
 //! `/cache/check` answers a whole results list for free, and `/transfer/directdl`
 //! returns every stream link for a magnet in one call without storing anything, so
-//! there is no add or cleanup path at all — nothing here for the orphan-retry
-//! manager layer to replay (TODO: other providers will need it).
+//! there is no add or cleanup path at all, so this is the one provider with nothing
+//! for the client's orphan retry to replay.
 //!
 //! `/transfer/list` never says which info hash a transfer came from, so badges come
 //! from the cache endpoint alone.
@@ -123,16 +123,9 @@ impl Premiumize {
             // no documented allowance, so be modest
             max_concurrent: 3,
             min_time_ms: 250,
+            reservoir: None,
         };
         Premiumize { client: DebridClient::new(config, api_key, transport, platform) }
-    }
-
-    /// Whether an error means the account wants fewer requests rather than that a release
-    /// is a problem. A sweep stops on one. Consulted by the manager layer alongside
-    /// `DebridError::throttled` (TODO: wire in once the sweep/manager layer lands).
-    pub fn throttled(&self, error: &DebridError) -> bool {
-        error.throttled()
-            || error_code(error).is_some_and(|code| THROTTLE_CODES.contains(&code))
     }
 
     /// Every stream link for a magnet, read out of the cache in one call. Touches
@@ -190,6 +183,13 @@ impl DebridProvider for Premiumize {
 
     fn config(&self) -> &ProviderConfig {
         &self.client.config
+    }
+
+    /// Premiumize says "slow down" in its own error codes rather than with a 429, so a
+    /// sweep that only watched the status would keep asking through a rate limit and read
+    /// every refusal as a release it could not answer about.
+    fn throttled(&self, error: &DebridError) -> bool {
+        error.throttled() || error_code(error).is_some_and(|code| THROTTLE_CODES.contains(&code))
     }
 
     async fn validate(&self) -> Result<AccountInfo, DebridError> {

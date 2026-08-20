@@ -44,7 +44,15 @@ impl DebridState {
             message: format!("unknown debrid service: {service}"),
         })?;
         let managed = Arc::new(ManagedProvider::new(provider));
-        *active = Some((service.to_string(), api_key.to_string(), managed.clone()));
+        let replaced = active.replace((service.to_string(), api_key.to_string(), managed.clone()));
+        // whatever the outgoing account is still owed, it is owed on that account and no
+        // other — a probe that dropped mid-flight left a magnet behind, and once this
+        // provider is gone nothing else holds the id to take it off again
+        if let Some((_, _, outgoing)) = replaced {
+            if outgoing.client().orphaned() > 0 {
+                tauri::async_runtime::spawn(async move { outgoing.provider().retry_cleanup().await });
+            }
+        }
         Ok(managed)
     }
 }
@@ -267,8 +275,10 @@ pub async fn debrid_resolve(
         max_files: None,
     };
     let resolved = managed.resolve(&magnet, &opts).await.map_err(failure)?;
-    // the account just gained a torrent, so the cached listing no longer describes it
-    managed.forget_listing();
+    // the cached account listing is dropped by whichever provider added a torrent, at the
+    // moment it added it — a resolve that streamed something already on the account
+    // changed nothing, and paying for a fresh listing after every play is what put a
+    // thousand-entry response on the play path in the first place
     // playing it proves the service holds it, which is the best answer there is
     managed.client().remember(&resolved.hash, Availability::Cached);
     let files = resolved
