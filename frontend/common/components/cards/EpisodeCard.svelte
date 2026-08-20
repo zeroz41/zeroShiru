@@ -14,6 +14,7 @@
   import { statusColorMap } from '@/modules/anime/anime.js'
   import { episodesList } from '@/modules/episodes.js'
   import { hoverClick } from '@/modules/lib/click.js'
+  import { createHoverIntent } from '@/modules/lib/hover.js'
   import { liveAnimeEpisodeProgress } from '@/modules/anime/animeprogress.js'
   import { anilistClient } from '@/modules/providers/anilist/anilist.js'
   import { settings } from '@/modules/settings.js'
@@ -24,6 +25,8 @@
   export let section = false
 
   let preview = false
+  // opening on arrival makes a pointer crossing the row mount a preview per card
+  const hoverIntent = createHoverIntent({ apply: value => { preview = value } })
   let ignoreFocus = false
   let zeroEpisode = false
   let prompt = writable(false)
@@ -58,7 +61,7 @@
     const episode = isValidNumber(data.episode) ? data.episode : ((media?.episodes === 1 && media?.episodes) || (!media?.episodes && (media?.format === 'MOVIE' || media?.format === 'OVA' || media?.format === 'SPECIAL') && 1))
     if (!$prompt && !data.similarity && isValidNumber(episode) && !Array.isArray(episode) && (episode - 1) >= 1 && media?.mediaListEntry?.status !== 'COMPLETED' && (media?.mediaListEntry?.progress || -1) < (episode - 1)) prompt.set(!!tapped)
     if (!$prompt || !$clicked) {
-      preview = state
+      hoverIntent.set(state, tapped)
       setTimeout(() => {
         if (!preview) prompt.set(false)
       }).unref?.()
@@ -110,6 +113,7 @@
   function clearTimeouts() {
     clearTimeout(focusTimeout)
     clearTimeout(blurTimeout)
+    hoverIntent.cancel()
   }
 
   let sinceInterval

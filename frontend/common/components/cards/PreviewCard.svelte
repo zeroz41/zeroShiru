@@ -10,6 +10,8 @@
   import { Heart, Play, VolumeX, Volume2, ThumbsUp, ThumbsDown } from 'lucide-svelte'
   import { settings } from '@/modules/settings.js'
   import { DESKTOP } from '@/modules/bridge.js'
+  import { TRAILER_DWELL } from '@/modules/lib/hover.js'
+  import { onMount, onDestroy } from 'svelte'
 
   /** @type {import('@/modules/providers/anilist/al.d.ts').Media} */
   export let media
@@ -48,6 +50,17 @@
   function toggleMute() {
     muted = !muted
   }
+
+  // The trailer is the expensive half of a preview: an iframe is a whole nested renderer
+  // plus a video decode. The picture and the details are what a glance is usually after,
+  // so they show at once and this follows only if the card is still open.
+  let trailerReady = false
+  let trailerTimeout
+  onMount(() => {
+    trailerTimeout = setTimeout(() => { trailerReady = true }, TRAILER_DWELL)
+    trailerTimeout?.unref?.()
+  })
+  onDestroy(() => clearTimeout(trailerTimeout))
 </script>
 
 <div class='position-absolute h-full absolute-container top-0 bottom-0 m-auto bg-dark-light z-30 rounded pointer fade-change overflow-hidden clip-0-rounded' in:fadeIn out:fadeOut bind:this={element} on:scroll={(e) => e.target.scrollTop = 0}>
@@ -55,7 +68,7 @@
     <div class='ratio-16-9 w-full h-full clip-0'>
       <SmartImage class='img-cover w-full h-full' images={[media.bannerImage, ...(media.trailer?.id ? [`https://i.ytimg.com/vi/${media.trailer.id}/maxresdefault.jpg`, `https://i.ytimg.com/vi/${media.trailer.id}/hqdefault.jpg`] : []), media.coverImage?.extraLarge, './no_image_episode.jpg' ]}/>
       {#await (media.trailer?.id && media) || episodesList.getMedia(media.idMal) then trailer}
-        {#if trailer?.trailer?.id || trailer?.data?.trailer?.youtube_id }
+        {#if trailerReady && (trailer?.trailer?.id || trailer?.data?.trailer?.youtube_id) }
           {#await DESKTOP.getYouTube() then youtubeServer}
             <div style='transition: opacity .3s' class:transparent={hide}>
               <SmartImage class='position-absolute top-0 left-0 w-full h-full img-cover blur-6' images={[`https://i.ytimg.com/vi/${media.trailer.id}/maxresdefault.jpg`, `https://i.ytimg.com/vi/${media.trailer.id}/hqdefault.jpg`]}/>

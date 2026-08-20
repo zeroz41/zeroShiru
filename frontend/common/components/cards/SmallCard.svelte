@@ -4,6 +4,7 @@
   import { airingAt, getAiringInfo, formatMap, statusColorMap } from '@/modules/anime/anime.js'
   import { createListener, baseFontSize, resizeObserver } from '@/modules/util.js'
   import { hoverClick } from '@/modules/lib/click.js'
+  import { createHoverIntent } from '@/modules/lib/hover.js'
   import SmartImage from '@/components/visual/SmartImage.svelte'
   import AudioLabel from '@/components/AudioLabel.svelte'
   import { anilistClient, currentYear } from '@/modules/providers/anilist/anilist.js'
@@ -31,10 +32,12 @@
 
   let preview = false
   let ignoreFocus = false
-  function setHoverState(state) {
+  // a pointer crossing the grid must not open (and pay for) a preview per card it passes
+  const hoverIntent = createHoverIntent({ apply: value => { preview = value } })
+  function setHoverState(state, tapped) {
     const focused = document.activeElement
     if (container && focused?.offsetParent != null && (container.contains(focused)) && (!previewCard || !previewCard.contains(focused))) ignoreFocus = true
-    if (settings.value.cardPreview) preview = state
+    if (settings.value.cardPreview) hoverIntent.set(state, tapped)
     else if (state) viewMedia()
   }
 
@@ -78,6 +81,7 @@
   function clearTimeouts() {
     clearTimeout(focusTimeout)
     clearTimeout(blurTimeout)
+    hoverIntent.cancel()
   }
 
   let baseWidth
@@ -159,20 +163,24 @@
 </div>
 
 <style>
+  /* the ring is drawn once and then only moved and faded: an animated box-shadow is
+     repainted by the CPU every frame, and a schedule full of airing cards means every
+     one of them repainting forever, which is felt everywhere else on the page */
   .airing::before {
     content: '';
     position: absolute;
     inset: -1.3rem;
     border-radius: .4rem;
     pointer-events: none;
+    box-shadow: 0 0 0 .7rem var(--dark-color);
     animation: airing-pulse 3.5s infinite;
-    will-change: box-shadow, opacity;
+    will-change: transform, opacity;
   }
   @keyframes airing-pulse {
-    0%   { box-shadow: 0 0 0 0 var(--success-color); opacity: 0.9; }
-    25%  { box-shadow: 0 0 0 .7rem var(--dark-color); opacity: 0.6; }
-    40% { box-shadow: 0 0 0 0 var(--dark-color); opacity: 0.4; }
-    100% { box-shadow: 0 0 0 0 var(--dark-color); opacity: 0; }
+    0%   { transform: scale(.955); opacity: 0.9; }
+    25%  { transform: scale(1); opacity: 0.6; }
+    40%  { transform: scale(1); opacity: 0.4; }
+    100% { transform: scale(1.01); opacity: 0; }
   }
   .airing-badge {
     position: absolute;
