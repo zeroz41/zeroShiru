@@ -9,6 +9,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 /// Where the log lives, once `init` has decided.
@@ -33,8 +34,11 @@ pub fn init(dir: &Path) {
 
     // RUST_LOG wins where it is set; otherwise keep the file readable rather than
     // drowning it in librqbit's per-peer chatter
+    // `renderer=debug` is deliberate: the page only forwards debug lines when the
+    // user has turned debug logging on, so the decision belongs there rather than
+    // in a filter they cannot see
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,librqbit=warn"));
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,librqbit=warn,renderer=debug"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(LogWriter)
@@ -102,6 +106,72 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogWriter {
     }
 }
 
+
+/// The most a single renderer line may occupy. Console arguments can be whole
+/// objects, and a log nobody can read is no better than no log.
+const MAX_RENDERER_MESSAGE: usize = 2_000;
+
+/// The most renderer lines one run may write. A page that logs in a loop — a render
+/// loop throwing every frame is the shape that happens — must not fill the disk.
+const MAX_RENDERER_LINES: usize = 20_000;
+
+static RENDERER_LINES: AtomicUsize = AtomicUsize::new(0);
+
+/// One line the page wants in the log. The page picks the level; `scope` is the
+/// `debug` namespace or console method it came from, so a reader can tell app
+/// chatter from a real failure.
+#[derive(Debug, serde::Deserialize)]
+pub struct RendererLog {
+    pub level: String,
+    #[serde(default)]
+    pub scope: Option<String>,
+    pub message: String,
+}
+
+/// Renderer diagnostics, into the same file the rest of the app writes to.
+///
+/// Every earlier hunt through this webview cost hours because the page's own
+/// errors went to a console nobody could see: a missing `navigator.vibrate` broke
+/// every click in the app and said so only to a devtools window that was never
+/// open. The page now says it where the user can send it on.
+#[tauri::command]
+pub fn log_renderer(entries: Vec<RendererLog>) {
+    for entry in &entries {
+        record(entry);
+    }
+}
+
+/// Writes one line, or reports the cap being reached exactly once.
+pub fn record(entry: &RendererLog) {
+    let count = RENDERER_LINES.fetch_add(1, Ordering::Relaxed);
+    if count >= MAX_RENDERER_LINES {
+        if count == MAX_RENDERER_LINES {
+            tracing::warn!(target: "renderer", "renderer logging stopped after {MAX_RENDERER_LINES} lines");
+        }
+        return;
+    }
+    let scope = entry.scope.as_deref().unwrap_or("page");
+    let message = clamp(&entry.message);
+    match entry.level.as_str() {
+        "error" => tracing::error!(target: "renderer", scope, "{message}"),
+        "warn" => tracing::warn!(target: "renderer", scope, "{message}"),
+        "info" => tracing::info!(target: "renderer", scope, "{message}"),
+        _ => tracing::debug!(target: "renderer", scope, "{message}"),
+    }
+}
+
+/// Cuts a line to length on a character boundary, saying that it was cut.
+fn clamp(message: &str) -> std::borrow::Cow<'_, str> {
+    if message.len() <= MAX_RENDERER_MESSAGE {
+        return std::borrow::Cow::Borrowed(message);
+    }
+    let mut end = MAX_RENDERER_MESSAGE;
+    while end > 0 && !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    std::borrow::Cow::Owned(format!("{}… [{} more bytes]", &message[..end], message.len() - end))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +198,42 @@ mod tests {
         tracing::info!("still logging");
         let later = std::fs::read_to_string(path).unwrap();
         assert!(later.contains("still logging"), "a reset log is still a log");
+
+        // the page's own diagnostics land in the same file, at the level it asked for
+        log_renderer(vec![
+            RendererLog {
+                level: "error".into(),
+                scope: Some("window.onerror".into()),
+                message: "TypeError: navigator.vibrate is not a function".into(),
+            },
+            RendererLog {
+                level: "debug".into(),
+                scope: Some("ui:debrid".into()),
+                message: "availability check failed".into(),
+            },
+        ]);
+        let with_page = std::fs::read_to_string(path).unwrap();
+        assert!(with_page.contains("navigator.vibrate"), "a page error is readable in the log the user exports");
+        assert!(with_page.contains("window.onerror"), "and says where it came from");
+        assert!(
+            with_page.contains("ui:debrid"),
+            "debug lines pass the default filter: the page decides whether to send them"
+        );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_console_line_carrying_a_whole_object_is_cut_rather_than_dropped() {
+        let short = "small".to_string();
+        assert_eq!(clamp(&short), "small");
+
+        let long = "\u{e9}".repeat(MAX_RENDERER_MESSAGE);
+        let cut = clamp(&long);
+        assert!(cut.len() < long.len(), "an enormous line is cut");
+        assert!(cut.contains("more bytes"), "and says that it was cut");
+        assert!(
+            cut.chars().take_while(|c| *c == '\u{e9}').count() > 0,
+            "cutting a multi-byte string must not slice a character in half"
+        );
     }
 }

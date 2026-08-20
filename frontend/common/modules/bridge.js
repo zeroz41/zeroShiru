@@ -46,6 +46,13 @@ const commonDefaults = {
   getDeviceInfo: noopAsyncVoid,
   exportLog: noopAsyncVoid,
   resetLog: noopAsyncVoid,
+  /**
+   * Page diagnostics into the host's log, in batches. Null where a host keeps no log:
+   * the page then leaves its console alone rather than paying to hook it for nobody.
+   * See modules/lib/diagnostics.js.
+   * @type {null | ((entries: { level: string, scope: string, message: string }[]) => any)}
+   */
+  log: null,
   notify: noopVoid,
   windowReady: noopVoid,
   isWindowVisible: noopAsyncBool,

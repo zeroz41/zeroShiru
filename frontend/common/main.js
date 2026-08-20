@@ -4,9 +4,16 @@ import '@fontsource-variable/nunito'
 import { cacheReady, migrationStatus } from '@/modules/cache.js'
 import { SUPPORTS } from '@/modules/support.js'
 import { COMMON } from '@/modules/bridge.js'
+import { attachDiagnostics, debugLogging } from '@/modules/lib/diagnostics.js'
+import Debug from 'debug'
 import '@/css.css'
 import '@/themes.css'
 import '@/typography.css'
+
+// the page's own diagnostics go where the user can export them; the host's boot-time
+// capture hands over here so nothing is logged twice
+attachDiagnostics({ send: COMMON.log, verbose: debugLogging, debug: Debug })
+window.__SHIRU_BOOT_LOG__?.stop()
 
 let splash
 if (!SUPPORTS.isAndroid && await COMMON.isWindowVisible()) {

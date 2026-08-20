@@ -15,6 +15,24 @@
     updateListeners.get(type)?.(data)
   })
 
+  // Whatever breaks before the app bundle can listen for it — a module that throws at
+  // import time leaves a blank window and, until now, an empty log. The renderer takes
+  // these over the moment it is running (modules/lib/diagnostics.js), and stops these.
+  const bootLog = (level, scope, message) => {
+    invoke('log_renderer', { entries: [{ level, scope, message: String(message ?? '') }] }).catch(() => {})
+  }
+  const onBootError = (event) => bootLog('error', 'boot', event?.error?.stack || event?.message || 'unknown error')
+  const onBootRejection = (event) => bootLog('error', 'boot', event?.reason?.stack || event?.reason || 'unhandled rejection')
+  window.addEventListener('error', onBootError)
+  window.addEventListener('unhandledrejection', onBootRejection)
+  bootLog('info', 'bridge', 'host bridge injected')
+  window.__SHIRU_BOOT_LOG__ = {
+    stop: () => {
+      window.removeEventListener('error', onBootError)
+      window.removeEventListener('unhandledrejection', onBootRejection)
+    }
+  }
+
   window.common = {
     getAppVersion: () => invoke('get_app_version'),
     getPlatformInfo: () => platformInfo,
@@ -26,6 +44,8 @@
     pickFolder: async () => (await invoke('pick_folder')) || '',
     exportLog: () => invoke('export_log'),
     resetLog: () => invoke('reset_log'),
+    // page diagnostics into the same log everything else writes to, in batches
+    log: (entries) => invoke('log_renderer', { entries }).catch(() => {}),
     setUpdateChannel: (channel) => invoke('set_update_channel', { channel: channel || 'stable' }),
     // answers 'unconfigured' until a signing key exists, which the UI treats as
     // "nothing to install" rather than as a failure

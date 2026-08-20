@@ -46,8 +46,10 @@ pub fn run() {
     // both run before the window exists: the renderer is configured at startup, and
     // anything that goes wrong from here should end up in the log
     let identifier = "watch.zeroshiru.app";
-    graphics::apply(identifier);
+    // logging first, so the renderer decision below is in the log that explains a
+    // launch that never drew anything
     logging::init(&graphics::config_dir_for(identifier));
+    graphics::apply(identifier);
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -71,6 +73,7 @@ pub fn run() {
             commands::get_platform_info,
             commands::route_playback,
             commands::open_uri,
+            logging::log_renderer,
             net::probe_network,
             net::http_request,
             debrid::debrid_validate,
@@ -133,6 +136,17 @@ pub fn run() {
                 .background_color(tauri::window::Color(0x17, 0x19, 0x1c, 0xff))
                 .initialization_script(bridge_script())
                 .build()?;
+            // A window that is still up after this was composited successfully, whatever
+            // the page is doing inside it. The renderer says so sooner (window_ready);
+            // this is the backstop, so a page bug can never be mistaken for a driver that
+            // cannot draw and cost the machine its GPU path.
+            {
+                let config_dir = graphics::config_dir_for("watch.zeroshiru.app");
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(20));
+                    graphics::started_successfully(&config_dir);
+                });
+            }
             #[cfg(desktop)]
             {
                 shell::setup_tray(app.handle())?;
