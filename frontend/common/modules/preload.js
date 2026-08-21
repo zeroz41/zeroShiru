@@ -31,6 +31,45 @@ export const AHEAD_SECTIONS = '300%'
 export const AHEAD_PAGES = 1.5
 
 /**
+ * Intersection observers are deliberately shared. A results page can contain hundreds of
+ * SmartImages, and constructing an observer (and a native callback) for every card costs more
+ * than observing another target with the same root and margin. Pools disappear as soon as their
+ * last target loads or is destroyed, so scroll containers are not kept alive after navigation.
+ *
+ * @type {Map<string, Map<Element|null, { observer: IntersectionObserver, callbacks: Map<Element, () => void> }>>}
+ */
+const observerPools = new Map()
+
+function observerPool (root, margin) {
+  let roots = observerPools.get(margin)
+  if (!roots) {
+    roots = new Map()
+    observerPools.set(margin, roots)
+  }
+  let pool = roots.get(root)
+  if (pool) return pool
+
+  const callbacks = new Map()
+  const observer = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue
+      callbacks.get(entry.target)?.()
+    }
+  }, { root, threshold: 0, rootMargin: margin })
+  pool = { observer, callbacks }
+  roots.set(root, pool)
+  return pool
+}
+
+function releasePool (root, margin, pool) {
+  if (pool.callbacks.size) return
+  pool.observer.disconnect()
+  const roots = observerPools.get(margin)
+  roots?.delete(root)
+  if (!roots?.size) observerPools.delete(margin)
+}
+
+/**
  * The element a node actually scrolls inside, or null where that is the page itself.
  *
  * This is the difference between the distances above meaning something and meaning nothing.
@@ -68,17 +107,24 @@ export function nearViewport (node, { near, margin = AHEAD_IMAGES, skip = false 
     near?.()
     return {}
   }
+  const root = scrollRoot(node)
+  const pool = observerPool(root, margin)
+  let active = true
+  const stop = () => {
+    if (!active) return
+    active = false
+    pool.callbacks.delete(node)
+    pool.observer.unobserve?.(node)
+    releasePool(root, margin, pool)
+  }
   // once, and by our own bookkeeping: one callback may carry several entries, and the
   // node this loads is downloaded once no matter how often it is scrolled past
-  let fired = false
-  const observer = new IntersectionObserver(entries => {
-    if (fired || !entries.some(entry => entry.isIntersecting)) return
-    fired = true
-    observer.disconnect()
+  pool.callbacks.set(node, () => {
+    stop()
     near?.()
-  }, { root: scrollRoot(node), threshold: 0, rootMargin: margin })
-  observer.observe(node)
-  return { destroy: () => observer.disconnect() }
+  })
+  pool.observer.observe(node)
+  return { destroy: stop }
 }
 
 /**

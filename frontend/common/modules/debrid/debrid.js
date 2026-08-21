@@ -55,6 +55,11 @@ function account (value = settings.value) {
 /** The configured account as one string, so a change is a comparison. */
 let serviceKey = null
 let lastRefresh = 0
+/** Identifies the latest results list; older requests may finish but cannot repaint or retry. */
+let availabilityGeneration = 0
+/** @type {Map<string, string> | null} Answers waiting to reach the store. */
+let queued = null
+let queueTimer = null
 
 /** Whether a debrid service is selected and has an API key. */
 export const debridEnabled = derived(settings, value => Boolean(account(value)))
@@ -115,7 +120,13 @@ settings.subscribe(value => {
 
 // answers pushed by a check while it is still running, so a probing service badges the list as
 // it goes instead of all at once when the sweep ends
-DEBRID.onAvailability((hash, state) => queueAvailability(hash, normalizeAvailability(state)))
+DEBRID.onAvailability((hash, state, requestId) => {
+  // A probing sweep may keep answering after the user switches service or key. Its command
+  // result is generation-checked below; pushed answers need the same identity or they can
+  // repaint the new account with the old one's badges.
+  if (requestId != null && requestId !== availabilityGeneration) return
+  queueAvailability(hash, normalizeAvailability(state))
+})
 
 /** Validates the configured service and API key, used by the settings test button. */
 export async function testDebrid () {
@@ -279,7 +290,9 @@ function askable (hashes) {
  *   bites from the front. Entries without a hash are dropped rather than asked about.
  */
 export async function checkDebridAvailability (results) {
-  cancelDebridAvailability() // this list supersedes whatever the last one was waiting to retry
+  clearDebridRetry() // this list supersedes whatever the last one was waiting to retry
+  clearQueuedAvailability()
+  const generation = ++availabilityGeneration
   const current = account()
   // every reason not to ask is said out loud: an empty badge column has looked the same
   // for all of them, and telling them apart from the outside is impossible
@@ -294,23 +307,25 @@ export async function checkDebridAvailability (results) {
   const hashes = askable(results)
   if (!hashes.length) return debug('Not asking: none of the results carry an info hash')
   const pending = await DEBRID.unknownHashes(current.id, current.apiKey, hashes)
+  if (!isCurrent(current) || generation !== availabilityGeneration) return
   if (!pending.length) return debug(`All ${hashes.length} releases already have an answer`)
   debug(`Asking ${serviceTitle()} about ${pending.length} of ${hashes.length} releases`)
   let busy = false
   debridChecking.update(count => count + 1)
   try {
-    const answered = await DEBRID.checkAvailability(current.id, current.apiKey, hashes)
+    const answered = await DEBRID.checkAvailability(current.id, current.apiKey, hashes, generation)
     busy = answered.busy // a check already owned the service, so this call only read memory back
     outageReported = false // it is talking again, so a later silence is worth saying out loud
-    if (isCurrent(current)) publish(answered)
+    if (isCurrent(current) && generation === availabilityGeneration) publish(answered)
   } catch (error) {
     debug('Availability check failed:', error)
-    reportOutage(error)
+    if (generation === availabilityGeneration) reportOutage(error)
   } finally {
     debridChecking.update(count => count - 1)
   }
-  if (!isCurrent(current)) return
+  if (!isCurrent(current) || generation !== availabilityGeneration) return
   const left = await DEBRID.unknownHashes(current.id, current.apiKey, hashes)
+  if (!isCurrent(current) || generation !== availabilityGeneration) return
   if (!left.length) {
     retryDelay = RETRY_DELAY
     return
@@ -320,7 +335,10 @@ export async function checkDebridAvailability (results) {
   if (busy || left.length < pending.length) retryDelay = RETRY_DELAY
   else retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY)
   debug(`${left.length} of ${pending.length} releases unanswered, asking again in ${retryDelay}ms`)
-  retry = setTimeout(() => checkDebridAvailability(hashes), retryDelay)
+  retry = setTimeout(() => {
+    retry = null
+    if (generation === availabilityGeneration) checkDebridAvailability(hashes)
+  }, retryDelay)
 }
 
 /**
@@ -340,8 +358,20 @@ function reportOutage (error) {
 
 /** Drops a pending retry, for when the results it described are no longer on screen. */
 export function cancelDebridAvailability () {
+  availabilityGeneration++
+  clearDebridRetry()
+  clearQueuedAvailability()
+}
+
+function clearDebridRetry () {
   if (retry) clearTimeout(retry)
   retry = null
+}
+
+function clearQueuedAvailability () {
+  if (queueTimer) clearTimeout(queueTimer)
+  queueTimer = null
+  queued = null
 }
 
 function serviceTitle () {
@@ -356,7 +386,10 @@ function serviceTitle () {
 function publish (reply) {
   publishAvailability(Object.entries(reply?.answers || {}))
   const names = Object.entries(reply?.names || {})
-  if (names.length !== debridReleaseNames.value.size) debridReleaseNames.set(new Map(names))
+  const current = debridReleaseNames.value
+  if (names.length !== current.size || names.some(([hash, name]) => current.get(hash) !== name)) {
+    debridReleaseNames.set(new Map(names))
+  }
 }
 
 /**
@@ -372,9 +405,6 @@ function recordAvailability (magnetOrHash, state) {
   publishAvailability([[hash, state]])
 }
 
-/** @type {Map<string, string> | null} Answers waiting to reach the store. */
-let queued = null
-
 /** How long answers are collected for before one write reaches the UI. */
 export const QUEUE_WINDOW = 50
 
@@ -389,9 +419,10 @@ function queueAvailability (hash, state) {
     queued = new Map()
     // a task, not a microtask: each answer crosses from the host as its own event, so a
     // microtask drains between every one of them and coalesces nothing at all
-    setTimeout(() => {
+    queueTimer = setTimeout(() => {
       const answers = queued
       queued = null
+      queueTimer = null
       publishAvailability(answers)
     }, QUEUE_WINDOW)
   }

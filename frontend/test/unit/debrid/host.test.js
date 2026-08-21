@@ -161,6 +161,22 @@ test('answers and release names from the core reach the stores', async () => {
   cancelDebridAvailability()
 })
 
+test('release names update when one same-sized set replaces another', async () => {
+  const other = 'b'.repeat(40)
+  let reply = { answers: { [HASH]: 'cached' }, names: { [HASH]: 'Old release' }, busy: false }
+  let unknownRead = 0
+  DEBRID.unknownHashes = async (service, apiKey, hashes) => (++unknownRead % 2 ? hashes : [])
+  DEBRID.checkAvailability = async () => reply
+
+  await checkDebridAvailability([HASH])
+  assert.equal(debridReleaseNames.value.get(HASH), 'Old release')
+
+  reply = { answers: { [other]: 'cached' }, names: { [other]: 'New release' }, busy: false }
+  await checkDebridAvailability([other])
+  assert.equal(debridReleaseNames.value.has(HASH), false, 'a same-sized map is still different data')
+  assert.equal(debridReleaseNames.value.get(other), 'New release')
+})
+
 /** The queue window the store writes are collected into, plus room to fire. */
 const settled = () => new Promise(resolve => setTimeout(resolve, QUEUE_WINDOW + 20))
 
@@ -205,6 +221,88 @@ test('badges from a request that outlived its account are dropped', async () => 
   release()
   await checking
   assert.equal(debridAvailability.value.size, 0, "badging a new account with the old account's answers is worse than no badges")
+})
+
+test('an account switch while reading memory stops before spending an old account request', async () => {
+  let releaseUnknown = null
+  let checks = 0
+  DEBRID.unknownHashes = () => new Promise(resolve => { releaseUnknown = () => resolve([HASH]) })
+  DEBRID.checkAvailability = async () => { checks++; return { answers: {}, names: {}, busy: false } }
+
+  const checking = checkDebridAvailability([HASH])
+  while (!releaseUnknown) await Promise.resolve()
+  configure({ service: 'realdebrid', key: 'other' })
+  releaseUnknown()
+  await checking
+
+  assert.equal(checks, 0, 'the account changed before any provider work began')
+})
+
+test('pushed answers identify their request so an old sweep cannot badge a new account', async () => {
+  let requestId
+  let releaseCheck = null
+  DEBRID.unknownHashes = async (service, apiKey, hashes) => hashes
+  DEBRID.checkAvailability = (service, apiKey, hashes, id) => {
+    requestId = id
+    return new Promise(resolve => { releaseCheck = () => resolve({ answers: {}, names: {}, busy: false }) })
+  }
+
+  const checking = checkDebridAvailability([HASH])
+  while (!releaseCheck) await Promise.resolve()
+  configure({ service: 'realdebrid', key: 'other' })
+  DEBRID.publishAvailability(HASH, 'cached', requestId)
+  releaseCheck()
+  await checking
+  await settled()
+
+  assert.equal(typeof requestId, 'number', 'the host needs an opaque request identity, never the API key')
+  assert.equal(debridAvailability.value.has(HASH), false)
+})
+
+test('queued badge events are discarded when the account changes', async () => {
+  DEBRID.publishAvailability(HASH, 'cached')
+  configure({ service: 'realdebrid', key: 'other' })
+  await settled()
+  assert.equal(debridAvailability.value.has(HASH), false, 'an event from the old account must not land after its badges were cleared')
+})
+
+test('queued badge events are discarded when a newer results list takes over', async () => {
+  const newerHash = 'b'.repeat(40)
+  DEBRID.publishAvailability(HASH, 'cached')
+  DEBRID.unknownHashes = async () => []
+
+  await checkDebridAvailability([newerHash])
+  await settled()
+
+  assert.equal(debridAvailability.value.has(HASH), false, 'a late render batch must not badge a list the user left')
+})
+
+test('a slower old results list cannot replace or retry after a newer one', async () => {
+  const newerHash = 'b'.repeat(40)
+  let releaseOld = null
+  const unknownCalls = []
+  DEBRID.unknownHashes = async (service, apiKey, hashes) => {
+    unknownCalls.push([...hashes])
+    return hashes
+  }
+  DEBRID.checkAvailability = async (service, apiKey, hashes) => {
+    if (hashes[0] === HASH) {
+      return new Promise(resolve => { releaseOld = () => resolve({ answers: { [HASH]: 'cached' }, names: { [HASH]: 'Old list' }, busy: false }) })
+    }
+    return { answers: { [newerHash]: 'cached' }, names: { [newerHash]: 'New list' }, busy: false }
+  }
+
+  const oldCheck = checkDebridAvailability([HASH])
+  while (!releaseOld) await Promise.resolve()
+  await checkDebridAvailability([newerHash])
+  releaseOld()
+  await oldCheck
+
+  assert.equal(debridAvailability.value.has(HASH), false, 'late answers do not repaint a list the user left')
+  assert.equal(debridAvailability.value.get(newerHash), Availability.CACHED)
+  assert.equal(debridReleaseNames.value.get(newerHash), 'New list')
+  assert.equal(unknownCalls.filter(hashes => hashes[0] === HASH).length, 1, 'the obsolete check does not schedule follow-up work')
+  cancelDebridAvailability()
 })
 
 test('a release with no hash cannot silence the whole list', async () => {

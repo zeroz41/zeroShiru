@@ -348,14 +348,16 @@ function readAllFrom(source, storeKey) {
  * @param {number} [firstFlushDelay=1500] Delay in ms before the first flush before flushing writes to IndexedDB.
  * @param {number} [subsequentFlushDelay=1500] Delay in ms for subsequent flushes before flushing writes to IndexedDB.
  * @param {number} [resetDelay=5000] Delay in ms after which retry counts are reset.
- * @returns {Object} Batch writer with methods {@link enqueue}, {@link flushNow}, and {@link pendingCount}.
+ * @param {(dbName: string) => Promise<IDBDatabase>} [openDatabase=open] Database opener, injectable for deterministic failure tests.
+ * @returns {Object} Batch writer with methods {@link enqueue}, {@link flushNow}, {@link pendingCount}, and {@link destroy}.
  */
-function createBatchWriter(dbName, firstFlushDelay = 1_500, subsequentFlushDelay = 1_500, resetDelay = 5_000) {
+export function createBatchWriter(dbName, firstFlushDelay = 1_500, subsequentFlushDelay = 1_500, resetDelay = 5_000, openDatabase = open) {
   const pending = new Map()
   const retryMap = new Map()
   let flushTimer = null
   let batchAt = null
   let initialFlush = true
+  let destroyed = false
 
   /**
    * Clears retry counts, allowing failed writes to retry again.
@@ -363,7 +365,35 @@ function createBatchWriter(dbName, firstFlushDelay = 1_500, subsequentFlushDelay
   function resetRetries() {
     retryMap.clear()
   }
-  setInterval(resetRetries, resetDelay).unref?.()
+  const resetTimer = setInterval(resetRetries, resetDelay)
+  resetTimer.unref?.()
+
+  /** Adds a value to the next batch and makes sure that batch has one timer. */
+  function enqueue(cache, key, value) {
+    if (destroyed) return
+    const cacheKey = cache.key
+    if (!pending.has(cacheKey)) pending.set(cacheKey, new Map())
+    pending.get(cacheKey).set(String(key), value)
+    if (!batchAt) {
+      batchAt = Date.now()
+      flushTimer = setTimeout(() => {
+        flush().catch(error => debug(`Failed to flush cache batch for ${dbName}`, error))
+      }, initialFlush ? firstFlushDelay : subsequentFlushDelay)
+      flushTimer?.unref?.()
+    }
+  }
+
+  /** Requeues a failed store without letting one transient failure erase its batch. */
+  function retry(cacheKey, kvMap) {
+    for (const [key, value] of kvMap) {
+      const mapKey = `${cacheKey}:${key}`
+      const attempts = retryMap.get(mapKey) || 0
+      if (attempts < 3) {
+        retryMap.set(mapKey, attempts + 1)
+        enqueue({ key: cacheKey }, key, value)
+      } else debug(`Max retries reached for ${mapKey}, dropping value`)
+    }
+  }
 
   /**
    * Flushes all queued writes to IndexedDB in a single transaction.
@@ -379,7 +409,14 @@ function createBatchWriter(dbName, firstFlushDelay = 1_500, subsequentFlushDelay
     if (pending.size === 0) return
     const snapshot = Array.from(pending.entries())
     pending.clear()
-    const database = await open(dbName)
+    let database
+    try {
+      database = await openDatabase(dbName)
+    } catch (error) {
+      debug(`Failed to open ${dbName} for a cache flush, keeping ${snapshot.length} store batch(es) queued`, error)
+      for (const [cacheKey, kvMap] of snapshot) retry(cacheKey, kvMap)
+      return
+    }
     for (const [cacheKey, kvMap] of snapshot) {
       try {
         const transaction = database.transaction(cacheKey, 'readwrite')
@@ -389,14 +426,7 @@ function createBatchWriter(dbName, firstFlushDelay = 1_500, subsequentFlushDelay
         debug(`Flushed ${kvMap.size} entries to ${cacheKey}`)
       } catch (error) {
         debug(`Failed to flush ${cacheKey}, will retry`, error)
-        for (const [key, value] of kvMap) {
-          const mapKey = `${cacheKey}:${key}`
-          const attempts = retryMap.get(mapKey) || 0
-          if (attempts < 3) {
-            retryMap.set(mapKey, attempts + 1)
-            getBatchWriter(dbName).enqueue({ key: cacheKey }, key, value)
-          } else debug(`Max retries reached for ${mapKey}, dropping value`)
-        }
+        retry(cacheKey, kvMap)
       }
     }
   }
@@ -410,21 +440,7 @@ function createBatchWriter(dbName, firstFlushDelay = 1_500, subsequentFlushDelay
      * @param {string|number} key The key to store in the cache.
      * @param {*} value The value to store.
      */
-    enqueue(cache, key, value) {
-      const cacheKey = cache.key
-      if (!pending.has(cacheKey)) pending.set(cacheKey, new Map())
-      pending.get(cacheKey).set(String(key), value)
-      if (!batchAt) {
-        batchAt = Date.now()
-        flushTimer = setTimeout(() => {
-          flush().finally(() => {
-            flushTimer = null
-            batchAt = null
-          })
-        }, initialFlush ? firstFlushDelay : subsequentFlushDelay)
-        flushTimer?.unref?.()
-      }
-    },
+    enqueue,
     /**
      * Immediately flushes all queued cache entries to IndexedDB.
      */
@@ -437,6 +453,16 @@ function createBatchWriter(dbName, firstFlushDelay = 1_500, subsequentFlushDelay
      */
     pendingCount() {
       return [...pending.values()].reduce((n, m) => n + m.size, 0)
+    },
+    /** Stops timers and releases queued values when the owning account is discarded. */
+    destroy() {
+      destroyed = true
+      if (flushTimer) clearTimeout(flushTimer)
+      clearInterval(resetTimer)
+      flushTimer = null
+      batchAt = null
+      pending.clear()
+      retryMap.clear()
     }
   }
 }
@@ -454,7 +480,7 @@ export function fromCache(cache, current, key = 'id') {
   if (!cache || !current?.[key]) return current
   const updated = cache[current[key]]
   if (!updated?.[key]) return current
-  if (JSON.stringify(updated) === JSON.stringify(current)) return current
+  if (equal(updated, current)) return current
   return updated
 }
 
@@ -665,8 +691,7 @@ class Cache {
    */
   async #initialize() {
     debug(`Loading caches with id: ${this.cacheID}...`)
-    await open(SHARED_DB_NAME)
-    await open(this.cacheID)
+    await Promise.all([open(SHARED_DB_NAME), open(this.cacheID)])
     const cacheTypes = [
       // USER DB
       { key: caches.GENERAL, writable: (data) => this.general = writable({ ...generalDefaults, ...deepClone(data) }) },
@@ -694,8 +719,7 @@ class Cache {
      *
      * @type {Map<string, Object>} cacheKey: { key: value }
      */
-    const cacheMap = new Map()
-    for (const { key } of cacheTypes) {
+    const loadedCaches = await Promise.all(cacheTypes.map(async ({ key }) => {
       try {
         let data
         try {
@@ -715,12 +739,15 @@ class Cache {
           } else debug(`Recovery: No data could be recovered from ${key.key}, returning empty cache`)
           data = recovered
         }
-        cacheMap.set(key.key, data)
+        return [key.key, data]
       } catch (error) {
         debug(`Recovery: Critical error loading ${key.key}, using empty cache:`, error)
-        cacheMap.set(key.key, {})
+        return [key.key, {}]
       }
-    }
+    }))
+    // Object stores have independent readonly transactions. Starting them together cuts startup
+    // from one IndexedDB round trip per store to one round of parallel reads.
+    const cacheMap = new Map(loadedCaches)
     cacheTypes.forEach(({ key, writable }) => writable(cacheMap.get(key.key)))
 
     // Merge user media entries (mediaListEntry, isFavourite) from user_lists into mediaCache
@@ -781,12 +808,16 @@ class Cache {
             }
           }
         }
+        const removedKeys = []
         for (const subKey of Object.keys(storeEntries)) {
           if (!(subKey in (value || {}))) {
             delete storeEntries[subKey]
-            remove(dbName, key, [subKey]).catch(error => debug(`Failed to remove ${subKey} from ${key.key}`, error))
+            removedKeys.push(subKey)
           }
         }
+        // Eviction may remove hundreds of rows at once. Keep that to one transaction instead of
+        // opening one readwrite transaction per key, which can otherwise stall painting behind IDB.
+        if (removedKeys.length) remove(dbName, key, removedKeys).catch(error => debug(`Failed to remove ${removedKeys.length} entries from ${key.key}`, error))
         cacheMap.set(key.key, storeEntries)
         return () => {
           cacheMap.delete(key.key)
@@ -811,11 +842,15 @@ class Cache {
   destroy() {
     this.subscribers.forEach((unsubscribe) => unsubscribe())
     this.#pending.clear()
-    batchWriters.get(this.cacheID)?.flushNow().finally(() => {
+    const writer = batchWriters.get(this.cacheID)
+    const close = () => {
+      writer?.destroy()
       openDBs.get(this.cacheID)?.then(database => database.close()).catch(() => {})
       openDBs.delete(this.cacheID)
       batchWriters.delete(this.cacheID)
-    })
+    }
+    if (writer) writer.flushNow().then(close, close)
+    else close()
     this.general = null
     this.user_lists = null
     this.history = null
@@ -1027,7 +1062,7 @@ class Cache {
     const now = Date.now()
     mediaCache.update(current => {
       for (const [id, media] of mediaMap.entries()) {
-        if (media) current[id] = { ...media, cachedAt: Date.now(), expiry: media.status === 'FINISHED' ? now + getRandomInt(7, 14) * 24 * 60 * 60 * 1_000 : now + getRandomInt(12, 24) * 60 * 60 * 1_000 }
+        if (media) current[id] = { ...media, cachedAt: now, expiry: media.status === 'FINISHED' ? now + getRandomInt(7, 14) * 24 * 60 * 60 * 1_000 : now + getRandomInt(12, 24) * 60 * 60 * 1_000 }
       }
       return current
     })

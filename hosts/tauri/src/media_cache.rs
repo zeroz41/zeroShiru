@@ -324,7 +324,9 @@ mod tests {
 
     #[test]
     fn the_cap_is_generous_and_the_target_sits_below_it() {
-        assert!(CAP_BYTES >= 256 * 1024 * 1024, "a cache that cannot hold a real library is a refetch generator");
-        assert!(TRIM_TARGET_BYTES < CAP_BYTES, "trimming exactly to the cap re-triggers on the next image");
+        let cap = std::hint::black_box(CAP_BYTES);
+        let target = std::hint::black_box(TRIM_TARGET_BYTES);
+        assert!(cap >= 256 * 1024 * 1024, "a cache that cannot hold a real library is a refetch generator");
+        assert!(target < cap, "trimming exactly to the cap re-triggers on the next image");
     }
 }

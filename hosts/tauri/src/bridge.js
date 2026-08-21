@@ -118,7 +118,7 @@
   const availabilityListeners = new Set()
   listen('shiru://debrid', (event) => {
     const { type, data } = event.payload || {}
-    if (type === 'availability') for (const callback of availabilityListeners) callback(data.hash, data.state)
+    if (type === 'availability') for (const callback of availabilityListeners) callback(data.hash, data.state, data.requestId)
   })
 
   window.shiru = {
@@ -128,7 +128,7 @@
       services: __SHIRU_DEBRID_SERVICES__,
       validate: (service, apiKey) => invoke('debrid_validate', { service, apiKey }),
       listAvailability: (service, apiKey) => invoke('debrid_list_availability', { service, apiKey }),
-      checkAvailability: (service, apiKey, hashes) => invoke('debrid_check_availability', { service, apiKey, hashes }),
+      checkAvailability: (service, apiKey, hashes, requestId) => invoke('debrid_check_availability', { service, apiKey, hashes, requestId }),
       unknownHashes: (service, apiKey, hashes) => invoke('debrid_unknown_hashes', { service, apiKey, hashes }),
       remember: (service, apiKey, hash, state) => invoke('debrid_remember', { service, apiKey, hash, stateValue: state }),
       resolve: (service, apiKey, magnet, episode) => invoke('debrid_resolve', { service, apiKey, magnet, episode: Number.isFinite(episode) ? episode : null }),

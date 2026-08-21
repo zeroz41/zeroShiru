@@ -142,14 +142,14 @@ const debridDefaults = {
   /** what the account itself holds, the free badge source */
   listAvailability: async (service, apiKey) => ({ answers: {}, names: {} }),
   /** ask about releases; answers also arrive one at a time via onAvailability */
-  checkAvailability: async (service, apiKey, hashes) => ({ answers: {}, names: {}, busy: false }),
+  checkAvailability: async (service, apiKey, hashes, requestId) => ({ answers: {}, names: {}, busy: false }),
   /** the given hashes nothing is known about yet */
   unknownHashes: async (service, apiKey, hashes) => [],
   /** record an answer the app proved itself, e.g. by playing the release */
   remember: noopAsyncVoid,
   /** magnet -> player-ready files; `episode` picks the right one out of a pack */
   resolve: async (service, apiKey, magnet, episode) => ({ hash: '', name: '', files: [] }),
-  /** fires per answer as a check goes, so badges fill in as they land */
+  /** fires per answer as a check goes, carrying its request id so old accounts cannot repaint */
   onAvailability: noopVoid
 }
 

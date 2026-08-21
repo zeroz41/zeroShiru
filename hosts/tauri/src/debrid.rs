@@ -184,18 +184,19 @@ pub async fn debrid_list_availability(
 
 /// Asks the service about the given releases, cheapest way it supports.
 ///
-/// A probing sweep is minutes long — it spends several requests per release — so its
-/// answers are pushed one at a time on `shiru://debrid` and the list badges itself as
-/// it goes. A batch service answers seventy five releases in one request and hands the
-/// whole map back from this command, so pushing those one by one is the same answer
-/// twice: once as an event the page has to render, and again as the return value. That
-/// was the results list re-deriving itself a hundred times over for nothing.
 /// Whether this service's answers are worth pushing one at a time as they land. A probing
 /// sweep spends several requests per release and takes minutes, so the list badges itself as
 /// it goes; a batch service answers seventy five at once and hands the whole map back from
 /// the command, where pushing each one separately is the same answer twice.
 fn pushes_as_it_goes(config: &shiru_debrid::ProviderConfig) -> bool {
     config.availability_check == AvailabilityCheck::Probe
+}
+
+fn availability_event(hash: &str, state: Availability, request_id: Option<u64>) -> serde_json::Value {
+    serde_json::json!({
+        "type": "availability",
+        "data": { "hash": hash, "state": state, "requestId": request_id }
+    })
 }
 
 #[tauri::command]
@@ -205,6 +206,7 @@ pub async fn debrid_check_availability(
     service: String,
     api_key: String,
     hashes: Hashes,
+    request_id: Option<u64>,
 ) -> Result<AvailabilityReply, DebridFailure> {
     let Hashes(hashes) = hashes;
     let managed = state.managed(&service, &api_key)?;
@@ -213,10 +215,7 @@ pub async fn debrid_check_availability(
     let answers = managed
         .check_availability(&hashes, |hash, state| {
             if pushes_as_it_goes {
-                let _ = app.emit(
-                    DEBRID_EVENT,
-                    serde_json::json!({ "type": "availability", "data": { "hash": hash, "state": state } }),
-                );
+                let _ = app.emit(DEBRID_EVENT, availability_event(hash, state, request_id));
             }
         })
         .await
@@ -327,6 +326,15 @@ mod tests {
             let provider = create_provider(service, "key".into(), transport.clone(), platform.clone()).unwrap();
             assert_eq!(pushes_as_it_goes(provider.config()), streams, "{service}");
         }
+    }
+
+    #[test]
+    fn pushed_availability_identifies_the_sweep_that_produced_it() {
+        let event = availability_event("info-hash", Availability::Cached, Some(42));
+        assert_eq!(event["type"], "availability");
+        assert_eq!(event["data"]["hash"], "info-hash");
+        assert_eq!(event["data"]["state"], "cached");
+        assert_eq!(event["data"]["requestId"], 42);
     }
 
     #[test]

@@ -152,10 +152,11 @@ impl TorrentEngine for RqbitEngine {
         })
     }
 
-    async fn select_file(&self, info_hash: &str, index: u32) -> Result<(), TorrentError> {
+    async fn select_files(&self, info_hash: &str, indexes: &[u32]) -> Result<(), TorrentError> {
         let handle = self.handle(info_hash)?;
+        let indexes = indexes.iter().map(|index| *index as usize).collect();
         self.session
-            .update_only_files(&handle, &[index as usize].into_iter().collect())
+            .update_only_files(&handle, &indexes)
             .await
             .map_err(|error| TorrentError::Engine(format!("select: {error:#}")))
     }

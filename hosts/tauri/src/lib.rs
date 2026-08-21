@@ -72,7 +72,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .on_window_event(|window, event| window::handle_window_event(window, event))
+        .on_window_event(window::handle_window_event)
         .manage(debrid::DebridState::default())
         .manage(torrent::TorrentState::default())
         .manage(discord::DiscordState::default())

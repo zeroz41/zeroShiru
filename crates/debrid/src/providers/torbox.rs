@@ -28,6 +28,10 @@ const API: &str = "https://api.torbox.app/v1/api";
 /// failing it costs nothing: `validate` falls through to a request that answers the same
 /// question, so the budget for the whole operation stays as generous as any other.
 const ACCOUNT_TIMEOUT_MS: u64 = 10_000;
+/// Once the selected file has a direct URL, neighboring pack links may use this much
+/// more time for subtitles and in-player navigation. A silent neighbor must never hide
+/// an already playable episode until the manager's 60-second deadline.
+const OPTIONAL_LINK_GRACE_MS: u64 = 2_000;
 /// The whole account in one request; the API pages at 1000.
 const LIST_LIMIT: u64 = 1_000;
 /// 1 auto, 2 always, 3 never. Shiru only streams, so never seed.
@@ -294,44 +298,116 @@ impl TorBox {
         }
     }
 
+    /// Turns one torrent file into a direct stream link. This one endpoint takes the key
+    /// as a query parameter instead of the bearer header used by the rest of TorBox.
+    async fn request_link(
+        &self,
+        torrent_id: &Value,
+        file: &WantedFile,
+    ) -> Result<Option<DebridFile>, DebridError> {
+        let url = format!(
+            "{API}/torrents/requestdl?torrent_id={}&file_id={}&redirect=false",
+            value_text(torrent_id),
+            file.id
+        );
+        let opts = RequestOpts {
+            auth: Some(AuthScheme::Query),
+            auth_param: Some("token"),
+            ..RequestOpts::default()
+        };
+        let Value::String(link) = self.request(&url, opts).await? else { return Ok(None) };
+        Ok(Some(DebridFile {
+            name: file.path.rsplit('/').next().unwrap_or("").to_string(),
+            path: file.path.clone(),
+            size: file.size,
+            url: link,
+            r#type: file.mime.clone(),
+        }))
+    }
+
     /// Turns the wanted files into direct stream links, skipping dead ones. The played file's
     /// request goes to the front of the queue: TorBox rate limits this endpoint well below its
     /// documented allowance, and when a batch trips that, the episode the user asked for must
-    /// be the one request that already went through.
+    /// be the one request that already went through. Neighbor requests still overlap it, but
+    /// after it answers they only get a short grace period to finish.
     async fn request_links(
         &self,
         torrent_id: &Value,
         wanted: &[WantedFile],
         target_path: Option<&str>,
     ) -> Result<Vec<DebridFile>, DebridError> {
-        let mut ordered: Vec<&WantedFile> = wanted.iter().collect();
-        if let Some(target) = target_path {
-            // stable sort, so everything but the played file keeps torrent order in the queue
-            ordered.sort_by_key(|file| file.path != target);
-        }
-        let mut files = crate::client::map_files(&ordered, |file| async move {
-            // this one endpoint takes the key as a query parameter instead of a bearer header
-            let url = format!(
-                "{API}/torrents/requestdl?torrent_id={}&file_id={}&redirect=false",
-                value_text(torrent_id),
-                file.id
-            );
-            let opts = RequestOpts {
-                auth: Some(AuthScheme::Query),
-                auth_param: Some("token"),
-                ..RequestOpts::default()
-            };
-            // not a link is a file to drop, like the JS null return
-            let Value::String(link) = self.request(&url, opts).await? else { return Ok(None) };
-            Ok(Some(DebridFile {
-                name: file.path.rsplit('/').next().unwrap_or("").to_string(),
-                path: file.path.clone(),
-                size: file.size,
-                url: link,
-                r#type: file.mime.clone(),
-            }))
-        })
-        .await?;
+        let target_index = target_path
+            .and_then(|target| wanted.iter().position(|file| file.path == target))
+            .unwrap_or(0);
+        let target = &wanted[target_index];
+        let neighbors: Vec<&WantedFile> = wanted
+            .iter()
+            .enumerate()
+            .filter_map(|(index, file)| (index != target_index).then_some(file))
+            .collect();
+
+        // Poll the target side first so it takes the first limiter ticket. The neighbor
+        // side is polled in the same turn, retaining the concurrency that makes packs fast.
+        let target_work = Box::pin(self.request_link(torrent_id, target));
+        let completed_neighbors = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let neighbor_results = completed_neighbors.clone();
+        let neighbors_work = Box::pin(crate::client::map_files(&neighbors, |file| {
+            let neighbor_results = neighbor_results.clone();
+            async move {
+                let linked = self.request_link(torrent_id, file).await?;
+                if let Some(linked) = linked.as_ref() {
+                    neighbor_results
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .push(linked.clone());
+                }
+                Ok(linked)
+            }
+        }));
+        let (target_link, neighbor_links) = match futures::future::select(target_work, neighbors_work).await {
+            futures::future::Either::Left((target_link, neighbors_work)) => {
+                let target_link = target_link?;
+                let grace = Box::pin(self.client.platform().sleep(OPTIONAL_LINK_GRACE_MS));
+                let neighbors = match futures::future::select(neighbors_work, grace).await {
+                    futures::future::Either::Left((links, _)) => links?,
+                    futures::future::Either::Right((_, mut neighbors_work)) => {
+                        // A limiter sleep or response can wake on the same turn as the
+                        // deadline. Give already-runnable work enough cooperative polls to
+                        // empty its queue; this adds no wall-clock wait and a genuinely
+                        // silent request remains pending and is dropped below.
+                        let mut ready = None;
+                        for _ in 0..(neighbors.len() * 2 + 1) {
+                            match futures::poll!(neighbors_work.as_mut()) {
+                                std::task::Poll::Ready(links) => {
+                                    ready = Some(links?);
+                                    break;
+                                }
+                                std::task::Poll::Pending => self.client.platform().sleep(0).await,
+                            }
+                        }
+                        tracing::debug!(target: "debrid", "returning the selected TorBox link without a silent pack neighbor");
+                        ready.unwrap_or_else(|| {
+                            completed_neighbors
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .clone()
+                        })
+                    }
+                };
+                (target_link, neighbors)
+            }
+            futures::future::Either::Right((neighbors, target_work)) => (target_work.await?, neighbors?),
+        };
+        let Some(target_link) = target_link else {
+            return Err(DebridError::Service {
+                message: "TorBox returned no link for the selected file".into(),
+                status: None,
+                code: None,
+            });
+        };
+        let mut files = Vec::with_capacity(neighbor_links.len() + 1);
+        files.push(target_link);
+        files.extend(neighbor_links);
         // hand the caller torrent order back, whatever order the requests went out in
         let position: HashMap<&str, usize> = wanted
             .iter()
@@ -906,7 +982,7 @@ mod tests {
         assert_eq!(list.headers.get("Authorization").map(String::as_str), Some("Bearer test-key"));
         assert!(!list.url.contains("test-key"), "a bearer key must never leak into a URL");
         assert!(link.url.contains("token=test-key"), "this one endpoint takes the key as a query parameter");
-        assert!(link.headers.get("Authorization").is_none(), "and must not also send a header");
+        assert!(!link.headers.contains_key("Authorization"), "and must not also send a header");
     }
 
     #[tokio::test]
@@ -1079,6 +1155,48 @@ mod tests {
         let resolved = torbox.resolve(MAGNET, &video_filter()).await.unwrap();
         let paths: Vec<&str> = resolved.files.iter().map(|file| file.path.as_str()).collect();
         assert_eq!(paths, ["/Test/Episode 02.mkv"], "the surviving file must still play");
+    }
+
+    /// TorBox can produce the selected episode's URL and other pack links while one
+    /// neighboring file never answers. Playback must not wait for that optional neighbor
+    /// until the manager's whole 60-second resolve budget expires, or discard links that
+    /// already finished while it was waiting.
+    struct SilentNeighbor {
+        listing: String,
+    }
+
+    #[async_trait::async_trait]
+    impl HttpTransport for SilentNeighbor {
+        async fn execute(
+            &self,
+            request: shiru_networking::HttpRequest,
+        ) -> Result<shiru_networking::HttpResponse, shiru_networking::TransportError> {
+            let body = if request.url.contains("file_id=2") {
+                ok(json!("https://torbox.test/dl/2"))
+            } else if request.url.contains("file_id=1") {
+                ok(json!("https://torbox.test/dl/1"))
+            } else if request.url.contains("requestdl") {
+                return futures::future::pending().await;
+            } else {
+                self.listing.clone()
+            };
+            Ok(shiru_networking::HttpResponse { status: 200, headers: HashMap::new(), body: body.into_bytes() })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_silent_neighbor_does_not_hide_the_selected_episode_link() {
+        let transport = Arc::new(SilentNeighbor { listing: ok(json!([torrent(json!({}))])) });
+        let torbox = TorBox::new("test-key".into(), transport, Arc::new(ManualClock::new()));
+        let resolved = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            torbox.resolve(MAGNET, &ResolveOptions::default()),
+        )
+        .await
+        .expect("a neighboring link held the selected episode hostage")
+        .unwrap();
+        assert!(resolved.files.iter().any(|file| file.path == "/Test/Episode 02.mkv"));
+        assert!(resolved.files.iter().any(|file| file.path == "/Test/readme.txt"));
     }
 
     #[tokio::test]

@@ -182,6 +182,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         init(&dir);
 
+        // The application deliberately lets RUST_LOG override its defaults. The unit test is
+        // about the writer lifecycle, so give this thread a fixed filter rather than inheriting
+        // the developer or CI runner's filter (which may quite reasonably be `warn`).
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new("debug"))
+            .with_writer(LogWriter)
+            .with_ansi(false)
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+
         let path = path().expect("logging started");
         tracing::info!("hello from the test");
         assert!(path.exists());

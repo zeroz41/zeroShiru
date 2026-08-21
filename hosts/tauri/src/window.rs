@@ -223,7 +223,8 @@ mod tests {
 
     #[test]
     fn the_grace_is_long_enough_to_answer_and_short_enough_to_wait_out() {
-        assert!(EXIT_INTENT_GRACE_MS >= 2_000, "a modal has to be able to appear");
-        assert!(EXIT_INTENT_GRACE_MS <= 10_000, "nobody waits ten seconds to close a window");
+        let grace = std::hint::black_box(EXIT_INTENT_GRACE_MS);
+        assert!(grace >= 2_000, "a modal has to be able to appear");
+        assert!(grace <= 10_000, "nobody waits ten seconds to close a window");
     }
 }

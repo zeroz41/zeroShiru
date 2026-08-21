@@ -6,7 +6,7 @@
 //! shared with debrid playback (common/modules/debrid/identity.js).
 
 use crate::gateway::Gateway;
-use crate::{RqbitEngine, TorrentEngine, TorrentError};
+use crate::{RqbitEngine, TorrentEngine, TorrentError, TorrentMetadata};
 use librqbit::api::TorrentIdOrHash;
 use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, Session};
 use serde::{Deserialize, Serialize};
@@ -203,6 +203,8 @@ struct SessionState {
 pub struct TorrentSession {
     engine: Arc<RqbitEngine>,
     state: Mutex<SessionState>,
+    /// Command handlers run concurrently; registry writes must not truncate each other.
+    registry_write: Mutex<()>,
     events: UnboundedSender<SessionEvent>,
     registry_path: PathBuf,
     http: reqwest::Client,
@@ -229,6 +231,7 @@ impl TorrentSession {
             engine,
             registry_path: download_dir.join("shiru-session.json"),
             state: Mutex::new(SessionState { settings, tracked: HashMap::new(), playing: None }),
+            registry_write: Mutex::new(()),
             events,
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(8))
@@ -264,6 +267,7 @@ impl TorrentSession {
     }
 
     async fn save_registry(&self) {
+        let _writer = self.registry_write.lock().await;
         let tracked = self.state.lock().await.tracked.clone();
         if let Ok(json) = serde_json::to_vec_pretty(&tracked) {
             let _ = tokio::fs::write(&self.registry_path, json).await;
@@ -438,13 +442,8 @@ impl TorrentSession {
             return self.notify("error", format!("File not found in torrent: {path}"));
         };
         let streamed = self.state.lock().await.settings.torrent_streamed_download;
-        let selection: Vec<u32> = if streamed {
-            vec![file.index]
-        } else {
-            metadata.files.iter().map(|file| file.index).collect()
-        };
-        for index in selection {
-            let _ = self.engine.select_file(hash, index).await;
+        if let Err(error) = select_playback_files(self.engine.as_ref(), hash, &metadata, file.index, streamed).await {
+            return self.notify("error", format!("Failed to select torrent files: {error}"));
         }
         self.state.lock().await.playing = Some((hash.to_string(), file.index));
         if external {
@@ -816,8 +815,8 @@ impl TorrentSession {
                 if self.events.is_closed() {
                     break;
                 }
-                self.emit_snapshot().await;
                 let playing = self.state.lock().await.playing.clone();
+                let mut completed = false;
                 if let Some((hash, index)) = playing {
                     if let Some(handle) = self.handle(&hash) {
                         let stats = handle.stats();
@@ -840,11 +839,20 @@ impl TorrentSession {
                         if stats.finished {
                             let mut state = self.state.lock().await;
                             if let Some(tracked) = state.tracked.get_mut(&hash) {
-                                tracked.incomplete = false;
+                                if tracked.incomplete {
+                                    tracked.incomplete = false;
+                                    completed = true;
+                                }
                             }
                         }
                     }
                 }
+                // Persist the transition once, so a restart does not re-adopt a torrent that
+                // had already completed. Snapshot after the transition so the UI sees it now.
+                if completed {
+                    self.save_registry().await;
+                }
+                self.emit_snapshot().await;
             }
         });
     }
@@ -865,6 +873,25 @@ fn shape_player_file(info_hash: &str, torrent_name: &str, path: &str, size: u64,
         path: relative.to_string(),
         url,
     }
+}
+
+fn playback_selection(metadata: &TorrentMetadata, wanted: u32, streamed: bool) -> Vec<u32> {
+    if streamed {
+        vec![wanted]
+    } else {
+        metadata.files.iter().map(|file| file.index).collect()
+    }
+}
+
+async fn select_playback_files<E: TorrentEngine + ?Sized>(
+    engine: &E,
+    info_hash: &str,
+    metadata: &TorrentMetadata,
+    wanted: u32,
+    streamed: bool,
+) -> Result<(), TorrentError> {
+    let selection = playback_selection(metadata, wanted, streamed);
+    engine.select_files(info_hash, &selection).await
 }
 
 fn mime_for(name: &str) -> String {
@@ -922,7 +949,23 @@ fn iso_from_epoch(seconds: i64) -> String {
 
 fn base64_decode(text: &str) -> Option<Vec<u8>> {
     // standard alphabet with optional padding — what the renderer produces
-    let cleaned: Vec<u8> = text.bytes().filter(|byte| !byte.is_ascii_whitespace() && *byte != b'=').collect();
+    let compact: Vec<u8> = text.bytes().filter(|byte| !byte.is_ascii_whitespace()).collect();
+    let padding = compact.iter().rev().take_while(|byte| **byte == b'=').count();
+    if compact.is_empty()
+        || padding > 2
+        || compact[..compact.len() - padding].contains(&b'=')
+        || (padding > 0 && compact.len() % 4 != 0)
+    {
+        return None;
+    }
+    let cleaned = &compact[..compact.len() - padding];
+    if cleaned.is_empty()
+        || cleaned.len() % 4 == 1
+        || (padding == 1 && cleaned.len() % 4 != 3)
+        || (padding == 2 && cleaned.len() % 4 != 2)
+    {
+        return None;
+    }
     let value = |byte: u8| -> Option<u32> {
         match byte {
             b'A'..=b'Z' => Some((byte - b'A') as u32),
@@ -1131,6 +1174,77 @@ mod tests {
         assert_eq!(base64_decode("YQ==").unwrap(), b"a");
         assert_eq!(base64_decode("YWI=").unwrap(), b"ab");
         assert_eq!(base64_decode("!!!"), None);
+        assert_eq!(base64_decode(""), None);
+        assert_eq!(base64_decode("A"), None, "a one-symbol tail cannot encode a byte");
+        assert_eq!(base64_decode("Y=Q="), None, "padding is only valid at the end");
+        assert_eq!(base64_decode("YQ==="), None, "at most two padding bytes are valid");
+    }
+
+    #[derive(Default)]
+    struct SelectionSpy {
+        calls: std::sync::Mutex<Vec<(String, Vec<u32>)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl TorrentEngine for SelectionSpy {
+        async fn add(&self, _id: &str) -> Result<String, TorrentError> {
+            unreachable!()
+        }
+
+        async fn metadata(&self, _info_hash: &str) -> Result<TorrentMetadata, TorrentError> {
+            unreachable!()
+        }
+
+        async fn select_files(&self, info_hash: &str, indexes: &[u32]) -> Result<(), TorrentError> {
+            self.calls.lock().unwrap().push((info_hash.to_string(), indexes.to_vec()));
+            Ok(())
+        }
+
+        async fn playback_source(
+            &self,
+            _info_hash: &str,
+            _index: u32,
+        ) -> Result<shiru_domain::PlaybackSource, TorrentError> {
+            unreachable!()
+        }
+
+        async fn pause(&self, _info_hash: &str) -> Result<(), TorrentError> {
+            unreachable!()
+        }
+
+        async fn resume(&self, _info_hash: &str) -> Result<(), TorrentError> {
+            unreachable!()
+        }
+
+        async fn remove(&self, _info_hash: &str) -> Result<(), TorrentError> {
+            unreachable!()
+        }
+
+        async fn status(&self, _info_hash: &str) -> Result<crate::TorrentStatus, TorrentError> {
+            unreachable!()
+        }
+    }
+
+    #[tokio::test]
+    async fn streamed_playback_selects_one_file_and_full_download_selects_the_set_once() {
+        let metadata = TorrentMetadata {
+            info_hash: "a".repeat(40),
+            name: "Season pack".into(),
+            files: vec![
+                crate::TorrentFileInfo { index: 0, path: "/Show - 01.mkv".into(), size: 100 },
+                crate::TorrentFileInfo { index: 1, path: "/Show - 02.mkv".into(), size: 100 },
+                crate::TorrentFileInfo { index: 2, path: "/Show - 03.mkv".into(), size: 100 },
+            ],
+        };
+        let engine = SelectionSpy::default();
+        select_playback_files(&engine, &metadata.info_hash, &metadata, 1, true).await.unwrap();
+        select_playback_files(&engine, &metadata.info_hash, &metadata, 1, false).await.unwrap();
+
+        assert_eq!(
+            *engine.calls.lock().unwrap(),
+            vec![(metadata.info_hash.clone(), vec![1]), (metadata.info_hash, vec![0, 1, 2])],
+            "rqbit replaces its selection on every call, so the full set must arrive together"
+        );
     }
 
     #[test]

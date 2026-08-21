@@ -9,7 +9,7 @@ use crate::platform::Platform;
 use crate::{AvailabilityCheck, DebridProvider};
 use shiru_domain::Availability;
 use shiru_networking::HttpTransport;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -265,7 +265,7 @@ impl ManagedProvider {
         answer: &mut impl FnMut(&str, Availability),
     ) -> Result<(), DebridError> {
         // worker pool without a runtime dependency: shared queue, N concurrent futures
-        let queue = Mutex::new(hashes.to_vec());
+        let queue = Mutex::new(VecDeque::from(hashes.to_vec()));
         // each answer is published the moment it lands rather than when the sweep ends.
         // A probing service takes several requests per release, so a list of ten is the
         // better part of a minute — badging it all at once at the end reads, for that
@@ -279,7 +279,7 @@ impl ManagedProvider {
                 if stopped.lock().unwrap().is_some() {
                     return;
                 }
-                let Some(hash) = ({ let mut q = queue.lock().unwrap(); if q.is_empty() { None } else { Some(q.remove(0)) } }) else {
+                let Some(hash) = queue.lock().unwrap().pop_front() else {
                     return;
                 };
                 match self.probe(&hash).await {
@@ -306,7 +306,7 @@ impl ManagedProvider {
             }
         };
 
-        let workers = hashes.len().min(MAX_PROBE_CONCURRENCY).max(1);
+        let workers = hashes.len().clamp(1, MAX_PROBE_CONCURRENCY);
         futures::future::join_all((0..workers).map(|_| worker())).await;
 
         match stopped.into_inner().unwrap() {

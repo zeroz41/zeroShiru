@@ -128,12 +128,13 @@ impl ProviderConfig {
 /// `Ok(None)` means "no opinion, window from the front"; an error refuses the
 /// release outright, which is how "this pack does not hold that episode" travels.
 pub type PickFile = Box<dyn Fn(&[(u64, String, u64)]) -> Result<Option<usize>, DebridError> + Send + Sync>;
+pub type FileFilter = Box<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// Options for a resolve call.
 #[derive(Default)]
 pub struct ResolveOptions {
     /// Keeps only files playback can use (video/subtitle/font names).
-    pub file_filter: Option<Box<dyn Fn(&str) -> bool + Send + Sync>>,
+    pub file_filter: Option<FileFilter>,
     /// Picks the file playback wants out of a pack's file list.
     pub pick_file: Option<PickFile>,
     pub max_files: Option<usize>,

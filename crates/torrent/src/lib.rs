@@ -57,8 +57,13 @@ pub trait TorrentEngine: Send + Sync {
     async fn add(&self, id: &str) -> Result<String, TorrentError>;
     /// Metadata for an added torrent, waiting for it if necessary.
     async fn metadata(&self, info_hash: &str) -> Result<TorrentMetadata, TorrentError>;
+    /// Selects the complete set of files the engine should download. This is one operation:
+    /// engines such as rqbit replace their previous selection on every call.
+    async fn select_files(&self, info_hash: &str, indexes: &[u32]) -> Result<(), TorrentError>;
     /// Focuses the engine on one file for streaming.
-    async fn select_file(&self, info_hash: &str, index: u32) -> Result<(), TorrentError>;
+    async fn select_file(&self, info_hash: &str, index: u32) -> Result<(), TorrentError> {
+        self.select_files(info_hash, &[index]).await
+    }
     /// A playback source for the selected file (loopback gateway or custom protocol).
     async fn playback_source(&self, info_hash: &str, index: u32) -> Result<PlaybackSource, TorrentError>;
     async fn pause(&self, info_hash: &str) -> Result<(), TorrentError>;

@@ -327,7 +327,7 @@ impl RealDebrid {
                     None => info
                         .files
                         .iter()
-                        .filter(|file| file_filter.map_or(true, |filter| filter(&file.path)))
+                        .filter(|file| file_filter.is_none_or(|filter| filter(&file.path)))
                         .map(|file| file.id)
                         .collect(),
                 };
@@ -475,7 +475,7 @@ impl RealDebrid {
             status: None,
             code: None,
         })?;
-        let filter = |name: &str| opts.file_filter.as_ref().map_or(true, |filter| filter(name));
+        let filter = |name: &str| opts.file_filter.as_ref().is_none_or(|filter| filter(name));
         let filter: &(dyn Fn(&str) -> bool + Sync) = &filter;
         let max_files = opts.max_files.unwrap_or(self.client.config.max_files);
 

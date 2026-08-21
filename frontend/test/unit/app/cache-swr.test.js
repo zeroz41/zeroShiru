@@ -10,7 +10,7 @@ import { describe, it, expect } from 'bun:test'
 // the module treats a database that has not answered as simply not ready yet
 globalThis.indexedDB ??= { open: () => ({}) }
 
-const { cache, caches } = await import('@/modules/cache.js')
+const { cache, caches, createBatchWriter, fromCache } = await import('@/modules/cache.js')
 const { writable } = await import('simple-store-svelte')
 
 /** A store entry that expired a minute ago. */
@@ -24,6 +24,20 @@ const pending = () => {
   const promise = new Promise((r) => { resolve = r })
   return { promise, resolve }
 }
+
+describe('in-memory media refreshes', () => {
+  it('keeps the existing object when only property insertion order differs', () => {
+    const current = { id: 7, title: { english: 'Show', romaji: 'Show' } }
+    const reordered = { title: { romaji: 'Show', english: 'Show' }, id: 7 }
+    expect(fromCache({ 7: reordered }, current)).toBe(current)
+  })
+
+  it('returns the cached object when its contents actually changed', () => {
+    const current = { id: 7, title: { english: 'Old' } }
+    const updated = { id: 7, title: { english: 'New' } }
+    expect(fromCache({ 7: updated }, current)).toBe(updated)
+  })
+})
 
 describe('which stores allow serving stale', () => {
   it('query metadata does, user-owned data never', () => {
@@ -88,5 +102,22 @@ describe('cacheEntry with a request in flight', () => {
   it('a fresh entry is still answered from cachedEntry before any request starts', () => {
     cache.query_rss = writable({ feed: freshEntry('<current/>') })
     expect(cache.cachedEntry(caches.QUERY_RSS, 'feed', false)).resolves.toBe('<current/>')
+  })
+})
+
+describe('queued cache writes', () => {
+  it('keeps the whole batch queued when IndexedDB cannot open yet', async () => {
+    let opens = 0
+    const writer = createBatchWriter('temporarily-unavailable', 60_000, 60_000, 60_000, async () => {
+      opens++
+      throw new Error('database is temporarily unavailable')
+    })
+    writer.enqueue(caches.QUERY_RSS, 'feed', { value: '<cached/>' })
+
+    await writer.flushNow()
+
+    expect(opens).toBe(1)
+    expect(writer.pendingCount()).toBe(1)
+    writer.destroy()
   })
 })
