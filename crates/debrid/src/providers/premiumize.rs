@@ -325,12 +325,13 @@ impl DebridProvider for Premiumize {
             ),
         };
         let max_files = opts.max_files.unwrap_or(self.client.config.max_files);
+        let target_path = target.and_then(|index| wanted.get(index)).map(|file| file.path.clone());
         let files = window_files(&wanted, target, max_files).to_vec();
         // the JS trusted Premiumize to hand out HTTPS; the port enforces the base
         // contract explicitly, since the player streams these links as they are
         let files = secure_files(files, self.client.config.title)?;
         let name = torrent_name(&files);
-        Ok(DebridResolved { hash, name, files })
+        Ok(DebridResolved { hash, name, files, target: target_path })
     }
 }
 

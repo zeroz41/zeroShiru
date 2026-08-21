@@ -563,7 +563,8 @@ impl RealDebrid {
         }
         // debrid links are account bound, so a cleartext one has no business reaching the player
         let files = secure_files(files, self.client.config.title)?;
-        Ok(DebridResolved { hash: info.hash.clone(), name: info.filename.clone(), files })
+        let target_path = target.as_ref().map(|file| file.path.clone());
+        Ok(DebridResolved { hash: info.hash.clone(), name: info.filename.clone(), files, target: target_path })
     }
 }
 

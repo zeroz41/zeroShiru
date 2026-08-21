@@ -10,7 +10,7 @@ import { derived } from 'svelte/store'
 import { toast } from 'svelte-sonner'
 import { DEBRID } from '@/modules/bridge.js'
 import { Availability, describeAvailability, normalizeAvailability, outageNotice } from '@/modules/debrid/availability.js'
-import { warmStream } from '@/modules/playback/warmup.js'
+import { probeTarget, verifiedStream } from '@/modules/playback/probe.js'
 import { routeDebrid, debridKey } from '@/modules/debrid/route.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
@@ -178,10 +178,24 @@ export async function streamDebrid (torrentID, hash, search) {
     toast.error('Debrid', { description: blockedMessages[route.reason]() })
     return handOver(true) // nothing plays, so nothing is owned
   }
+  // remembered so a stream that dies under the player can be routed again from the top,
+  // where a dead link now fails fast into this function's own fallback ladder
+  lastPlay = { torrentID, hash, search }
   // claimed before the resolve, which takes seconds the player spends already open
   debridPlayback.set(true)
   try {
-    files.set(await resolveDebridFiles(route.id, search))
+    const { files: resolved, verified } = await resolveDebridFiles(route.id, search)
+    // the player takes the files immediately — the probe overlaps filename parsing and
+    // episode matching, so a healthy link costs nothing here
+    files.set(resolved)
+    const verdict = await verified
+    if (!verdict.alive) {
+      // "cached" was the service's claim about its storage; the link's host is the one
+      // thing playback actually needs, and it is not answering. Undo the handover so the
+      // player is not left spinning over a stream that is never coming
+      files.set([])
+      throw { kind: 'link-dead', message: `${serviceTitle()} says this release is cached, but its stream host is not answering (${verdict.reason}).` } // eslint-disable-line no-throw-literal
+    }
     return true
   } catch (error) {
     // the release provably lacks the episode: the torrent client holds the same files, so
@@ -227,21 +241,49 @@ function handOver (handled) {
  * Resolves a magnet to player ready file objects shaped like the torrent client's. The core
  * picks the episode out of a pack, drops anything not streamable over HTTPS, and shapes the
  * files with the shared watch key.
+ *
+ * The picked file's link is probed as soon as it exists — a resolve can succeed in under a
+ * second and hand back a link whose CDN node never sends a byte, and that link cannot be
+ * exchanged for a fresh one (the service pins one URL per file). The probe doubles as the
+ * stream warm-up: DNS, TLS and the CDN locating the file all happen under it, while the app
+ * is still parsing filenames and matching episodes.
  * @param {string} torrentID - Magnet URI or info hash.
  * @param {{ episode?: number }} [search]
+ * @returns {Promise<{ files: any[], verified: Promise<{ alive: boolean, reason?: string }> }>}
+ *   `verified` never rejects; it answers whether the played file's link serves bytes.
  */
 export async function resolveDebridFiles (torrentID, search) {
   const current = account()
   if (!current) throw new Error('No debrid service configured')
   const episode = Number(search?.episode)
   const resolved = await DEBRID.resolve(current.id, current.apiKey, torrentID, Number.isFinite(episode) ? episode : undefined)
-  // the player will not ask for its first byte until filenames are parsed and episodes
-  // matched; the CDN can spend that time on DNS, TLS and finding the file instead
-  const warmed = warmStream(resolved.files)
-  if (warmed.length) debug(`Warming ${warmed.length} stream connection(s) ahead of playback`)
+  const target = probeTarget(resolved.files, resolved.target)
+  const verified = verifiedStream(target?.url).then(verdict => {
+    if (!verdict.alive) console.warn(`[stream] the resolved link for "${target?.name}" is dead after ${verdict.attempts} probe(s): ${verdict.reason}`)
+    else if (verdict.elapsed > 1_000) console.warn(`[stream] the resolved link took ${verdict.elapsed}ms to answer its range probe`)
+    else debug(`Stream link answered its range probe in ${verdict.elapsed}ms`)
+    return verdict
+  })
   // playing it proves the service holds it, which is the best answer there is
   publishAvailability([[resolved.hash, Availability.CACHED]])
-  return resolved.files
+  return { files: resolved.files, verified }
+}
+
+/** What streamDebrid last routed to a service, so the player can ask for it to be played
+ * again from the top when the stream dies under it. */
+let lastPlay = null
+
+/**
+ * Routes the last debrid play again, through the same path a play click takes — resolve,
+ * link probe, and on a dead link the fallback to torrents or an honest error. This is the
+ * player's escalation for a stream that stopped answering mid-flight and would not come
+ * back: not a reload of a dead address, a fresh decision about how to play the release.
+ * @returns {boolean} Whether there was a play to route again.
+ */
+export function replayDebridPlayback () {
+  if (!lastPlay) return false
+  window.dispatchEvent(new CustomEvent('add', { detail: { torrentID: lastPlay.torrentID, hash: lastPlay.hash, search: lastPlay.search } }))
+  return true
 }
 
 /** Refreshes what the account itself says, which is free. One request a minute at most. */

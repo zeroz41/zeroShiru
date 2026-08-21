@@ -517,7 +517,7 @@ impl TorBox {
         }
         let resolved_hash = torrent_hash(torrent).unwrap_or_else(|| hash.to_string());
         let name = torrent.get("name").and_then(Value::as_str).unwrap_or("").to_string();
-        Ok(DebridResolved { hash: resolved_hash, name, files })
+        Ok(DebridResolved { hash: resolved_hash, name, files, target: target_path })
     }
 }
 
@@ -1266,6 +1266,9 @@ mod tests {
         let mut sorted = paths.clone();
         sorted.sort();
         assert_eq!(paths, sorted, "files still come back in torrent order");
+        // torrent order means the played file is NOT first, and pack links land on different
+        // CDN nodes — whoever probes or warms "the" stream has to be told which one it is
+        assert_eq!(resolved.target.as_deref(), Some("/Pack/Episode 100.mkv"), "the resolve says which file it picked");
     }
 
     #[tokio::test]

@@ -6,7 +6,7 @@
 // The failures these guard against are all silent ones: a release that should have
 // fallen back to torrents and instead showed an error, a wrong-episode refusal treated
 // as a service outage, or a badge painted from an account that is no longer configured.
-import { test, beforeEach } from 'bun:test'
+import { test, beforeEach, afterAll } from 'bun:test'
 import assert from 'node:assert/strict'
 import { DEBRID } from '@/modules/bridge.js'
 import { settings } from '@/modules/settings.js'
@@ -14,7 +14,7 @@ import { status } from '@/modules/networking.js'
 import { files } from '@/components/MediaHandler.svelte'
 import { toast } from 'svelte-sonner'
 import {
-  streamDebrid, resolveDebridFiles, checkDebridAvailability, cancelDebridAvailability,
+  streamDebrid, resolveDebridFiles, replayDebridPlayback, checkDebridAvailability, cancelDebridAvailability,
   refreshDebridAvailability, testDebrid, debridAvailability, debridReleaseNames,
   debridEnabled, debridTransport, debridOptions, QUEUE_WINDOW
 } from '@/modules/debrid/debrid.js'
@@ -44,6 +44,11 @@ function configure ({ service = 'torbox', key = 'k', mode = 'prefer', online = t
   status.set(online ? 'online' : 'offline')
 }
 
+/** What the CDN answers each probe with, reset to alive per test. See playback/probe.js. */
+let probeAnswers = []
+let probed = []
+const realFetch = globalThis.fetch
+
 beforeEach(() => {
   toast.shown.length = 0
   files.set([])
@@ -55,7 +60,18 @@ beforeEach(() => {
   DEBRID.unknownHashes = async (service, apiKey, hashes) => hashes
   DEBRID.listAvailability = async () => ({ answers: {}, names: {} })
   DEBRID.remember = async () => {}
+  // every resolve now probes its link before the play is trusted; a healthy CDN by default
+  probeAnswers = []
+  probed = []
+  globalThis.fetch = async url => {
+    probed.push(url)
+    return probeAnswers.shift() ?? { ok: true, status: 206 }
+  }
   configure()
+})
+
+afterAll(() => {
+  globalThis.fetch = realFetch
 })
 
 test('the settings menu offers what the host says it has', () => {
@@ -141,6 +157,63 @@ test('an error that proves nothing about the release still lets torrents through
   assert.equal(await streamDebrid(MAGNET), false)
   assert.equal(debridAvailability.value.has(HASH), false, 'a timeout is not an answer about the release')
   assert.match(toast.shown[0].description, /timed out/)
+})
+
+// --- the resolved link is probed before the play is trusted ---
+// The live failure this pins: a resolve succeeded in 707ms and handed back a link whose
+// CDN node never sent a single byte. "Cached" describes the service's storage, not the
+// one host the link points at — and the link cannot be exchanged for a fresh one, the
+// service pins one URL per (torrent, file). So the link is asked for two bytes the moment
+// it exists, and a dead one fails the play fast, into the same fallback ladder every
+// other resolve failure already takes — instead of a spinner that never ends.
+
+test('a resolved link that never answers falls back to torrents instead of spinning', async () => {
+  probeAnswers = [{ ok: false, status: 502 }, { ok: false, status: 502 }]
+  assert.equal(await streamDebrid(MAGNET), false, 'unhandled: the torrent client takes it')
+  assert.equal(files.value.length, 0, 'the player must not be left holding files that will never play')
+  assert.match(toast.shown[0].description, /not answering/)
+  assert.equal(probed.length, 2, 'one retry: a single flap is not worth abandoning the stream over')
+}, 10_000)
+
+test('in only mode a dead link stops and says so, fast, instead of spinning forever', async () => {
+  configure({ mode: 'only' })
+  probeAnswers = [{ ok: false, status: 403 }, { ok: false, status: 403 }]
+  assert.equal(await streamDebrid(MAGNET), true, 'handled: only mode never falls back')
+  assert.equal(files.value.length, 0)
+  assert.match(toast.shown[0].description, /not answering/)
+}, 10_000)
+
+test('a link that flaps once and then answers still plays', async () => {
+  probeAnswers = [{ ok: false, status: 502 }, { ok: true, status: 206 }]
+  assert.equal(await streamDebrid(MAGNET), true)
+  assert.equal(files.value.length, 1, 'the play went through; the flap was weather')
+  assert.equal(toast.shown.length, 0)
+}, 10_000)
+
+test('the probe asks the file the resolve picked, not whichever file came first', async () => {
+  // pack files land on different CDN nodes; the files come back in torrent order
+  DEBRID.resolve = async () => ({
+    hash: HASH,
+    name: 'Pack',
+    files: [playerFile('Show - 01.mkv'), playerFile('Show - 02.mkv')],
+    target: '/Show - 02.mkv'
+  })
+  await streamDebrid(MAGNET, undefined, { episode: 2 })
+  assert.deepEqual(probed, ['https://cdn.test/Show - 02.mkv'])
+})
+
+test('a dying stream can be routed again from the top, exactly as it was played', async () => {
+  await streamDebrid(MAGNET, undefined, { episode: 1 })
+  const dispatched = []
+  globalThis.window = { dispatchEvent: event => dispatched.push(event) }
+  try {
+    assert.equal(replayDebridPlayback(), true)
+    assert.equal(dispatched[0].type, 'add')
+    assert.equal(dispatched[0].detail.torrentID, MAGNET)
+    assert.deepEqual(dispatched[0].detail.search, { episode: 1 }, 'the same episode, so the same file comes out of the pack')
+  } finally {
+    delete globalThis.window
+  }
 })
 
 test('answers and release names from the core reach the stores', async () => {

@@ -75,7 +75,8 @@ TORRENT.start(_settings).then(() => {
     }
   })
 
-  window.addEventListener('add', (event) => add(event.detail.resolvedHash, event.detail.search, event.detail.resolvedHash)) // TODO: Circular Dependency (MediaHandler.svelte)
+  // TODO: Circular Dependency (MediaHandler.svelte, debrid.js) — both play through this event
+  window.addEventListener('add', (event) => add(event.detail.torrentID ?? event.detail.resolvedHash, event.detail.search, event.detail.hash ?? event.detail.resolvedHash))
   onTorrentRequest(magnet => {
     DESKTOP.showAndFocus()
     debug('Torrent request via protocol:', typeof magnet === 'string' ? magnet : '.torrent data')

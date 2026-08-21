@@ -29,6 +29,11 @@ pub struct DebridResolved {
     pub name: String,
     /// Streamable files, in torrent order.
     pub files: Vec<DebridFile>,
+    /// Path of the file the resolve picked to play, when it picked one. The files are in
+    /// torrent order, not picked-first, and pack files land on different CDN nodes — so
+    /// anything that wants to warm or verify "the" stream needs to be told which one it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
 }
 
 /// A resolved file shaped like the torrent client's file objects, shared watch key included.

@@ -449,6 +449,7 @@ impl AllDebrid {
         };
 
         let max_files = opts.max_files.unwrap_or(self.client.config.max_files);
+        let target_path = target.and_then(|index| wanted.get(index)).map(|file| file.path.clone());
         let files = self.unlock_links(window_files(&wanted, target, max_files)).await?;
         if files.is_empty() {
             return Err(DebridError::Service {
@@ -459,7 +460,7 @@ impl AllDebrid {
         }
         let files = secure_files(files, self.client.config.title)?;
         let name = magnet_info.get("filename").and_then(Value::as_str).unwrap_or("").to_string();
-        Ok(DebridResolved { hash: hash.to_string(), name, files })
+        Ok(DebridResolved { hash: hash.to_string(), name, files, target: target_path })
     }
 }
 

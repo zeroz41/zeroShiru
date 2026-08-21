@@ -1,9 +1,14 @@
 <script>
   import { settings } from '@/modules/settings.js'
-  import { audioSelectionWrites, safeGain, storedVolume, describeTracks } from '@/modules/playback/audio.js'
+  import { audioSelectionWrites, safeGain, storedVolume, describeTracks, needsPipelineRebuild, runsOnRebuild, heldPlayback } from '@/modules/playback/audio.js'
   import { showsSpinner, BUFFER_RECHECK_MS } from '@/modules/playback/buffering.js'
   import { createStartupTimer } from '@/modules/playback/first-frame.js'
   import { mediaErrorReport, stillFailing, CONFIRM_MS } from '@/modules/playback/errors.js'
+  import { watchesForStall, loadProgressMark, advanceStall, reloadPlan, STALL_PATIENCE_MS } from '@/modules/playback/stall.js'
+  import { probeStream, bustedUrl } from '@/modules/playback/probe.js'
+  import { savesProgress } from '@/modules/playback/resume.js'
+  import { episodePrompt, EPISODE_PROMPT_DEADLINE } from '@/modules/playback/prompts.js'
+  import { withDeadline } from '@/modules/lib/deadline.js'
   import { thumbnailHorizon } from '@/modules/playback/thumbnails.js'
   import { cache, caches } from '@/modules/cache.js'
   import { page, modal, playPage } from '@/modules/navigation.js'
@@ -17,7 +22,7 @@
   import { createEventDispatcher, tick } from 'svelte'
   import Subtitles from '@/modules/subtitles.js'
   import DebridMetadata from '@/modules/debrid/metadata.js'
-  import { debridTransport, debridPlayback } from '@/modules/debrid/debrid.js'
+  import { debridTransport, debridPlayback, replayDebridPlayback } from '@/modules/debrid/debrid.js'
   import { toTS, fastPrettyBytes, capitalize, matchPhrase, videoRx, isValidNumber, debounce } from '@/modules/util.js'
   import { toast } from 'svelte-sonner'
   import { getChaptersAniSkip } from '@/modules/anime/anime.js'
@@ -75,6 +80,7 @@
   let src = null
   let video = null
   let container = null
+  let freezeCanvas = null
   let current = null
   let subs = null
   let debridMeta = null
@@ -118,7 +124,10 @@
   $: $settings.volume = (String(volume || 0))
   $: launchedExternal = false
   $: externalPlayback = ($settings.enableExternal || launchedExternal) && (SUPPORTS.isAndroid || $settings.playerPath)
-  $: safeduration = externalPlayback ? ((current?.media?.media?.duration || (current?.media?.media?.format && durationMap[current?.media?.media?.format]) || 24) * 60) : (isFinite(duration) ? duration : currentTime)
+  // a rebuild empties the element — NaN duration, position zero — and the seekbar reads both
+  // through two-way bindings. See modules/playback/audio.js
+  $: held = heldPlayback(rebuild, { currentTime, duration })
+  $: safeduration = externalPlayback ? ((current?.media?.media?.duration || (current?.media?.media?.format && durationMap[current?.media?.media?.format]) || 24) * 60) : (isFinite(held.duration) ? held.duration : held.position)
   $: {
     if (hidden) setDiscordRPC(media, video?.currentTime)
     else setDiscordRPC(media, (paused && ($page !== page.PLAYER)))
@@ -241,6 +250,8 @@
       // null removes the attribute; an EMPTY one is a load of nothing, which the element
       // reports as a failed load — one bogus "unsupported" error per episode
       src = null
+      cancelRebuild()
+      stall = null
       buffering = true
       current = null
       currentTime = 0
@@ -256,11 +267,6 @@
     }
   }
 
-  let loadInterval
-
-  function clearLoadInterval () {
-    clearInterval(loadInterval)
-  }
   /**
    * @type {VideoDeband}
    */
@@ -285,6 +291,8 @@
     canPlay = false
     video?.pause?.()
     externalPlayerReady = false
+    cancelRebuild()
+    stall = null
     showBuffering()
     if (file) {
       if (thumbnailData.video?.src) URL.revokeObjectURL(thumbnailData.video?.src)
@@ -377,7 +385,9 @@
   }
 
   function saveAnimeProgress (error = false) {
-    if (!error && (buffering || video.readyState < 4)) return
+    // not "is it fully buffered" — a stream being fetched as it plays never claims that, and
+    // an episode watched over debrid saved nothing all the way through. See playback/resume.js
+    if (!savesProgress({ readyState: video?.readyState, currentTime: video?.currentTime, error })) return
     if (error) {
       currentTime = 0
       targetTime = 0
@@ -419,8 +429,8 @@
   }
 
   let currentTime = 0
-  $: progress = currentTime / safeduration * 100
-  $: targetTime = (!paused && currentTime) || targetTime
+  $: progress = held.position / safeduration * 100
+  $: targetTime = (!paused && held.position) || targetTime
   function handleMouseDown ({ detail }) {
     if (wasPaused == null) {
       wasPaused = paused
@@ -467,14 +477,34 @@
   }
   async function promptFiller () {
     emit('duration', { current, duration })
-    const fillerEpisode = await episodesList.getSingleEpisode(media?.media?.idMal, media?.episode)
-    filler = fillerEpisode?.filler && 'Filler'
-    recap = fillerEpisode?.recap && 'Recap'
     resolvePrompt = current?.failed || current?.media?.failed || current?.parseObject?.failed
-    skipPrompt = filler || recap
+    let fillerEpisode = null
+    try {
+      fillerEpisode = await episodesList.getSingleEpisode(media?.media?.idMal, media?.episode)
+    } catch (error) {
+      // it threw straight through autoPlay, and the video never played. An episode nobody
+      // can describe is a normal episode. See modules/playback/prompts.js
+      debug('Could not ask what kind of episode this is, so it plays as a normal one', error)
+    }
+    const asked = episodePrompt(fillerEpisode)
+    filler = asked.filler
+    recap = asked.recap
+    skipPrompt = asked.prompt
+    return skipPrompt
   }
   async function autoPlay (promptSkip = false) {
-    if (!promptSkip) await promptFiller()
+    if (!promptSkip) {
+      // the answer is worth a short wait, not an unbounded one: it comes from a rate limited
+      // third party, and the first play of any show used to sit paused behind it. A late
+      // answer that does matter stops playback and asks then. See modules/playback/prompts.js
+      const asked = promptFiller()
+      const answered = await withDeadline(asked, { ms: EPISODE_PROMPT_DEADLINE, late: () => null })
+      if (answered === null) {
+        debug('Playing without knowing what kind of episode this is; still asking')
+        const asking = current // an answer about the last episode must not stop this one
+        asked.then(skippable => { if (skippable && current === asking && !paused) paused = true })
+      }
+    }
     if ((($page === page.PLAYER && modal.length === 0) || pip) && !resolvePrompt && !skipPrompt) {
       if (externalPlayback) playPause()
       else if (!hidden) {
@@ -679,36 +709,107 @@
     // with nothing selected — that instant is what silenced the element
     const writes = audioSelectionWrites(tracks, id)
     if (!writes.length) return
+    if (needsPipelineRebuild({ readyState: video.readyState, currentTime: video.currentTime })) return rebuildPipeline({ audio: id, reason: 'audio track' })
     const before = describeTracks(tracks)
-    const at = video.currentTime
-    // Before playback is underway, flipping the flags is the whole job: the pipeline is
-    // built with the selection in it, which is why the right track comes up at every
-    // episode start. Mid-play is different — this webview's pipeline acts on an in-place
-    // reselection by tearing its audio chain down and coming back silent, with the flags
-    // reading perfectly the whole time (the log proved it). So a mid-play switch rebuilds
-    // the pipeline instead: reload, apply the selection while it is being built, land
-    // back where playback was. Costs a moment; produces sound every time.
-    const midPlay = video.readyState > 0 && Number.isFinite(at) && at > 1
-    if (!midPlay) {
-      for (const write of writes) {
-        const track = tracks.find(track => track.id === write.id)
-        if (track) track.enabled = write.enabled
-      }
-      return console.warn(`[audio] selected ${id} before playback: ${before} -> ${describeTracks([...video.audioTracks])}`)
+    for (const write of writes) {
+      const track = tracks.find(track => track.id === write.id)
+      if (track) track.enabled = write.enabled
     }
-    console.warn(`[audio] switch to ${id} at ${at.toFixed(2)}s via pipeline rebuild: ${before}`)
-    video.addEventListener('loadedmetadata', () => {
-      // runs after the markup handlers, so it outranks the preference checkAudio
-      // re-applies and the resume position loadAnimeProgress restores
+    console.warn(`[audio] selected ${id} before playback: ${before} -> ${describeTracks([...video.audioTracks])}`)
+  }
+
+  /** The rebuild in flight, if any: what the page keeps showing while the element is empty. */
+  let rebuild = null
+  /** Counts stalled-stream re-opens, so each goes out under a URL the far end has never seen. */
+  let streamNonce = 0
+  /** The last frame, held over the element while it has none. */
+  let frozen = false
+  let rebuildListener = null
+
+  /** Paint the frame that is on screen onto the canvas over the video, so emptying the
+   * element is a moment of stillness rather than a black screen. */
+  function freezeFrame () {
+    if (!freezeCanvas || !video?.videoWidth || !video?.videoHeight) return false
+    try {
+      freezeCanvas.width = video.videoWidth
+      freezeCanvas.height = video.videoHeight
+      freezeCanvas.getContext('2d').drawImage(video, 0, 0)
+      return true
+    } catch (error) {
+      debug('Could not hold the last frame over the rebuild', error)
+      return false
+    }
+  }
+
+  /**
+   * Rebuild the element's media pipeline under the file it is already playing, keeping the
+   * audio track, the position and whether it was playing.
+   *
+   * Two things need this and neither of them is a new file. Switching audio track mid-play:
+   * this webview comes back silent from an in-place reselection, so the selection has to go
+   * in while the pipeline is being built (see modules/playback/audio.js). And a stream that
+   * has stopped answering: re-opening the connection is what fixes a socket the far end has
+   * forgotten (see modules/playback/stall.js).
+   *
+   * Everything the user can see is held across it — the frame on screen, the position the
+   * seekbar reads, whether it was playing — and none of the per-file setup runs again,
+   * which is what used to make a track switch cost a black screen, a seekbar that stopped
+   * tracking, a jump back to the last saved position and a second stream scrubbing the same
+   * link for thumbnails.
+   */
+  async function rebuildPipeline ({ audio = null, reason = 'rebuild', bustCache = false } = {}) {
+    if (!video || !src || externalPlayback) return
+    const tracks = [...(video.audioTracks || [])]
+    // a rebuild that is still in flight is the only one who remembers any of this: the
+    // element it emptied reports no position, no duration and no tracks, so a second switch
+    // taken from the element would restart the episode from zero
+    const wanted = audio ?? rebuild?.audio ?? tracks.find(track => track.enabled)?.id
+    const at = rebuild ? rebuild.at : video.currentTime
+    const wasPlaying = rebuild ? rebuild.playing : !video.paused
+    console.warn(`[player] rebuilding the pipeline (${reason}) at ${Number.isFinite(at) ? at.toFixed(2) : '?'}s, audio ${wanted ?? 'as found'}: ${describeTracks(tracks)}`)
+    // a re-open of a stalled stream goes out under a changed URL: re-loading the same
+    // address has been watched to change nothing, while a new query parameter is a new
+    // identity at every layer between here and the file (see playback/probe.js)
+    if (bustCache && current?.url) src = bustedUrl(current.url, ++streamNonce)
+    frozen = frozen || freezeFrame()
+    rebuild = { at: Number.isFinite(at) && at > 0 ? at : 0, duration: rebuild ? rebuild.duration : duration, audio: wanted, playing: wasPlaying, started: Number.isFinite(at) && at > 0 }
+    if (rebuildListener) video.removeEventListener('loadedmetadata', rebuildListener)
+    rebuildListener = () => {
+      rebuildListener = null
+      // last of the loadedmetadata handlers, so this selection is the one that stands
       const rebuilt = [...(video?.audioTracks || [])]
-      for (const write of audioSelectionWrites(rebuilt, id)) {
+      for (const write of audioSelectionWrites(rebuilt, wanted)) {
         const track = rebuilt.find(track => track.id === write.id)
         if (track) track.enabled = write.enabled
       }
-      video.currentTime = at
-      console.warn(`[audio] rebuilt with ${id} at ${at.toFixed(2)}s: ${describeTracks([...(video?.audioTracks || [])])}`)
-    }, { once: true })
+      if (rebuild?.at) video.currentTime = rebuild.at
+      // the held frame comes down when a real one has been presented, not a moment before
+      video.requestVideoFrameCallback?.(() => { frozen = false })
+      if (wasPlaying) video.play()?.catch?.(error => debug('The rebuilt pipeline would not resume', error))
+      console.warn(`[player] rebuilt at ${video.currentTime.toFixed(2)}s: ${describeTracks(rebuilt)}`)
+      rebuild = null
+    }
+    video.addEventListener('loadedmetadata', rebuildListener, { once: true })
+    await tick() // the held frame has to be on screen before the element is emptied
     video.load()
+  }
+
+  /** A rebuild that never got its header leaves a listener that would seek the NEXT file
+   * back to this one's position, and a frame held over a video that has moved on. */
+  function cancelRebuild () {
+    if (rebuildListener) video?.removeEventListener('loadedmetadata', rebuildListener)
+    rebuildListener = null
+    rebuild = null
+    frozen = false
+  }
+
+  /** A loadedmetadata handler that belongs to a NEW file: a rebuild under the file already
+   * playing must not run it again. See modules/playback/audio.js */
+  function perFile (step, run) {
+    return () => {
+      if (rebuild && !runsOnRebuild(step, rebuild)) return debug(`Skipping ${step} setup: the element was rebuilt under the same file`)
+      return run()
+    }
   }
   function selectVideo (id) {
     if (id != null) {
@@ -1144,8 +1245,11 @@
   let canPlay = !!src
   /** Playback position at the spinner's last look, so advancing time can take it down. */
   let spinnerTime = null
+  /** The spinner's watchdog: an element that has not changed in a while. See playback/stall.js */
+  let stall = null
   function hideBuffering () {
     canPlay = !!src
+    stall = null // it came back; whatever it was, it is not stuck now
     if (bufferTimeout) {
       clearTimeout(bufferTimeout)
       bufferTimeout = null
@@ -1178,16 +1282,81 @@
           if (!showsSpinner({ readyState, externalPlayback, externalPlayerReady, advanced })) {
             // advancing playback under a spinner means readyState lied; worth a line
             if (advanced && !(readyState >= 3)) console.warn(`[spinner] video is advancing at readyState=${readyState}; hiding the spinner`)
-            hideBuffering()
+            return hideBuffering()
           }
+          checkStall(readyState, time)
         }, BUFFER_RECHECK_MS)
       }
     }, 150)
   }
+  /** How far ahead of the playhead the element can play from what it holds. */
+  function bufferedEnd () {
+    const buffered = video?.buffered
+    for (let index = buffered?.length || 0; index--;) {
+      if (video.currentTime >= buffered.start(index) && video.currentTime < buffered.end(index)) return buffered.end(index)
+    }
+    return buffered?.length ? buffered.end(buffered.length - 1) : 0
+  }
+
+  /**
+   * A spinner over an element that is not moving. Nothing announces a stream which simply
+   * stops answering — every media event fires on the way UP through readiness — so the
+   * spinner watches for it instead of waiting to be told. See modules/playback/stall.js
+   */
+  function checkStall (readyState, time) {
+    if (!watchesForStall({ src, readyState, paused: video?.paused, externalPlayback })) {
+      stall = null
+      return
+    }
+    const { state, action } = advanceStall(stall, loadProgressMark({ readyState, bufferedEnd: bufferedEnd(), currentTime: time, downloaded: buffer }), BUFFER_RECHECK_MS)
+    stall = state
+    if (action === 'wait') return
+    if (action === 'reload') {
+      console.warn(`[stall] nothing about the stream has changed in ${Math.round(STALL_PATIENCE_MS / 1_000)}s at readyState=${readyState}; recovering (attempt ${state.reloads})`)
+      return recoverStalledStream(state.reloads)
+    }
+    console.warn(`[stall] the stream is still not answering after ${state.reloads} re-opens; telling the user`)
+    toast.error('Stream Not Responding', {
+      description: isDebrid
+        ? 'The link answers over HTTP but the player cannot start it. Dismiss this toast to route the play again from the top.'
+        : 'The stream stopped sending data and re-opening it did not help. Dismiss this toast to try again.',
+      duration: Infinity,
+      onDismiss: () => {
+        stall = null
+        if (isDebrid && replayDebridPlayback()) return
+        rebuildPipeline({ reason: 'the user asked again', bustCache: isDebrid })
+      }
+    })
+  }
+
+  /**
+   * One stall recovery, escalating: a torrent stream is re-opened in place; a debrid link
+   * gets one re-open under a changed URL, and before the second one the link is asked
+   * directly whether it serves bytes at all. A dead link makes every further re-open a lie
+   * — and it cannot be exchanged for a fresh one, the service pins one URL per file — so
+   * the play is routed again from the top, where a dead link now fails fast into the
+   * torrent fallback or an honest error. See modules/playback/stall.js and probe.js.
+   * @param {number} attempt - 1-based, from the watchdog.
+   */
+  async function recoverStalledStream (attempt) {
+    let plan = reloadPlan({ attempt, debrid: isDebrid })
+    if (plan === 'probe') {
+      const { alive, reason, elapsed } = await probeStream(current?.url)
+      console.warn(`[stall] the link was probed before re-opening again: ${alive ? `alive in ${elapsed}ms` : reason}`)
+      plan = reloadPlan({ attempt, debrid: isDebrid, linkAlive: alive })
+    }
+    if (plan === 'replay') {
+      console.warn('[stall] the link is dead and cannot be re-opened; routing the play again from the top')
+      if (replayDebridPlayback()) return
+      // nothing remembers the play; re-opening is all that is left
+    }
+    return rebuildPipeline({ reason: `stalled stream, attempt ${attempt}`, bustCache: isDebrid })
+  }
+
   $: navigator.mediaSession?.setPositionState({
     duration: Math.max(0, safeduration || 0),
     playbackRate: 1,
-    position: Math.max(0, Math.min(safeduration || 0, currentTime || 0))
+    position: Math.max(0, Math.min(safeduration || 0, held.position || 0))
   })
 
   if ('mediaSession' in navigator) {
@@ -1562,6 +1731,9 @@
     torrent.down = detail.downloadSpeed || 0
   }
   function checkError ({ target }) {
+    // an element that errored will never report the header a rebuild is waiting for, so
+    // nothing is coming back: stop holding the frame and the clock over it
+    if (rebuild || frozen) cancelRebuild()
     // video playback failed - show a message saying why
     if (!mediaErrorReport({ code: target.error?.code, src })) {
       return debug('Ignoring a media error with nothing loaded, which is the player between files', target.error)
@@ -1773,6 +1945,7 @@
     on:play={updatew2g}
     on:seeked={updatew2g}
     on:seeked={hideBuffering}
+    on:seeked={() => { frozen = false }}
     on:timeupdate={() => createThumbnail()}
     on:timeupdate={checkCompletion}
     on:timeupdate={checkSkippableChapters}
@@ -1781,19 +1954,22 @@
     on:pause={() => { immersed = false }}
     on:canplay={hideBuffering}
     on:playing={hideBuffering}
+    on:playing={() => { frozen = false }}
     on:playing={() => startup.playing()}
     on:loadedmetadata={hideBuffering}
     on:loadedmetadata={() => startup.metadata()}
     on:ended={tryPlayNext}
-    on:loadedmetadata={initThumbnails}
-    on:loadedmetadata={findChapters}
-    on:loadedmetadata={() => autoPlay()}
-    on:loadedmetadata={checkAudio}
-    on:loadedmetadata={checkSubtitle}
-    on:loadedmetadata={clearLoadInterval}
-    on:loadedmetadata={loadAnimeProgress}
+    on:loadedmetadata={perFile('thumbnails', initThumbnails)}
+    on:loadedmetadata={perFile('chapters', findChapters)}
+    on:loadedmetadata={perFile('autoplay', () => autoPlay())}
+    on:loadedmetadata={perFile('audio', checkAudio)}
+    on:loadedmetadata={perFile('subtitles', checkSubtitle)}
+    on:loadedmetadata={perFile('resume', loadAnimeProgress)}
     on:leavepictureinpicture={() => { pip = false }}
   ><track kind='captions' src='' srclang='en' label='English'/></video>
+  <!-- the frame the element was showing, held over it while it has none: rebuilding the
+       pipeline to switch audio track empties the element, and an empty element is black -->
+  <canvas class='freeze-frame position-absolute h-full w-full' class:d-none={!frozen} bind:this={freezeCanvas} style={`margin-top: ${menubarOffset}px`} aria-hidden='true'></canvas>
   {#if stats && !miniplayer}
     <div class='position-absolute top-0 bg-tp p-10 ml-20 mt-100 text-monospace rounded z-50'>
       <button class='close btn btn-square mt-5' type='button' use:click={toggleStats}>
@@ -2310,7 +2486,11 @@
   :global(.deband-canvas) ~ video {
     opacity: 0;
   }
-  .fitWidth video, .fitWidth :global(.deband-canvas) {
+  .freeze-frame {
+    object-fit: contain;
+    pointer-events: none;
+  }
+  .fitWidth video, .fitWidth :global(.deband-canvas), .fitWidth .freeze-frame {
     object-fit: cover !important;
   }
   .custom-range {

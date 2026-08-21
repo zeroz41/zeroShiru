@@ -325,7 +325,7 @@ pub async fn debrid_resolve(
         .iter()
         .map(|file| to_player_file(&resolved.hash, &resolved.name, file))
         .collect();
-    Ok(ResolvedReply { hash: resolved.hash, name: resolved.name, files })
+    Ok(ResolvedReply { hash: resolved.hash, name: resolved.name, files, target: resolved.target })
 }
 
 /// A resolved release, shaped the way the player takes files.
@@ -334,6 +334,10 @@ pub struct ResolvedReply {
     pub hash: String,
     pub name: String,
     pub files: Vec<PlayerFile>,
+    /// Path of the file the resolve picked to play; the frontend probes and warms this
+    /// one, since pack files land on different CDN nodes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
 }
 
 #[cfg(test)]
