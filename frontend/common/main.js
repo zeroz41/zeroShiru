@@ -5,6 +5,7 @@ import { cacheReady, migrationStatus } from '@/modules/cache.js'
 import { SUPPORTS } from '@/modules/support.js'
 import { COMMON } from '@/modules/bridge.js'
 import { attachDiagnostics, debugLogging } from '@/modules/lib/diagnostics.js'
+import { attachMediaProbe } from '@/modules/lib/media-probe.js'
 import Debug from 'debug'
 import '@/css.css'
 import '@/themes.css'
@@ -40,3 +41,7 @@ if (target) {
 
 const { default: App } = await import('./App.svelte')
 new App({ target: document.body })
+
+// after first paint, before first play: a media stack that cannot play anything
+// says so in the exportable log now, not by freezing tonight's episode
+attachMediaProbe()
