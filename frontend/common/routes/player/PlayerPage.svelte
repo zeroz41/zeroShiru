@@ -2,6 +2,7 @@
   import { settings } from '@/modules/settings.js'
   import { audioSelectionWrites, safeGain, storedVolume, describeTracks, AUDIO_FLUSH_NUDGE } from '@/modules/playback/audio.js'
   import { showsSpinner, BUFFER_RECHECK_MS } from '@/modules/playback/buffering.js'
+  import { createStartupTimer } from '@/modules/playback/first-frame.js'
   import { mediaErrorReport, stillFailing, CONFIRM_MS } from '@/modules/playback/errors.js'
   import { thumbnailHorizon } from '@/modules/playback/thumbnails.js'
   import { cache, caches } from '@/modules/cache.js'
@@ -39,6 +40,9 @@
   const debug = Debug('ui:player')
 
   const emit = createEventDispatcher()
+
+  // "slow to play" gets numbers: src assignment to header, header to first frame
+  const startup = createStartupTimer()
 
   w2gEmitter.addEventListener('playerupdate', ({ detail }) => {
     currentTime = detail.time
@@ -317,6 +321,7 @@
   async function setCurrent(file, launchExternal = false) {
     if ((externalPlayback || launchExternal) && document.fullscreenElement) document.exitFullscreen()
     if (!externalPlayback) {
+      startup.start(file.name || file.url)
       src = file.url
       if (!launchExternal) {
         subs = new Subtitles(video, files, current, handleHeaders)
@@ -1746,7 +1751,9 @@
     on:pause={() => { immersed = false }}
     on:canplay={hideBuffering}
     on:playing={hideBuffering}
+    on:playing={() => startup.playing()}
     on:loadedmetadata={hideBuffering}
+    on:loadedmetadata={() => startup.metadata()}
     on:ended={tryPlayNext}
     on:loadedmetadata={initThumbnails}
     on:loadedmetadata={findChapters}

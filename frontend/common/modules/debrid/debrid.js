@@ -10,6 +10,7 @@ import { derived } from 'svelte/store'
 import { toast } from 'svelte-sonner'
 import { DEBRID } from '@/modules/bridge.js'
 import { Availability, describeAvailability, normalizeAvailability, outageNotice } from '@/modules/debrid/availability.js'
+import { warmStream } from '@/modules/playback/warmup.js'
 import { routeDebrid, debridKey } from '@/modules/debrid/route.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
@@ -234,6 +235,10 @@ export async function resolveDebridFiles (torrentID, search) {
   if (!current) throw new Error('No debrid service configured')
   const episode = Number(search?.episode)
   const resolved = await DEBRID.resolve(current.id, current.apiKey, torrentID, Number.isFinite(episode) ? episode : undefined)
+  // the player will not ask for its first byte until filenames are parsed and episodes
+  // matched; the CDN can spend that time on DNS, TLS and finding the file instead
+  const warmed = warmStream(resolved.files)
+  if (warmed.length) debug(`Warming ${warmed.length} stream connection(s) ahead of playback`)
   // playing it proves the service holds it, which is the best answer there is
   publishAvailability([[resolved.hash, Availability.CACHED]])
   return resolved.files
