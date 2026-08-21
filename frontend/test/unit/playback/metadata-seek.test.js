@@ -47,6 +47,24 @@ test('a seek far ahead restarts the stream near the seek instead of reading ever
   assert.ok(state.served < FIXTURE.length * 0.8, `the middle of the file must not have been downloaded to get there, served ${state.served}`)
 })
 
+test('a restart lands exactly on a cluster from the file\'s own cue index', async () => {
+  // the bitrate estimate this replaces missed on variable-bitrate video: land short and
+  // the parser chewed through megabytes before the first cue, land long and the cues for
+  // the playhead never arrived. The Cues element is the map the video element itself
+  // seeks with; the subtitle restart must use it byte-for-byte
+  const { state, spy, clock, metadata } = play()
+  await until(() => spy.seen.subtitles.length >= 3)
+  await until(() => (metadata.cuesIndex?.length ?? 0) > 0, 8_000)
+  assert.ok(metadata.cuesIndex.length > 0, 'the fixture carries a cue index and it must be read')
+
+  clock.time = 450
+  await until(() => cueNear(spy, 450), 8_000)
+  const clusters = new Set(metadata.cuesIndex.map(cue => cue.byte))
+  metadata.destroy()
+  const exact = state.requests.some(request => clusters.has(request.start))
+  assert.ok(exact, `the restart must land on an indexed cluster boundary, saw starts: ${state.requests.map(request => request.start).join(', ')}`)
+})
+
 test('resuming an episode part-way jumps straight to the resume point', async () => {
   // the player restores watch progress before playback starts, so getTime is already deep into
   // the episode by the time the subtitle stream spins up — the debrid-pack resume case

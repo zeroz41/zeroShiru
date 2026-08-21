@@ -1,5 +1,7 @@
 import Metadata from 'matroska-metadata'
+import { EbmlTagId } from 'ebml-iterator'
 import { arr2hex, hex2bin } from 'uint8-util'
+import { parseCues, cueJumpTarget } from '@/modules/playback/cue-index.js'
 import { fontRx, matroskaRx, matchFontFiles, matchSubtitleFiles, sleep } from '@/modules/util.js'
 import { SUPPORTS } from '@/modules/support.js'
 import Debug from 'debug'
@@ -86,6 +88,11 @@ export default class DebridMetadata {
   remote = null
   /** @type {Metadata | null} */
   metadata = null
+  /** @type {{ time: number, byte: number }[] | null} The file's own seek index, once read. */
+  cuesIndex = null
+  #cuesRequested = false
+  /** Media duration in ms once known, bounding what counts as a real seek target. */
+  #durationMs = 0
 
   /**
    * @param {any} file - The playing debrid file object.
@@ -165,7 +172,9 @@ export default class DebridMetadata {
    * @param {number} [from] Byte offset to start at, for picking a given-up stream back up.
    */
   async #streamSubtitles (from = 0) {
+    this.#loadCues()
     const durationMs = await this.metadata.duration
+    this.#durationMs = durationMs > 0 ? durationMs : 0
     const byteRate = durationMs > 0 ? this.file.size / (durationMs / 1_000) : 0
     // the window of bytes fed to the parser so far, seeks outside it restart the stream
     let start = from
@@ -282,11 +291,47 @@ export default class DebridMetadata {
   }
 
   /**
+   * Reads the file's Cues element — the exact timestamp-to-cluster map the video
+   * element itself seeks with — so a restart after a seek lands on the right cluster
+   * instead of a bitrate guess. One bounded range request; a file without cues, or a
+   * link that will not serve them, just leaves the estimate in charge as before.
+   */
+  #loadCues () {
+    if (this.#cuesRequested || !this.metadata || !this.remote) return
+    this.#cuesRequested = true
+    Promise.resolve(this.metadata.seekHead).then(async seekHead => {
+      const position = seekHead?.Cues?.data
+      if (position == null || this.destroyed) return
+      const start = this.metadata.segmentStart + Number(position)
+      if (!Number.isFinite(start) || start >= this.file.size) return
+      // cues are tens of kilobytes; the request streams and is dropped once the tag is whole
+      const source = this.remote.slice(start, Math.min(this.file.size, start + 4_000_000))
+      const tag = await this.metadata.readUntilTag(source.stream(), EbmlTagId.Cues)
+      source.abort()
+      if (this.destroyed) return
+      this.cuesIndex = parseCues(tag, this.metadata.segmentStart)
+      debug(this.cuesIndex
+        ? `Read ${this.cuesIndex.length} cue points; seeks will restart the subtitle stream exactly`
+        : 'The file lists no usable cue points; seeks fall back to the bitrate estimate')
+    }).catch(error => debug('Failed to read cues, seeks fall back to the bitrate estimate:', error))
+  }
+
+  /**
    * Where the parser should restart because a seek left the parsed window, or null while
    * reading on from where it is stays right. Reading on past a forward seek would download
    * everything in between for nothing; a backward seek needs the bytes again.
+   *
+   * The cue index answers exactly when it has arrived; until then — or for a file
+   * without one — the average-bitrate estimate stands in, with its safety margin.
    */
   #jumpTarget (byteRate, start, offset) {
+    if (this.cuesIndex) {
+      const position = this.getTime()
+      // a playhead past the end of the file is not a seek, it is a caller reading
+      // straight through — the same overshoot escape the estimate below has always had
+      if (this.#durationMs && position * 1_000 > this.#durationMs) return null
+      return cueJumpTarget(this.cuesIndex, position, this.metadata?.timecodeScale || 1, { start, offset })
+    }
     if (!byteRate) return null // no duration to estimate from, so read straight through
     const position = this.getTime() * byteRate
     const jump = Math.max(0, Math.floor(position - JUMP_BACK_SECONDS * byteRate))
