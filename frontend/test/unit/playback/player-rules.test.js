@@ -3,7 +3,7 @@
 // loading spinner stuck forever, and thumbnail drawing raced the stream it was drawn from.
 import { test } from 'bun:test'
 import assert from 'node:assert/strict'
-import { audioSelectionWrites, safeGain, storedVolume, describeTracks, AUDIO_FLUSH_NUDGE } from '../../../common/modules/playback/audio.js'
+import { audioSelectionWrites, safeGain, storedVolume, describeTracks } from '../../../common/modules/playback/audio.js'
 import { showsSpinner } from '../../../common/modules/playback/buffering.js'
 import { thumbnailHorizon, THUMBNAIL_LOOKAHEAD_SECONDS } from '../../../common/modules/playback/thumbnails.js'
 import { mediaErrorReport, stillFailing } from '../../../common/modules/playback/errors.js'
@@ -125,11 +125,14 @@ test('a source that never got anywhere is still a failure', () => {
   assert.equal(stillFailing({ erroredSrc: src, currentSrc: src }), true)
 })
 
-test('the flush after an audio switch is a real seek and an unnoticeable one', () => {
-  // the pipeline acts on a stream selection at its next flush; the original code seeked
-  // from a stale cached position, which jumped playback backwards by however stale it was
-  assert.ok(AUDIO_FLUSH_NUDGE > 0, 'setting the same position may not count as a seek at all')
-  assert.ok(AUDIO_FLUSH_NUDGE <= 0.1, 'and anything bigger is a visible jump backwards')
+test('advancing playback takes the spinner down, whatever readyState claims', () => {
+  // on debrid range streams this webview has reported starvation over a video that
+  // was visibly playing; position moving forward is the element's own confession
+  assert.equal(showsSpinner({ readyState: 2, advanced: true }), false)
+  assert.equal(showsSpinner({ readyState: 2, advanced: false }), true)
+  // but a forced spinner (file being swapped) outranks it, and only real booleans count
+  assert.equal(showsSpinner({ forced: true, readyState: 4, advanced: true }), true)
+  assert.equal(showsSpinner({ readyState: 2, advanced: {} }), true)
 })
 
 test('the track list reads as a line a log can carry', () => {

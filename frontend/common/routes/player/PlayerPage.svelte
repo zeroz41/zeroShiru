@@ -1,6 +1,6 @@
 <script>
   import { settings } from '@/modules/settings.js'
-  import { audioSelectionWrites, safeGain, storedVolume, describeTracks, AUDIO_FLUSH_NUDGE } from '@/modules/playback/audio.js'
+  import { audioSelectionWrites, safeGain, storedVolume, describeTracks } from '@/modules/playback/audio.js'
   import { showsSpinner, BUFFER_RECHECK_MS } from '@/modules/playback/buffering.js'
   import { createStartupTimer } from '@/modules/playback/first-frame.js'
   import { mediaErrorReport, stillFailing, CONFIRM_MS } from '@/modules/playback/errors.js'
@@ -680,16 +680,35 @@
     const writes = audioSelectionWrites(tracks, id)
     if (!writes.length) return
     const before = describeTracks(tracks)
-    for (const write of writes) {
-      const track = tracks.find(track => track.id === write.id)
-      if (track) track.enabled = write.enabled
-    }
-    // and then a flush, because the pipeline acts on the selection at the next one. From
-    // the element's own position, not a remembered one. See modules/playback/audio.js
     const at = video.currentTime
-    if (Number.isFinite(at)) video.currentTime = Math.max(0, at - AUDIO_FLUSH_NUDGE)
-    // switching audio has been broken twice; this is the line that says what happened
-    console.warn(`[audio] switch to ${id} at ${Number.isFinite(at) ? at.toFixed(2) : '?'}s: ${before} -> ${describeTracks([...video.audioTracks])}`)
+    // Before playback is underway, flipping the flags is the whole job: the pipeline is
+    // built with the selection in it, which is why the right track comes up at every
+    // episode start. Mid-play is different — this webview's pipeline acts on an in-place
+    // reselection by tearing its audio chain down and coming back silent, with the flags
+    // reading perfectly the whole time (the log proved it). So a mid-play switch rebuilds
+    // the pipeline instead: reload, apply the selection while it is being built, land
+    // back where playback was. Costs a moment; produces sound every time.
+    const midPlay = video.readyState > 0 && Number.isFinite(at) && at > 1
+    if (!midPlay) {
+      for (const write of writes) {
+        const track = tracks.find(track => track.id === write.id)
+        if (track) track.enabled = write.enabled
+      }
+      return console.warn(`[audio] selected ${id} before playback: ${before} -> ${describeTracks([...video.audioTracks])}`)
+    }
+    console.warn(`[audio] switch to ${id} at ${at.toFixed(2)}s via pipeline rebuild: ${before}`)
+    video.addEventListener('loadedmetadata', () => {
+      // runs after the markup handlers, so it outranks the preference checkAudio
+      // re-applies and the resume position loadAnimeProgress restores
+      const rebuilt = [...(video?.audioTracks || [])]
+      for (const write of audioSelectionWrites(rebuilt, id)) {
+        const track = rebuilt.find(track => track.id === write.id)
+        if (track) track.enabled = write.enabled
+      }
+      video.currentTime = at
+      console.warn(`[audio] rebuilt with ${id} at ${at.toFixed(2)}s: ${describeTracks([...(video?.audioTracks || [])])}`)
+    }, { once: true })
+    video.load()
   }
   function selectVideo (id) {
     if (id != null) {
@@ -1123,6 +1142,8 @@
   }
 
   let canPlay = !!src
+  /** Playback position at the spinner's last look, so advancing time can take it down. */
+  let spinnerTime = null
   function hideBuffering () {
     canPlay = !!src
     if (bufferTimeout) {
@@ -1148,8 +1169,17 @@
       // one. So a spinner that is up keeps asking whether it is still true, rather than
       // waiting for an event that already came and went
       if (!bufferRecheck) {
+        spinnerTime = video?.currentTime ?? null
         bufferRecheck = setInterval(() => {
-          if (!showsSpinner({ readyState: video?.readyState, externalPlayback, externalPlayerReady })) hideBuffering()
+          const time = video?.currentTime
+          const advanced = spinnerTime != null && time !== spinnerTime && !video?.paused
+          const readyState = video?.readyState
+          spinnerTime = time
+          if (!showsSpinner({ readyState, externalPlayback, externalPlayerReady, advanced })) {
+            // advancing playback under a spinner means readyState lied; worth a line
+            if (advanced && !(readyState >= 3)) console.warn(`[spinner] video is advancing at readyState=${readyState}; hiding the spinner`)
+            hideBuffering()
+          }
         }, BUFFER_RECHECK_MS)
       }
     }, 150)

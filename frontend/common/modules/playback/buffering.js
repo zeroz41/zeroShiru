@@ -26,9 +26,15 @@ const HAVE_FUTURE_DATA = 3
  * @param {number} [state.readyState] The element's `readyState`.
  * @param {boolean} [state.externalPlayback] Playing in an external player instead.
  * @param {boolean} [state.externalPlayerReady] That player has started.
+ * @param {boolean} [state.advanced] Playback time moved since the spinner last looked.
+ *   A video whose position is advancing is playing, whatever `readyState` claims —
+ *   and on debrid range streams this webview has claimed starvation over a video
+ *   playing perfectly well underneath the spinner.
  * @returns {boolean}
  */
-export function showsSpinner ({ forced = false, readyState = 0, externalPlayback = false, externalPlayerReady = false } = {}) {
+export function showsSpinner ({ forced = false, readyState = 0, externalPlayback = false, externalPlayerReady = false, advanced = false } = {}) {
   if (externalPlayback) return !externalPlayerReady
-  return forced === true || !(readyState >= HAVE_FUTURE_DATA)
+  if (forced === true) return true
+  if (advanced === true) return false
+  return !(readyState >= HAVE_FUTURE_DATA)
 }
