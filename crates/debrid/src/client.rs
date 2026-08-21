@@ -856,14 +856,15 @@ mod pacing {
         let after_badges = transport.urls().iter().filter(|url| url.contains("mylist")).count();
         torbox.resolve(&magnet, &Default::default()).await.unwrap();
         let after_play = transport.urls().iter().filter(|url| url.contains("mylist")).count();
-        // the play still confirms the entry by id, which is a one-torrent read, but it does
-        // not pay for the whole account again
         assert_eq!(
             transport.urls().iter().filter(|url| url.contains("mylist") && !url.contains("&id=")).count(),
             after_badges,
             "the play reused the listing the badge refresh had already paid for"
         );
-        assert!(after_play > after_badges, "it did still confirm the one torrent it wanted");
+        assert_eq!(
+            after_play, after_badges,
+            "requestdl confirms the cached id by using it; an uncached confirmation used to block playback"
+        );
 
         clock.advance(61_000);
         torbox.list_availability().await.unwrap();

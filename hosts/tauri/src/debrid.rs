@@ -274,6 +274,8 @@ pub async fn debrid_resolve(
 ) -> Result<ResolvedReply, DebridFailure> {
     let managed = state.managed(&service, &api_key)?;
     let max_files = managed.provider().config().max_files;
+    let started = std::time::Instant::now();
+    tracing::info!(target: "debrid", %service, ?episode, "resolve started");
     let opts = ResolveOptions {
         file_filter: Some(Box::new(shiru_media::is_playback_path)),
         pick_file: episode.map(|episode| -> shiru_debrid::PickFile {
@@ -289,7 +291,29 @@ pub async fn debrid_resolve(
         }),
         max_files: None,
     };
-    let resolved = managed.resolve(&magnet, &opts).await.map_err(failure)?;
+    let resolved = managed.resolve(&magnet, &opts).await;
+    let resolved = match resolved {
+        Ok(resolved) => {
+            tracing::info!(
+                target: "debrid",
+                %service,
+                elapsed_ms = started.elapsed().as_millis(),
+                files = resolved.files.len(),
+                "resolve completed"
+            );
+            resolved
+        }
+        Err(error) => {
+            tracing::warn!(
+                target: "debrid",
+                %service,
+                elapsed_ms = started.elapsed().as_millis(),
+                %error,
+                "resolve failed"
+            );
+            return Err(failure(error));
+        }
+    };
     // the cached account listing is dropped by whichever provider added a torrent, at the
     // moment it added it — a resolve that streamed something already on the account
     // changed nothing, and paying for a fresh listing after every play is what put a

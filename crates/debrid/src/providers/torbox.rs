@@ -24,9 +24,9 @@ use std::sync::Arc;
 
 const API: &str = "https://api.torbox.app/v1/api";
 
-/// How long the account endpoint is given before the listing is asked instead. Short, because
-/// failing it costs nothing: `validate` falls through to a request that answers the same
-/// question, so the budget for the whole operation stays as generous as any other.
+/// How long TorBox account reads are given. They normally answer in well under a second, and
+/// have repeatedly accepted a connection without returning a body. Account reads sit ahead of
+/// both validation and cold-start playback, so they get a smaller budget than a media link.
 const ACCOUNT_TIMEOUT_MS: u64 = 10_000;
 /// Once the selected file has a direct URL, neighboring pack links may use this much
 /// more time for subtitles and in-player navigation. A silent neighbor must never hide
@@ -159,7 +159,8 @@ impl TorBox {
         if fresh {
             query.push_str("&bypass_cache=true");
         }
-        let data = self.request(&format!("{API}/torrents/mylist?{query}"), RequestOpts::default()).await?;
+        let opts = RequestOpts { timeout_ms: Some(ACCOUNT_TIMEOUT_MS), ..RequestOpts::default() };
+        let data = self.request(&format!("{API}/torrents/mylist?{query}"), opts).await?;
         // asking for one id answers with a bare object rather than a list
         Ok(match data {
             Value::Null => vec![],
@@ -182,31 +183,17 @@ impl TorBox {
     }
 
     /// The account's entry for an info hash, which is how a release already there is reused
-    /// rather than added twice. Read back by id because the listing can be a minute stale, so
-    /// one deleted elsewhere must read as absent rather than fail the resolve.
+    /// rather than added twice. The normal listing is already TTL-bound and `requestdl` is the
+    /// authoritative test of whether its id still streams. Do not put a `bypass_cache` read in
+    /// front of every play: TorBox has accepted that request and then stayed silent while both
+    /// the listing and link endpoints remained healthy, turning a cached episode into a 60s
+    /// resolve timeout.
     async fn existing_torrent(&self, hash: &str) -> Result<Option<Value>, DebridError> {
-        let known = self
+        Ok(self
             .listing()
             .await?
             .into_iter()
-            .find(|torrent| torrent_hash(torrent).as_deref() == Some(hash));
-        let Some(known) = known else { return Ok(None) };
-        // a failed read reads as "gone": the caller then checks the cache and adds the magnet,
-        // which fails loudly enough if the API is really unreachable
-        let id = known.get("id").filter(|value| !value.is_null()).cloned();
-        let confirmed = self
-            .account_torrents(id.as_ref(), true)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .next();
-        if confirmed.is_none() {
-            // the listing named a torrent that is gone, so it is describing an account
-            // that no longer exists; the next read is worth paying for
-            tracing::debug!(target: "debrid", "TorBox listing named a torrent that is gone, adding the magnet instead");
-            self.client.forget_listing().await;
-        }
-        Ok(confirmed)
+            .find(|torrent| torrent_hash(torrent).as_deref() == Some(hash)))
     }
 
     /// Adds a magnet and reads back the account entry for it. The returned flag reports
@@ -979,6 +966,10 @@ mod tests {
         let requests = transport.requests.lock().unwrap();
         let list = requests.iter().find(|request| request.url.contains("mylist")).unwrap();
         let link = requests.iter().find(|request| request.url.contains("requestdl")).unwrap();
+        assert_eq!(
+            list.timeout_ms, ACCOUNT_TIMEOUT_MS,
+            "an unhealthy account endpoint must not spend the player's full request budget"
+        );
         assert_eq!(list.headers.get("Authorization").map(String::as_str), Some("Bearer test-key"));
         assert!(!list.url.contains("test-key"), "a bearer key must never leak into a URL");
         assert!(link.url.contains("token=test-key"), "this one endpoint takes the key as a query parameter");
@@ -1197,6 +1188,45 @@ mod tests {
         .unwrap();
         assert!(resolved.files.iter().any(|file| file.path == "/Test/Episode 02.mkv"));
         assert!(resolved.files.iter().any(|file| file.path == "/Test/readme.txt"));
+    }
+
+    /// TorBox's uncached account read has accepted the connection and then stayed silent while
+    /// its normal listing and download-link endpoints remained healthy. A torrent the listing
+    /// already identifies must reach `requestdl` instead of putting that unreliable confirmation
+    /// in front of every play.
+    struct SilentFreshListing {
+        listing: String,
+    }
+
+    #[async_trait::async_trait]
+    impl HttpTransport for SilentFreshListing {
+        async fn execute(
+            &self,
+            request: shiru_networking::HttpRequest,
+        ) -> Result<shiru_networking::HttpResponse, shiru_networking::TransportError> {
+            let body = if request.url.contains("mylist") && request.url.contains("bypass_cache=true") {
+                return futures::future::pending().await;
+            } else if request.url.contains("requestdl") {
+                ok(json!("https://torbox.test/dl/episode"))
+            } else {
+                self.listing.clone()
+            };
+            Ok(shiru_networking::HttpResponse { status: 200, headers: HashMap::new(), body: body.into_bytes() })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cached_account_entry_does_not_wait_for_a_fresh_listing_to_stream() {
+        let transport = Arc::new(SilentFreshListing { listing: ok(json!([torrent(json!({}))])) });
+        let torbox = TorBox::new("test-key".into(), transport, Arc::new(ManualClock::new()));
+        let resolved = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            torbox.resolve(MAGNET, &ResolveOptions::default()),
+        )
+        .await
+        .expect("a silent fresh account read blocked a link the normal listing already described")
+        .unwrap();
+        assert!(resolved.files.iter().any(|file| file.path == "/Test/Episode 02.mkv"));
     }
 
     #[tokio::test]
