@@ -181,14 +181,19 @@ class AnilistClient {
     debug('Initializing Anilist Client for ID ' + this.userID?.viewer?.data?.Viewer?.id)
     this.limiter.on('failed', async (error, jobInfo) => {
       if (status.value.match(/offline/i)) throw new Error('Failed making request to Anilist, network is offline... not retrying')
-      else if (error.status === 429 || jobInfo.retryCount >= 1) await printError('Search Failed', 'Failed making request to Anilist!\nTry again in a minute.', error)
       const errorDebug = `Error: ${error.status || 429} - ${error.message || error.statusText || codes[error.status || 429]}`
 
+      // A failure that is about to be retried is weather, not news: a 429 is AniList's
+      // normal way of pacing a busy minute, and the request usually succeeds moments
+      // later. Toasting "Search Failed" on every first 429 buried real failures in
+      // noise — one batch play plus an episode list was enough to scare the user. The
+      // toast now belongs to giving up, which is the only outcome the user can act on.
       if (error.status === 429) { // rate limited...
         // as patient as it asks for, but a limit that never lifts must not hold every
         // query behind it forever. See modules/lib/retry.js
         if (!retryWorthwhile({ retryCount: jobInfo.retryCount, limited: true })) {
           debug(`Giving up on a rate limited request after ${jobInfo.retryCount + 1} attempts`, errorDebug)
+          await printError('Search Failed', 'Failed making request to Anilist!\nTry again in a minute.', error)
           return
         }
         const time = (Number(error.headers.get('retry-after') || 60) + 1) * 1_000
@@ -198,6 +203,7 @@ class AnilistClient {
 
       if (jobInfo.retryCount >= 1) { // give up after 2 total attempts, let it reject so callers can fall back
         debug(`Giving up on request after ${jobInfo.retryCount + 1} attempts`, errorDebug)
+        await printError('Search Failed', 'Failed making request to Anilist!\nTry again in a minute.', error)
         return
       }
 

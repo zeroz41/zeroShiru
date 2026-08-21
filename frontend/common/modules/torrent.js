@@ -10,6 +10,7 @@ import { toast } from 'svelte-sonner'
 import { capitalize } from '@/modules/util.js'
 import clipboard from '@/modules/lib/clipboard.js'
 import { streamDebrid, debridPlayback, debridTransport } from '@/modules/debrid/debrid.js'
+import { createSingleFlight } from '@/modules/lib/single-flight.js'
 import { torrentToast } from '@/modules/lib/torrent-toasts.js'
 import { setHash } from '@/modules/anime/animehash.js'
 import { requestPlayback } from '@/modules/playback/request.js'
@@ -106,29 +107,40 @@ TORRENT.start(_settings).then(() => {
   TORRENT.onNotify(notify)
 })
 
+/** One resolve per (release, episode) at a time; extra clicks while it runs are the same request. */
+const playRequests = createSingleFlight()
+
 export async function add (torrentID, search, hash) {
   if (!torrentID) return
-  debug('Adding torrent', JSON.stringify({ torrentID: typeof torrentID === 'string' ? torrentID : '.torrent data', search, hash }))
-  const cameFrom = page.value
-  files.set([])
-  page.navigateTo(page.PLAYER)
-  media.value = search ? { media: (search.media || media.value?.media), episode: (search.episode || media.value?.episode), ...(media.value?.torrent ? { torrent: true } : { feed: true }) } : { torrent: true }
-  requestPlayback(search) // an episode named here outranks the watch-status guess made once the files land
-  if (hash && search) setHash(hash, { mediaId: search.media?.id, episode: search.episode, client: true })
-  if (SUPPORTS.isAndroid && !settings.value.enableExternal) document.querySelector('.content-wrapper').requestFullscreen()
-  if (await streamDebrid(torrentID, hash, search)) {
-    // Handled — but handled includes deciding that nothing will play: a release that
-    // does not hold the episode, or a service that will not stream it. The player was
-    // opened before any of that was known, and leaving it open on a file that is never
-    // coming is a spinner with no end and no explanation. The toast said what happened;
-    // this puts the user back where they can act on it.
-    if (!files.value?.length) {
-      debug('Nothing to play, leaving the player')
-      page.navigateTo(cameFrom && cameFrom !== page.PLAYER ? cameFrom : page.HOME)
+  // a spinner the user can click through invites a second click, and every one used to
+  // start a whole extra debrid resolve plus an AniList sweep over the entire pack
+  const requestKey = `${typeof torrentID === 'string' ? torrentID : (hash || 'data')}:${search?.episode ?? ''}`
+  if (!playRequests.begin(requestKey)) return debug('Ignoring a repeat play request; the first is still resolving', requestKey)
+  try {
+    debug('Adding torrent', JSON.stringify({ torrentID: typeof torrentID === 'string' ? torrentID : '.torrent data', search, hash }))
+    const cameFrom = page.value
+    files.set([])
+    page.navigateTo(page.PLAYER)
+    media.value = search ? { media: (search.media || media.value?.media), episode: (search.episode || media.value?.episode), ...(media.value?.torrent ? { torrent: true } : { feed: true }) } : { torrent: true }
+    requestPlayback(search) // an episode named here outranks the watch-status guess made once the files land
+    if (hash && search) setHash(hash, { mediaId: search.media?.id, episode: search.episode, client: true })
+    if (SUPPORTS.isAndroid && !settings.value.enableExternal) document.querySelector('.content-wrapper').requestFullscreen()
+    if (await streamDebrid(torrentID, hash, search)) {
+      // Handled — but handled includes deciding that nothing will play: a release that
+      // does not hold the episode, or a service that will not stream it. The player was
+      // opened before any of that was known, and leaving it open on a file that is never
+      // coming is a spinner with no end and no explanation. The toast said what happened;
+      // this puts the user back where they can act on it.
+      if (!files.value?.length) {
+        debug('Nothing to play, leaving the player')
+        page.navigateTo(cameFrom && cameFrom !== page.PLAYER ? cameFrom : page.HOME)
+      }
+      return
     }
-    return
+    TORRENT.stream(torrentID)
+  } finally {
+    playRequests.end(requestKey)
   }
-  TORRENT.stream(torrentID)
 }
 
 export async function stage (torrentID, search, hash) {
