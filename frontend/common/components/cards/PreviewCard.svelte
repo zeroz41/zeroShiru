@@ -63,12 +63,18 @@
   onDestroy(() => clearTimeout(trailerTimeout))
 </script>
 
-<div class='position-absolute h-full absolute-container top-0 bottom-0 m-auto bg-dark-light z-30 rounded pointer fade-change overflow-hidden clip-0-rounded' in:fadeIn out:fadeOut bind:this={element} on:scroll={(e) => e.target.scrollTop = 0}>
+<!-- a quick fade up: fast enough to read as the card answering the hover, plain enough
+     to never draw attention to itself. Anything showier here animates a banner-sized
+     surface on every hover, which this webview pays for in dropped frames. -->
+<div class='position-absolute h-full absolute-container top-0 bottom-0 m-auto bg-dark-light z-30 rounded pointer fade-change overflow-hidden clip-0-rounded' in:fadeIn={{ duration: 150, y: 0.6 }} out:fadeOut={{ duration: 120, y: 0.4 }} bind:this={element} on:scroll={(e) => e.target.scrollTop = 0}>
   <div class='banner position-relative bg-black'>
     <div class='ratio-16-9 w-full h-full clip-0'>
       <SmartImage class='img-cover w-full h-full' images={[media.bannerImage, ...(media.trailer?.id ? [`https://i.ytimg.com/vi/${media.trailer.id}/maxresdefault.jpg`, `https://i.ytimg.com/vi/${media.trailer.id}/hqdefault.jpg`] : []), media.coverImage?.extraLarge, './no_image_episode.jpg' ]}/>
+      <!-- the whole await waits for the dwell: when AniList lacks a trailer id this asks
+           Jikan over the network, and a glance at a card must not cost a request -->
+      {#if trailerReady}
       {#await (media.trailer?.id && media) || episodesList.getMedia(media.idMal) then trailer}
-        {#if trailerReady && (trailer?.trailer?.id || trailer?.data?.trailer?.youtube_id) }
+        {#if trailer?.trailer?.id || trailer?.data?.trailer?.youtube_id}
           {#await DESKTOP.getYouTube() then youtubeServer}
             <div style='transition: opacity .3s' class:transparent={hide}>
               <SmartImage class='position-absolute top-0 left-0 w-full h-full img-cover blur-6' images={[`https://i.ytimg.com/vi/${media.trailer.id}/maxresdefault.jpg`, `https://i.ytimg.com/vi/${media.trailer.id}/hqdefault.jpg`]}/>
@@ -94,9 +100,10 @@
           {/await}
         {/if}
       {/await}
+      {/if}
     </div>
   </div>
-  <div class='w-full px-20'>
+  <div class='w-full px-20 preview-info'>
     <div class='font-scale-20 font-weight-bold text-truncate d-inline-block w-full text-white' title={anilistClient.title(media)}>
       {anilistClient.title(media)}
     </div>
@@ -213,5 +220,15 @@
     margin-top: -1rem !important;
     margin-left: -1rem !important;
     width: calc(100% + 2rem) !important;
+  }
+  /* the words follow the picture by a beat — cheap (text-sized surface, transform and
+     opacity only) and it makes the open read as one motion instead of a box that
+     appeared with the text already on it */
+  .preview-info {
+    animation: preview-info-rise .25s ease-out .05s both;
+  }
+  @keyframes preview-info-rise {
+    from { opacity: 0; transform: translateY(.6rem); }
+    to { opacity: 1; transform: translateY(0); }
   }
 </style>

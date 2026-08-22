@@ -4,7 +4,7 @@
   import { airingAt, getAiringInfo, formatMap, statusColorMap } from '@/modules/anime/anime.js'
   import { createListener, baseFontSize, resizeObserver } from '@/modules/util.js'
   import { hoverClick } from '@/modules/lib/click.js'
-  import { createHoverIntent } from '@/modules/lib/hover.js'
+  import { createHoverIntent, FOCUS_DWELL } from '@/modules/lib/hover.js'
   import SmartImage from '@/components/visual/SmartImage.svelte'
   import AudioLabel from '@/components/AudioLabel.svelte'
   import { anilistClient, currentYear } from '@/modules/providers/anilist/anilist.js'
@@ -54,7 +54,7 @@
         ignoreFocus = true
         document.addEventListener('pointerup', handleOutsideClick)
       }
-    }, 800)
+    }, FOCUS_DWELL)
     focusTimeout.unref?.()
   }
   function handleBlur() {
@@ -203,6 +203,16 @@
   .item {
     width: 100%;
     aspect-ratio: 152/296;
+    /* a small, immediate answer to the pointer. Transform only — anything that paints
+       (shadows, filters) costs a repaint per frame per card on this webview, and a
+       springy overshoot read as the UI wobbling rather than responding */
+    transition: transform .15s ease-out;
+  }
+  .small-card-ct:not(.not-reactive):hover .item {
+    transform: translateY(-.3rem);
+  }
+  .small-card-ct:not(.not-reactive):active .item {
+    transform: translateY(0);
   }
   .list-status-circle {
     background: var(--statusColor);

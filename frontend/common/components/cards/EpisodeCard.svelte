@@ -14,7 +14,7 @@
   import { statusColorMap } from '@/modules/anime/anime.js'
   import { episodesList } from '@/modules/episodes.js'
   import { hoverClick } from '@/modules/lib/click.js'
-  import { createHoverIntent } from '@/modules/lib/hover.js'
+  import { createHoverIntent, FOCUS_DWELL } from '@/modules/lib/hover.js'
   import { liveAnimeEpisodeProgress } from '@/modules/anime/animeprogress.js'
   import { anilistClient } from '@/modules/providers/anilist/anilist.js'
   import { settings } from '@/modules/settings.js'
@@ -81,7 +81,7 @@
         ignoreFocus = true
         document.addEventListener('pointerup', handleOutsideClick)
       }
-    }, 800)
+    }, FOCUS_DWELL)
     focusTimeout.unref?.()
   }
   function handleBlur() {
@@ -232,6 +232,16 @@
   .episode-card:hover {
     z-index: 30 !important;
     /* fixes transform scaling on click causing z-index issues */
+  }
+  /* same quiet answer as the show cards: a small immediate rise, transform only */
+  .episode-card .item {
+    transition: transform .15s ease-out;
+  }
+  .episode-card:not(.not-reactive):hover .item {
+    transform: translateY(-.3rem);
+  }
+  .episode-card:not(.not-reactive):active .item {
+    transform: translateY(0);
   }
   .mt-3 {
     margin-top: 0.3rem;

@@ -413,11 +413,15 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* the press: a quick dip. The transition is pinned HERE, on :active only, so the press-in
+   animates and nothing else in the app inherits a transform transition — drawers, the
+   miniplayer, cards and modals all POSITION themselves with transforms, and a blanket
+   transform transition made all of it trail the layout by a quarter second. */
 a[href]:active, button:not([disabled], .not-reactive):active:not([data-sonner-toast] > button), fieldset:not([disabled]):active, input:not([disabled], [type='range'], .not-reactive):active, optgroup:not([disabled]):active, option:not([disabled]):active, select:not([disabled]):active, textarea:not([disabled]):active, details:active, [tabindex]:not([disabled], [tabindex="-1"], [aria-hidden="true"], .seekbar, .dropdown, .scoring, .not-reactive):active, [contenteditable]:active, [controls]:active {
-  transition: box-shadow 0.1s ease, filter 0.1s ease !important;
+  transition: box-shadow 0.1s ease, filter 0.1s ease, transform 0.1s ease !important;
   filter: brightness(0.95) contrast(1.05) !important;
   box-shadow: 0 0 2rem hsla(var(--black-color-hsl), 0.1), 0 .4rem .6rem hsla(var(--black-color-hsl), 0.05) !important;
-  transform: translateY(0.15rem) !important;
+  transform: translateY(0.1rem) scale(.99) !important;
 }
 
 .btn-secondary {
@@ -922,7 +926,7 @@ img[src=''], img[src=' '] {
 
 .fill-1 {
   font-variation-settings: 'FILL' 1;
-  transition: color .8s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition: color .2s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 .favourite {
@@ -1226,4 +1230,17 @@ img[src=''], img[src=' '] {
   .long-input:not([disabled]):hover {
     scale: 1.01;
   }
+}
+/* --- motion ------------------------------------------------------------------------
+   Interactive elements answer the pointer instead of snapping: one fast, consistent
+   ease for the states that change on hover/focus. Transform is deliberately NOT here —
+   drawers, the miniplayer, cards and modals all POSITION themselves with transforms,
+   and dragged elements (seekbar, sliders) must track the pointer with no lag. The
+   :active press above pins its own transition. Nothing here repaints large surfaces. */
+.btn,
+.badge,
+.dropdown-item,
+a[href],
+[role='button'] {
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease, opacity .15s ease, filter .15s ease;
 }

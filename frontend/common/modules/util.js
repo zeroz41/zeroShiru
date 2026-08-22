@@ -521,7 +521,7 @@ export function debounce (fn, time = 0) {
  * @param {function} [options.easing=cubicOut] Easing function for the transition.
  * @returns {Object} Svelte transition object with delay, duration, easing, and css function.
  */
-export function fadeIn(node, { delay = 0, duration = 300, y = 1.2, startScale = 0.95, easing = cubicOut } = {}) {
+export function fadeIn(node, { delay = 0, duration = 300, y = 1.2, startScale = 0.95, easing = cubicOut, origin = 'bottom center' } = {}) {
   return {
     delay,
     duration,
@@ -529,7 +529,7 @@ export function fadeIn(node, { delay = 0, duration = 300, y = 1.2, startScale = 
     css: (t, u) => `
       opacity: ${t};
       transform: translateY(${u * y}rem) scale(${startScale + (1 - startScale) * t});
-      transform-origin: bottom center;
+      transform-origin: ${origin};
       will-change: transform, opacity;`
   }
 }
@@ -546,7 +546,7 @@ export function fadeIn(node, { delay = 0, duration = 300, y = 1.2, startScale = 
  * @param {function} [options.easing=cubicIn] Easing function for the transition.
  * @returns {Object} Svelte transition object with delay, duration, easing, and css function.
  */
-export function fadeOut(node, { delay = 0, duration = 200, y = 1.2, endScale = 0.95, easing = cubicIn } = {}) {
+export function fadeOut(node, { delay = 0, duration = 200, y = 1.2, endScale = 0.95, easing = cubicIn, origin = 'bottom center' } = {}) {
   return {
     delay,
     duration,
@@ -554,7 +554,7 @@ export function fadeOut(node, { delay = 0, duration = 200, y = 1.2, endScale = 0
     css: (t, u) => `
         opacity: ${t};
         transform: translateY(${u * y}rem) scale(${1 + (endScale - 1) * u});
-        transform-origin: bottom center;
+        transform-origin: ${origin};
         will-change: transform, opacity;`
   }
 }

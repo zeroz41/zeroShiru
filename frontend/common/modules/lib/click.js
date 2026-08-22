@@ -1,4 +1,5 @@
 import { tap } from '@/modules/lib/haptics.js'
+import { FOCUS_DWELL } from '@/modules/lib/hover.js'
 import { SUPPORTS } from '@/modules/support.js'
 import { ANDROID } from '@/modules/bridge.js'
 
@@ -135,7 +136,7 @@ export function focus(node, focusUpdate = noop) {
   node.addEventListener('focus', () => {
     clearTimeouts()
     document.addEventListener('pointerup', handleOutsideClick)
-    focusTimeout = setTimeout(() => focusUpdate(true), 800)
+    focusTimeout = setTimeout(() => focusUpdate(true), FOCUS_DWELL)
     focusTimeout.unref?.()
   })
   node.addEventListener('focusout', () => {

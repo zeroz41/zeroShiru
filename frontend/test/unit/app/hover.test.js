@@ -3,7 +3,7 @@
 // open one per card it passes over.
 import { test } from 'bun:test'
 import assert from 'node:assert/strict'
-import { createHoverIntent, PREVIEW_DWELL, TRAILER_DWELL } from '@/modules/lib/hover.js'
+import { createHoverIntent, PREVIEW_DWELL, TRAILER_DWELL, FOCUS_DWELL } from '@/modules/lib/hover.js'
 
 /** Timers that only run when the test says so. */
 function fakeClock () {
@@ -90,6 +90,7 @@ test('a card being destroyed drops its pending open', () => {
 })
 
 test('the delays are short enough to feel immediate and long enough to be worth having', () => {
-  assert.ok(PREVIEW_DWELL >= 100 && PREVIEW_DWELL <= 400, 'a rest, not a wait')
+  assert.ok(PREVIEW_DWELL >= 100 && PREVIEW_DWELL <= 200, 'a rest, not a wait — 250 already read as the UI thinking about it')
   assert.ok(TRAILER_DWELL > PREVIEW_DWELL, 'the expensive half comes after the cheap half')
+  assert.ok(FOCUS_DWELL >= PREVIEW_DWELL && FOCUS_DWELL <= 500, 'tabbing crosses cards one at a time, so focus rests a little longer than a pointer — but 800 read as the keyboard being ignored')
 })

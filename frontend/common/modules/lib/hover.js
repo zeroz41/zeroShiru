@@ -11,11 +11,18 @@
 // than the card does: the picture and the details are what someone is usually after, and
 // they are nearly free.
 
-/** How long a pointer rests on a card before its preview opens. */
-export const PREVIEW_DWELL = 250
+/** How long a pointer rests on a card before its preview opens. Long enough that a pointer
+ * crossing the row at a normal speed leaves before it fires, short enough to read as the
+ * card answering the hover rather than thinking about it. */
+export const PREVIEW_DWELL = 120
 
 /** How long a preview stays open before its trailer starts. */
 export const TRAILER_DWELL = 900
+
+/** How long keyboard focus rests on a card before its preview opens. Focus arrives one
+ * card at a time while tabbing, so it gets a slightly longer rest than a pointer — but the
+ * 800ms it used to be read as the UI ignoring the keyboard. */
+export const FOCUS_DWELL = 300
 
 /**
  * Opens on a rest rather than on arrival. Closing is never delayed: leaving is unambiguous,

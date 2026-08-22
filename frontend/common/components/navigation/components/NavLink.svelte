@@ -126,7 +126,14 @@
   .nav-link.drawer,
   .nav-link > span,
   .nav-link-text {
-    transition: background .8s cubic-bezier(.25, .8, .25, 1), color .8s cubic-bezier(.25, .8, .25, 1), opacity .8s cubic-bezier(.25, .8, .25, 1) !important;
+    /* fast enough to feel like the button answered the pointer; .8s here read as lag */
+    transition: background .15s cubic-bezier(.25, .8, .25, 1), color .15s cubic-bezier(.25, .8, .25, 1), opacity .15s cubic-bezier(.25, .8, .25, 1) !important;
+  }
+  .nav-link > span:not(.nav-link-text) {
+    transition: background .15s cubic-bezier(.25, .8, .25, 1), color .15s cubic-bezier(.25, .8, .25, 1), transform .12s ease-out !important;
+  }
+  .nav-link:active > span:not(.nav-link-text) {
+    transform: scale(.92);
   }
 
   .sidebar-center {
