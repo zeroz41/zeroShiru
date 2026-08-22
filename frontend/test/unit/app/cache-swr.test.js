@@ -121,3 +121,49 @@ describe('queued cache writes', () => {
     writer.destroy()
   })
 })
+
+const { mediaCache, swrRevalidated } = await import('@/modules/cache.js')
+
+describe('rehydrating query rows against the media cache', () => {
+
+  it('a row referencing evicted media is a miss, not a silently short rail', async () => {
+    mediaCache.value = { 7: { id: 7, title: 'Kept' } }
+    cache.query_search = writable({ row: freshEntry({ data: { Page: { media: [7, 8] } } }) })
+    expect(cache.cachedEntry(caches.QUERY_SEARCH, 'row')).toBeNull()
+    // stale-acceptable reads keep the survivors: they still beat an empty screen
+    const stale = await cache.cachedEntry(caches.QUERY_SEARCH, 'row', true)
+    expect(stale.data.Page.media.map(media => media.id)).toEqual([7])
+  })
+
+  it('a fully rehydratable row is still a hit', async () => {
+    mediaCache.value = { 7: { id: 7, title: 'Kept' }, 8: { id: 8, title: 'Also kept' } }
+    cache.query_search = writable({ row: freshEntry({ data: { Page: { media: [7, 8] } } }) })
+    const hit = await cache.cachedEntry(caches.QUERY_SEARCH, 'row')
+    expect(hit.data.Page.media.map(media => media.id)).toEqual([7, 8])
+  })
+
+  it('a revalidation that lands different data says so, and an identical one stays quiet', async () => {
+    let notified = 0
+    const stop = swrRevalidated.subscribe(() => { notified++ })
+    notified = 0 // the subscription itself fires once
+
+    // identical fresh copy: the row is rewritten but the data did not change
+    cache.query_rss = writable({ feed: staleEntry('<same/>') })
+    const identical = pending()
+    const servedSame = cache.cacheEntry(caches.QUERY_RSS, 'feed', {}, identical.promise, Date.now() + 60_000)
+    expect(await servedSame).toBe('<same/>')
+    identical.resolve('<same/>')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(notified).toBe(0)
+
+    // different fresh copy: the rails need to hear about it
+    cache.query_rss = writable({ feed: staleEntry('<stale/>') })
+    const request = pending()
+    const served = cache.cacheEntry(caches.QUERY_RSS, 'feed', {}, request.promise, Date.now() + 60_000)
+    expect(await served).toBe('<stale/>')
+    request.resolve('<fresh/>')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(notified).toBe(1)
+    stop()
+  })
+})

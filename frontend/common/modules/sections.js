@@ -1,6 +1,6 @@
 import { anilistClient, seasons, currentSeason, currentYear } from '@/modules/providers/anilist/anilist.js'
 import { animeSchedule } from '@/modules/anime/animeschedule.js'
-import { cache, caches } from '@/modules/cache.js'
+import { cache, caches, swrRevalidated } from '@/modules/cache.js'
 import { malDubs } from '@/modules/anime/animedubs.js'
 import { writable } from 'simple-store-svelte'
 import { settings } from '@/modules/settings.js'
@@ -353,6 +353,24 @@ if (Helper.getUser()) {
 }
 if (Helper.isMalAuth()) refreshSections(animeSchedule.subAiredLists, continueWatching) // When authorized with Anilist, this is already automatically handled.
 refreshSections(animeSchedule.dubAiredLists, continueWatching)
+// Stale-while-revalidate landing: a rail painted from a stale row at boot re-reads its
+// query once the fresh copy differs. The re-read is answered from the cache the fresh
+// copy just landed in, so this costs no network round trip of its own; the comparison is
+// the same one every other refresh path here uses. Debounced, since several queries
+// revalidating at boot land in a burst.
+const swrSweep = debounce(async () => {
+  for (const section of manager.sections) {
+    if (!section.preview.value || section.hide || section.isRSS) continue // RSS rails have their own refresh paths and a different page size
+    try {
+      const loaded = section.load(1, 50, section.variables)
+      if (!equal(await resolveData(loaded), await resolveData(section.preview.value))) section.preview.value = loaded
+    } catch (error) {
+      debug(`Failed to refresh ${section.title} after a revalidation:`, error)
+    }
+  }
+}, 500)
+swrRevalidated.subscribe(count => { if (count) swrSweep() })
+
 function refreshSections(list, sections, schedule = false) {
   uniqueStore(list).subscribe(async (_value) => {
     const value = await _value

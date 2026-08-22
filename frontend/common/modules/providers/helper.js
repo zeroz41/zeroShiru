@@ -3,7 +3,7 @@ import { anilistClient } from '@/modules/providers/anilist/anilist.js'
 import { malClient } from '@/modules/providers/myanimelist/myanimelist.js'
 import { malDubs } from '@/modules/anime/animedubs.js'
 import { profiles } from '@/modules/settings.js'
-import { cache, mediaCache, mapStatus } from '@/modules/cache.js'
+import { cache, mapStatus } from '@/modules/cache.js'
 import { getMediaMaxEp, hasZeroEpisode } from '@/modules/anime/anime.js'
 import { resetAnimeProgress } from '@/modules/anime/animeprogress.js'
 import { readNotification } from '@/modules/notification/manager.js'
@@ -117,7 +117,7 @@ export default class Helper {
     if (!variables.token) {
       res = await this.getClient().entry(variables)
       if (res?.data?.SaveMediaListEntry) {
-        mediaCache.update((currentCache) => ({ ...currentCache, [media.id]: { ...currentCache[media.id], mediaListEntry: res?.data?.SaveMediaListEntry } }))
+        cache.patchMedia(media.id, { mediaListEntry: res?.data?.SaveMediaListEntry })
         readNotification({
           id: media.id,
           episode: res?.data?.SaveMediaListEntry?.progress,
@@ -140,7 +140,7 @@ export default class Helper {
     let res
     if (!variables.token) {
       res = await this.getClient().delete(variables)
-      if (res) mediaCache.update((currentCache) => ({ ...currentCache, [media.id]: { ...currentCache[media.id], mediaListEntry: undefined } }))
+      if (res) cache.patchMedia(media.id, { mediaListEntry: undefined })
     } else {
       if (variables.anilist) {
         res = await anilistClient.delete(variables)

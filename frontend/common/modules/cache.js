@@ -41,6 +41,95 @@ const stripUserFields = (media) => /** @type {import('./providers/anilist/al.d.t
 const extractUserFields = (media) => ({ ...(media.mediaListEntry && { mediaListEntry: media.mediaListEntry }), ...(media.isFavourite && { isFavourite: media.isFavourite }) })
 
 /**
+ * Sub-keys whose values changed since the last persistence pass, per object store, or
+ * `true` when the whole store must be re-compared (a whole-value replacement).
+ *
+ * This is what keeps a cache write cheap: the persistence subscriber used to compare
+ * every entry of every store on every notification — ten thousand deep-equals and a
+ * clone per media on each of the fifteen-odd writes a home load makes, all on the main
+ * thread. Every mutation in this module marks exactly what it touched instead, and the
+ * subscriber compares only that. The full pass still exists as a safety net: it runs
+ * once when the page hides (see auditPersistence), so a mutation that somehow bypassed
+ * the marks costs at most one deferred write, never a lost one.
+ *
+ * @type {Map<string, Set<string>|true>}
+ */
+const dirtyKeys = new Map()
+
+/**
+ * Marks one entry of a store as needing persistence. Called by every mutation path in
+ * this module before the store notifies, so the subscriber sees its own work-list.
+ *
+ * @param {{key: string}} cache
+ * @param {string|number} subKey
+ */
+function markDirty (cache, subKey) {
+  const existing = dirtyKeys.get(cache.key)
+  if (existing === true) return
+  if (existing) existing.add(String(subKey))
+  else dirtyKeys.set(cache.key, new Set([String(subKey)]))
+}
+
+/** Marks a whole store for the full comparison pass — for whole-value replacements. */
+function markAllDirty (cache) {
+  dirtyKeys.set(cache.key, true)
+}
+
+/**
+ * One persistence pass over a store's in-memory value: compares the candidate entries
+ * against the last-persisted shadow, queues what changed, updates the shadow, and
+ * reports entries that vanished. Pure apart from the callbacks, so it is testable
+ * without IndexedDB; the subscriber in Cache#initialize and the page-hide audit both
+ * drive it.
+ *
+ * @param {Object} options
+ * @param {Object} options.value - The store's current value.
+ * @param {Object} options.shadow - Last-persisted shapes by sub-key; mutated in place.
+ * @param {Iterable<string>|true} options.candidates - Sub-keys to compare, or `true` for all of them.
+ * @param {(subKey: string, persistValue: any) => void} options.enqueue - Receives each changed entry.
+ * @param {boolean} [options.isMedia] - Media entries have their user fields split out.
+ * @param {(subKey: string, userFields: any) => void} [options.onUserFields] - Receives each entry's
+ *   user fields (media only); `null` when the entry no longer has any.
+ * @returns {string[]} Sub-keys that existed in the shadow but are gone from the value.
+ */
+export function syncStoreSnapshot ({ value, shadow, candidates, enqueue, isMedia, onUserFields }) {
+  const keys = candidates === true ? Object.keys(value || {}) : candidates
+  for (const subKey of keys) {
+    const subValue = value?.[subKey]
+    if (subValue === undefined) continue // deletions are the removal scan's job
+    const persistValue = isMedia ? stripUserFields(subValue) : subValue
+    if (!equal(shadow[subKey], persistValue)) {
+      enqueue(subKey, persistValue)
+      shadow[subKey] = deepClone(persistValue)
+    }
+    if (isMedia && onUserFields) {
+      const userFields = extractUserFields(subValue)
+      onUserFields(subKey, (userFields.mediaListEntry || userFields.isFavourite) ? userFields : null)
+    }
+  }
+  const removedKeys = []
+  for (const subKey of Object.keys(shadow)) {
+    if (!(subKey in (value || {}))) {
+      delete shadow[subKey]
+      removedKeys.push(subKey)
+    }
+  }
+  return removedKeys
+}
+
+/**
+ * Full-pass persistence audits registered by live caches, run when the page hides.
+ * @type {Set<() => void>}
+ */
+const auditors = new Set()
+
+/** Compares every store in full and queues anything the marks missed, then flushes. */
+export function auditPersistence () {
+  for (const audit of auditors) audit()
+  flushAllWriters()
+}
+
+/**
  * Map of user IDs to their corresponding batch writer instances.
  *
  * @type {Map<string, object>}
@@ -292,10 +381,10 @@ export function flushAllWriters() {
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
   // pagehide is the last reliable signal in a webview; visibilitychange->hidden
   // additionally covers being backgrounded, where mobile may never fire pagehide
-  window.addEventListener('pagehide', flushAllWriters)
+  window.addEventListener('pagehide', () => auditPersistence())
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') flushAllWriters()
+      if (document.visibilityState === 'hidden') auditPersistence()
     })
   }
 }
@@ -476,16 +565,32 @@ export function createBatchWriter(dbName, firstFlushDelay = 1_500, subsequentFlu
  * @param {string} [key='id'] The key to use for cache lookup.
  * @returns {T} The updated value if changed, otherwise the current value
  */
+const fromCacheVerdicts = new WeakMap()
 export function fromCache(cache, current, key = 'id') {
   if (!cache || !current?.[key]) return current
   const updated = cache[current[key]]
-  if (!updated?.[key]) return current
-  if (equal(updated, current)) return current
-  return updated
+  if (!updated?.[key] || updated === current) return current
+  // every card on screen re-runs this on every cache write, so the deep comparison is
+  // remembered per (cached entry, current) pair — the pair only changes when this
+  // entry was actually replaced, which is when comparing is worth something
+  const known = fromCacheVerdicts.get(updated)
+  if (known?.current === current) return known.same ? current : updated
+  const same = equal(updated, current)
+  fromCacheVerdicts.set(updated, { current, same })
+  return same ? current : updated
 }
 
 /** @type {import('simple-store-svelte').Writable<Record<number, import('./providers/anilist/al.d.ts').Media>>} */
-export let mediaCache
+export let mediaCache = writable({})
+
+/**
+ * Bumped whenever a query served stale under stale-while-revalidate gets its fresh copy
+ * back and that copy differs from what was served. The home rails subscribe: a stale row
+ * painted instantly at boot used to stay stale for the life of the page, because nothing
+ * ever told the UI the revalidation landed.
+ * @type {import('simple-store-svelte').Writable<number>}
+ */
+export const swrRevalidated = writable(0)
 
 class Cache {
   /** @type {string} */
@@ -527,6 +632,8 @@ class Cache {
   /** @type {AnilistClient} */
   anilistClient
 
+  /** @type {Array<() => void>} */
+  #auditors = []
   /** @type {Array<() => void>} */
   subscribers = []
   /** @type {Promise<void>} A promise that resolves when the cache has been fully initialized. */
@@ -758,6 +865,7 @@ class Cache {
         for (const [id, entries] of Object.entries(mediaEntry)) {
           if (medias[id]) {
             medias[id] = { ...medias[id], ...entries }
+            markDirty(caches.MEDIA_CACHE, id)
             merged++
           }
         }
@@ -766,63 +874,62 @@ class Cache {
       debug(`Merged ${merged}/${Object.keys(mediaEntry).length} user media entries from user_lists into mediaCache`)
     }
 
+    this.#auditors = []
     this.subscribers = cacheTypes.map(({ key }) => {
       const dbName = this.#getDatabase(key)
       const batchWriter = getBatchWriter(dbName)
       const store = key.key === caches.MEDIA_CACHE.key ? mediaCache : this[key.key]
-      return store.subscribe(value => {
+      const isMedia = key.key === caches.MEDIA_CACHE.key
+
+      /** One persistence pass over `candidates` of the store's current value. */
+      const persist = (value, candidates) => {
         const storeEntries = cacheMap.get(key.key) || {}
-        // Sync user-specific fields into user_lists['entries'] when they change
-        if (key.key === caches.MEDIA_CACHE.key) {
-          const updatedEntries = { ...this.user_lists.value['entries'] }
-          let entriesChanged = false
-          for (const [subKey, subValue] of Object.entries(value || {})) {
-            const persistValue = stripUserFields(subValue)
-            const prevSubValue = storeEntries[subKey]
-            if (!equal(prevSubValue, persistValue)) {
-              batchWriter.enqueue(key, subKey, persistValue)
-              storeEntries[subKey] = deepClone(persistValue)
-            }
-            const userFields = extractUserFields(subValue)
-            const hasEntry = userFields.mediaListEntry || userFields.isFavourite
-            if (hasEntry && !equal(updatedEntries[subKey], userFields)) {
-              updatedEntries[subKey] = userFields
-              entriesChanged = true
-            } else if (!hasEntry && updatedEntries[subKey]) {
-              delete updatedEntries[subKey]
-              entriesChanged = true
-            }
-          }
-          if (entriesChanged) {
-            this.user_lists.update(lists => {
-              lists['entries'] = updatedEntries
-              return lists
-            })
-          }
-        } else {
-          for (const [subKey, subValue] of Object.entries(value || {})) {
-            const prevSubValue = storeEntries[subKey]
-            if (!equal(prevSubValue, subValue)) {
-              batchWriter.enqueue(key, subKey, subValue)
-              storeEntries[subKey] = deepClone(subValue)
-            }
-          }
-        }
-        const removedKeys = []
-        for (const subKey of Object.keys(storeEntries)) {
-          if (!(subKey in (value || {}))) {
-            delete storeEntries[subKey]
-            removedKeys.push(subKey)
-          }
+        // media entries carry user fields (mediaListEntry, isFavourite) that persist in
+        // user_lists['entries'] rather than in the shared media rows
+        const updatedEntries = isMedia ? { ...this.user_lists.value['entries'] } : null
+        let entriesChanged = false
+        const removedKeys = syncStoreSnapshot({
+          value,
+          shadow: storeEntries,
+          candidates,
+          isMedia,
+          enqueue: (subKey, persistValue) => batchWriter.enqueue(key, subKey, persistValue),
+          onUserFields: isMedia
+            ? (subKey, userFields) => {
+                if (userFields && !equal(updatedEntries[subKey], userFields)) {
+                  updatedEntries[subKey] = userFields
+                  entriesChanged = true
+                } else if (!userFields && updatedEntries[subKey]) {
+                  delete updatedEntries[subKey]
+                  entriesChanged = true
+                }
+              }
+            : undefined
+        })
+        if (entriesChanged) {
+          markDirty(caches.USER_LISTS, 'entries')
+          this.user_lists.update(lists => {
+            lists['entries'] = updatedEntries
+            return lists
+          })
         }
         // Eviction may remove hundreds of rows at once. Keep that to one transaction instead of
         // opening one readwrite transaction per key, which can otherwise stall painting behind IDB.
         if (removedKeys.length) remove(dbName, key, removedKeys).catch(error => debug(`Failed to remove ${removedKeys.length} entries from ${key.key}`, error))
         cacheMap.set(key.key, storeEntries)
-        return () => {
-          cacheMap.delete(key.key)
-          debug('Unsubscribed from cache:', key.key)
-        }
+      }
+
+      // the safety net: a full pass when the page hides, catching anything unmarked
+      const audit = () => persist(store.value, true)
+      auditors.add(audit)
+      this.#auditors.push(audit)
+
+      return store.subscribe(value => {
+        // only what a mutation marked is compared; a notification with nothing marked
+        // still runs the removal scan, which is how deletions are noticed
+        const marked = dirtyKeys.get(key.key)
+        dirtyKeys.delete(key.key)
+        persist(value, marked === true ? true : (marked ?? []))
       })
     })
 
@@ -841,6 +948,8 @@ class Cache {
    */
   destroy() {
     this.subscribers.forEach((unsubscribe) => unsubscribe())
+    this.#auditors.forEach((audit) => auditors.delete(audit))
+    this.#auditors = []
     this.#pending.clear()
     const writer = batchWriters.get(this.cacheID)
     const close = () => {
@@ -879,6 +988,7 @@ class Cache {
    */
   #update(cache, key, data) {
     const store = this[cache.key]
+    markDirty(cache, key)
     store.update((value) => {
       const current = value[key]
       value[key] = typeof data === 'function' ? data(current) : data
@@ -922,6 +1032,7 @@ class Cache {
    */
   async resetHistory() {
     await reset(this.#getDatabase(caches.HISTORY), caches.HISTORY)
+    markAllDirty(caches.HISTORY)
     this.history.value = { ...historyDefaults }
   }
 
@@ -938,6 +1049,7 @@ class Cache {
       location.reload()
     } else {
       await reset(this.#getDatabase(caches.EXTENSIONS), caches.EXTENSIONS)
+      markAllDirty(caches.EXTENSIONS)
       this.extensions.value = { ...extensionDefaults }
     }
   }
@@ -965,6 +1077,7 @@ class Cache {
    * See {@link notifyDefaults} for all values that will be reset.
    */
   resetNotifications() {
+    markAllDirty(caches.NOTIFICATIONS)
     this.notifications.value = { ...notifyDefaults }
   }
 
@@ -1024,6 +1137,7 @@ class Cache {
    * @param {Object} data The cache object to store.
    */
   setEntry(cache, key, data) {
+    markDirty(cache, key)
     this.#getStore(cache).update((query) => {
       const current = query[key]
       query[key] = typeof data === 'function' ? data(current) : data
@@ -1060,12 +1174,27 @@ class Cache {
     const filledMedias = fillLists ? fillEntries(medias, fillLists) : medias /* attaches any alternative authorization userList information to the anilist media for tracking. */
     const mediaMap = new Map(filledMedias.map(media => [media.id, media]))
     const now = Date.now()
+    for (const id of mediaMap.keys()) markDirty(caches.MEDIA_CACHE, id)
     mediaCache.update(current => {
       for (const [id, media] of mediaMap.entries()) {
         if (media) current[id] = { ...media, cachedAt: now, expiry: media.status === 'FINISHED' ? now + getRandomInt(7, 14) * 24 * 60 * 60 * 1_000 : now + getRandomInt(12, 24) * 60 * 60 * 1_000 }
       }
       return current
     })
+  }
+
+  /**
+   * Patches one cached media entry in place — the marked path for the odd field write
+   * (a list-entry save, a favourite toggle) that used to reach into mediaCache directly
+   * and silently bypass persistence tracking.
+   *
+   * @param {number|string} id
+   * @param {Object} patch Fields to merge over the cached entry.
+   */
+  patchMedia(id, patch) {
+    if (!id || !mediaCache?.value?.[id]) return
+    markDirty(caches.MEDIA_CACHE, id)
+    mediaCache.update(current => ({ ...current, [id]: { ...current[id], ...patch } }))
   }
 
   /**
@@ -1118,9 +1247,21 @@ class Cache {
       debug(`Found cached ${cache.key} for ${key}`)
       const data = deepClone(cachedEntry.data)
       if (cache !== caches.QUERY_RECOMMENDATIONS || this.general.value.settings.queryComplexity === 'Complex') { /* Remap media id's to their respective media in the cache */
-        if (data.data?.Page?.media) data.data.Page.media = data.data.Page.media.map(mediaId => mediaCache.value[mediaId])
-        if (data.data?.Media) data.data.Media = mediaCache.value[data.data.Media]
-        if (data.data?.MediaListCollection && !key?.includes('token')) data.data.MediaListCollection.lists = (data.data.MediaListCollection.lists || []).map(list => ({ ...list, entries: list.entries.map(entry => ({ ...entry, media: mediaCache.value[entry.media] })) }))
+        // a query row only stores media ids; the media rows have their own eviction, so a
+        // referenced id can be gone. A row that can no longer be fully rehydrated is not a
+        // hit — treating it as one painted silently short rails until the row expired.
+        // When stale is explicitly acceptable the survivors still beat an empty screen.
+        if (data.data?.Page?.media) {
+          const media = data.data.Page.media.map(mediaId => mediaCache.value[mediaId])
+          if (media.some(entry => !entry) && !ignoreExpiry) return null
+          data.data.Page.media = media.filter(Boolean)
+        }
+        if (data.data?.Media) {
+          const media = mediaCache.value[data.data.Media]
+          if (!media && !ignoreExpiry) return null
+          data.data.Media = media
+        }
+        if (data.data?.MediaListCollection && !key?.includes('token')) data.data.MediaListCollection.lists = (data.data.MediaListCollection.lists || []).map(list => ({ ...list, entries: list.entries.map(entry => ({ ...entry, media: mediaCache.value[entry.media] })).filter(entry => entry.media) }))
       }
       return Promise.resolve(data)
     }
@@ -1183,7 +1324,19 @@ class Cache {
     // it is never traded for a stale row; nor is an explicit cache bypass.
     if (cache.swr && typeof data?.then === 'function' && !vars?.skipCache) {
       const stale = this.cachedEntry(cache, key, true)
-      if (stale) return stale
+      if (stale) {
+        // what was served is remembered so the landing can be judged: only a fresh copy
+        // that actually differs is worth telling the rails about
+        const served = this[cache.key]?.value?.[key]?.data
+        promiseData.then(() => {
+          const landed = this[cache.key]?.value?.[key]?.data
+          if (landed && !equal(served, landed)) {
+            debug(`SWR: fresh ${cache.key}:${key} differs from the stale copy served`)
+            swrRevalidated.update(count => count + 1)
+          }
+        }).catch(() => {})
+        return stale
+      }
     }
     return promiseData
   }
