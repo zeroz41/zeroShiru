@@ -114,11 +114,11 @@
     toggleMaximize: () => invoke('window_toggle_maximize')
   }
 
-  // answers from a running availability check, pushed as each one lands
-  const availabilityListeners = new Set()
+  // everything the availability watch reports — answers, checking state, outages —
+  // pushed as each event happens
+  const debridListeners = new Set()
   listen('shiru://debrid', (event) => {
-    const { type, data } = event.payload || {}
-    if (type === 'availability') for (const callback of availabilityListeners) callback(data.hash, data.state, data.requestId)
+    for (const callback of debridListeners) callback(event.payload || {})
   })
 
   window.shiru = {
@@ -128,11 +128,11 @@
       services: __SHIRU_DEBRID_SERVICES__,
       validate: (service, apiKey) => invoke('debrid_validate', { service, apiKey }),
       listAvailability: (service, apiKey) => invoke('debrid_list_availability', { service, apiKey }),
-      checkAvailability: (service, apiKey, hashes, requestId) => invoke('debrid_check_availability', { service, apiKey, hashes, requestId }),
-      unknownHashes: (service, apiKey, hashes) => invoke('debrid_unknown_hashes', { service, apiKey, hashes }),
+      watchAvailability: (service, apiKey, hashes, requestId) => invoke('debrid_watch_availability', { service, apiKey, hashes, requestId }),
+      cancelAvailability: () => invoke('debrid_cancel_availability'),
       remember: (service, apiKey, hash, state) => invoke('debrid_remember', { service, apiKey, hash, stateValue: state }),
       resolve: (service, apiKey, magnet, episode) => invoke('debrid_resolve', { service, apiKey, magnet, episode: Number.isFinite(episode) ? episode : null }),
-      onAvailability: (callback) => { availabilityListeners.add(callback) }
+      onEvent: (callback) => { debridListeners.add(callback) }
     }
   }
 

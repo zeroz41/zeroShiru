@@ -62,11 +62,11 @@ const appStubs = {
       ],
       validate: async () => ({ username: 'tester' }),
       listAvailability: async () => ({ answers: {}, names: {} }),
-      checkAvailability: async () => ({ answers: {}, names: {}, busy: false }),
-      unknownHashes: async (service, apiKey, hashes) => hashes,
+      watchAvailability: async () => {},
+      cancelAvailability: () => {},
       remember: async () => {},
       resolve: async () => ({ hash: '', name: '', files: [] }),
-      onAvailability: (callback) => { DEBRID.publishAvailability = callback }
+      onEvent: (callback) => { DEBRID.publishEvent = callback }
     }
   `,
   '@/components/MediaHandler.svelte': `

@@ -7,9 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 use shiru_core::{pick_pack, EpisodeNotInPack};
-use shiru_debrid::manager::{create_provider, ManagedProvider, PROVIDER_IDS};
+use shiru_debrid::manager::{create_provider, ManagedProvider, WatchEvent, PROVIDER_IDS};
 use shiru_debrid::platform::NativePlatform;
-use shiru_debrid::{AvailabilityCheck, DebridError, ResolveOptions};
+use shiru_debrid::{DebridError, ResolveOptions};
 use shiru_domain::{to_player_file, Availability, PlayerFile};
 use shiru_networking::NativeTransport;
 use std::collections::HashMap;
@@ -30,6 +30,10 @@ const PROVIDER_SLOTS: usize = 4;
 pub struct DebridState {
     /// Most recently used first.
     active: Mutex<Vec<(String, String, Arc<ManagedProvider>)>>,
+    /// The running availability watch, if any. One at a time: a new results list
+    /// supersedes the old one, and aborting mid-flight is safe — every claim the
+    /// watch takes is released by a Drop guard in the crate.
+    watch: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl DebridState {
@@ -78,8 +82,8 @@ pub struct DebridFailure {
     pub message: String,
 }
 
-fn failure(error: DebridError) -> DebridFailure {
-    let kind = match &error {
+fn kind_of(error: &DebridError) -> &'static str {
+    match error {
         DebridError::Auth { .. } => "auth",
         DebridError::Network { .. } => "network",
         DebridError::Timeout { .. } => "timeout",
@@ -87,8 +91,11 @@ fn failure(error: DebridError) -> DebridFailure {
         DebridError::Unavailable { .. } => "unavailable",
         DebridError::Rejected { .. } => "rejected",
         DebridError::Service { .. } => "service",
-    };
-    DebridFailure { kind, message: error.to_string() }
+    }
+}
+
+fn failure(error: DebridError) -> DebridFailure {
+    DebridFailure { kind: kind_of(&error), message: error.to_string() }
 }
 
 /// One selectable service, as the settings menu and the transport description
@@ -160,9 +167,6 @@ pub struct AccountReply {
 pub struct AvailabilityReply {
     pub answers: HashMap<String, Availability>,
     pub names: HashMap<String, String>,
-    /// Whether a check that owns the account was already running, so these answers
-    /// came from memory rather than from asking.
-    pub busy: bool,
 }
 
 #[tauri::command]
@@ -191,70 +195,67 @@ pub async fn debrid_list_availability(
         .inspect_err(|error| tracing::warn!(target: "debrid", %service, %error, "account listing failed"))
         .map_err(failure)?;
     tracing::info!(target: "debrid", %service, held = answers.len(), "account listing");
-    Ok(AvailabilityReply { answers, names: managed.client().release_names(), busy: false })
+    Ok(AvailabilityReply { answers, names: managed.client().release_names() })
 }
 
-/// Asks the service about the given releases, cheapest way it supports.
+/// Starts — or replaces — the availability watch for the current results list.
 ///
-/// Whether this service's answers are worth pushing one at a time as they land. A probing
-/// sweep spends several requests per release and takes minutes, so the list badges itself as
-/// it goes; a batch service answers seventy five at once and hands the whole map back from
-/// the command, where pushing each one separately is the same answer twice.
-fn pushes_as_it_goes(config: &shiru_debrid::ProviderConfig) -> bool {
-    config.availability_check == AvailabilityCheck::Probe
-}
-
-fn availability_event(hash: &str, state: Availability, request_id: Option<u64>) -> serde_json::Value {
-    serde_json::json!({
-        "type": "availability",
-        "data": { "hash": hash, "state": state, "requestId": request_id }
-    })
-}
-
+/// The crate owns the whole badge lifecycle: remembered answers first, a check round
+/// for the rest, then patient backing-off retries for whatever the service left
+/// unanswered. Everything is pushed as an event the moment it happens, and this
+/// command returns as soon as the watch is running. The old JS loop did all of this
+/// over three IPC round trips per attempt, with its own copy of the backoff policy.
 #[tauri::command]
-pub async fn debrid_check_availability(
+pub async fn debrid_watch_availability(
     app: tauri::AppHandle,
     state: tauri::State<'_, DebridState>,
     service: String,
     api_key: String,
     hashes: Hashes,
     request_id: Option<u64>,
-) -> Result<AvailabilityReply, DebridFailure> {
-    let Hashes(hashes) = hashes;
+) -> Result<(), DebridFailure> {
     let managed = state.managed(&service, &api_key)?;
-    let busy = managed.sweeping();
-    let pushes_as_it_goes = pushes_as_it_goes(managed.provider().config());
-    let answers = managed
-        .check_availability(&hashes, |hash, state| {
-            if pushes_as_it_goes {
-                let _ = app.emit(DEBRID_EVENT, availability_event(hash, state, request_id));
-            }
-        })
-        .await
-        .inspect_err(|error| tracing::warn!(target: "debrid", %service, asked = hashes.len(), %error, "availability check failed"))
-        .map_err(failure)?;
-    tracing::info!(
-        target: "debrid",
-        %service,
-        asked = hashes.len(),
-        answered = answers.len(),
-        cached = answers.values().filter(|state| **state == Availability::Cached).count(),
-        busy,
-        "availability check"
-    );
-    Ok(AvailabilityReply { answers, names: managed.client().release_names(), busy })
+    let Hashes(hashes) = hashes;
+    // the previous list's watch is over before the new one starts, so two guarded
+    // sweeps never overlap on one account
+    if let Some(previous) = state.watch.lock().unwrap().take() {
+        previous.abort();
+    }
+    let handle = tauri::async_runtime::spawn(async move {
+        managed
+            .watch_availability(&hashes, |event| {
+                let payload = match event {
+                    WatchEvent::Answer { hash, state, name } => serde_json::json!({
+                        "type": "availability",
+                        "data": { "hash": hash, "state": state, "name": name, "requestId": request_id }
+                    }),
+                    WatchEvent::Checking(active) => serde_json::json!({
+                        "type": "checking",
+                        "data": { "active": active, "requestId": request_id }
+                    }),
+                    WatchEvent::Outage(error) => serde_json::json!({
+                        "type": "outage",
+                        "data": { "kind": kind_of(error), "message": error.to_string(), "requestId": request_id }
+                    }),
+                };
+                let _ = app.emit(DEBRID_EVENT, payload);
+            })
+            .await;
+        let _ = app.emit(
+            DEBRID_EVENT,
+            serde_json::json!({ "type": "settled", "data": { "requestId": request_id } }),
+        );
+    });
+    state.watch.lock().unwrap().replace(handle);
+    Ok(())
 }
 
-/// The hashes nothing is known about yet. Callers use this to skip work entirely,
-/// not to decide what to ask about.
+/// Stops the running watch, because the results it described are no longer on screen.
 #[tauri::command]
-pub async fn debrid_unknown_hashes(
-    state: tauri::State<'_, DebridState>,
-    service: String,
-    api_key: String,
-    hashes: Hashes,
-) -> Result<Vec<String>, DebridFailure> {
-    Ok(state.managed(&service, &api_key)?.unknown_hashes(&hashes.0))
+pub fn debrid_cancel_availability(state: tauri::State<'_, DebridState>) {
+    if let Some(previous) = state.watch.lock().unwrap().take() {
+        previous.abort();
+    }
 }
 
 /// Records an answer the app proved for itself — playing a release is the most
@@ -357,24 +358,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_a_probing_service_badges_the_list_as_it_goes() {
-        // a batch answer arrives whole and is returned by the command itself; pushing each
-        // hash separately made the results list re-derive itself once per release
-        let transport = std::sync::Arc::new(shiru_networking::NativeTransport::new());
-        let platform = std::sync::Arc::new(shiru_debrid::platform::NativePlatform);
-        for (service, streams) in [("torbox", false), ("premiumize", false), ("alldebrid", false), ("realdebrid", true)] {
-            let provider = create_provider(service, "key".into(), transport.clone(), platform.clone()).unwrap();
-            assert_eq!(pushes_as_it_goes(provider.config()), streams, "{service}");
-        }
-    }
-
-    #[test]
-    fn pushed_availability_identifies_the_sweep_that_produced_it() {
-        let event = availability_event("info-hash", Availability::Cached, Some(42));
-        assert_eq!(event["type"], "availability");
-        assert_eq!(event["data"]["hash"], "info-hash");
-        assert_eq!(event["data"]["state"], "cached");
-        assert_eq!(event["data"]["requestId"], 42);
+    fn watch_events_serialize_the_shapes_the_frontend_reads() {
+        // the exact wire shapes: the frontend branches on `type` and reads `data`
+        // fields by name, and every event carries the request id of its watch
+        let answer = serde_json::json!({
+            "type": "availability",
+            "data": { "hash": "info-hash", "state": Availability::Cached, "name": "Show", "requestId": 42 }
+        });
+        assert_eq!(answer["data"]["state"], "cached", "availability serializes lowercase");
+        assert_eq!(answer["data"]["requestId"], 42);
+        let outage = serde_json::json!({
+            "type": "outage",
+            "data": { "kind": kind_of(&DebridError::Timeout { message: "t".into() }), "message": "t", "requestId": 42 }
+        });
+        assert_eq!(outage["data"]["kind"], "timeout");
     }
 
     #[test]

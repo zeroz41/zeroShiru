@@ -15,7 +15,7 @@ import { files } from '@/components/MediaHandler.svelte'
 import { toast } from 'svelte-sonner'
 import {
   streamDebrid, resolveDebridFiles, replayDebridPlayback, checkDebridAvailability, cancelDebridAvailability,
-  refreshDebridAvailability, testDebrid, debridAvailability, debridReleaseNames,
+  refreshDebridAvailability, testDebrid, debridAvailability, debridReleaseNames, debridChecking,
   debridEnabled, debridTransport, debridOptions, QUEUE_WINDOW
 } from '@/modules/debrid/debrid.js'
 import { Availability } from '@/modules/debrid/availability.js'
@@ -56,10 +56,13 @@ beforeEach(() => {
   debridReleaseNames.set(new Map())
   cancelDebridAvailability()
   DEBRID.resolve = async () => ({ hash: HASH, name: 'Show', files: [playerFile()] })
-  DEBRID.checkAvailability = async () => ({ answers: {}, names: {}, busy: false })
-  DEBRID.unknownHashes = async (service, apiKey, hashes) => hashes
+  DEBRID.watchAvailability = async () => {}
+  DEBRID.cancelAvailability = () => {}
   DEBRID.listAvailability = async () => ({ answers: {}, names: {} })
   DEBRID.remember = async () => {}
+  // an answer event re-arms the once-per-outage toast, so each test starts armed
+  DEBRID.publishEvent({ type: 'availability', data: { hash: 'f'.repeat(40), state: 'cached' } })
+  cancelDebridAvailability() // and the queued badge from that reset never lands
   // every resolve now probes its link before the play is trusted; a healthy CDN by default
   probeAnswers = []
   probed = []
@@ -216,46 +219,33 @@ test('a dying stream can be routed again from the top, exactly as it was played'
   }
 })
 
-test('answers and release names from the core reach the stores', async () => {
-  DEBRID.checkAvailability = async () => ({
-    answers: { [HASH]: 'cached', ['b'.repeat(40)]: 'unavailable' },
-    names: { [HASH]: '[Group] Show 01-12' },
-    busy: false
-  })
-  DEBRID.unknownHashes = async () => []
+test('answers and release names from the watch reach the stores', async () => {
+  DEBRID.watchAvailability = async (service, apiKey, hashes, requestId) => {
+    DEBRID.publishEvent({ type: 'availability', data: { hash: HASH, state: 'cached', name: '[Group] Show 01-12', requestId } })
+  }
   await checkDebridAvailability([HASH])
-  // unknownHashes answering empty means everything is known, so nothing is asked
-  assert.equal(debridAvailability.value.size, 0, 'a list nothing is unknown in costs no request')
-
-  DEBRID.unknownHashes = async (service, apiKey, hashes) => hashes
-  await checkDebridAvailability([HASH])
+  await settled()
   assert.equal(debridAvailability.value.get(HASH), Availability.CACHED)
   assert.equal(debridReleaseNames.value.get(HASH), '[Group] Show 01-12', 'the service knows the real name, the source often does not')
   cancelDebridAvailability()
 })
 
-test('release names update when one same-sized set replaces another', async () => {
-  const other = 'b'.repeat(40)
-  let reply = { answers: { [HASH]: 'cached' }, names: { [HASH]: 'Old release' }, busy: false }
-  let unknownRead = 0
-  DEBRID.unknownHashes = async (service, apiKey, hashes) => (++unknownRead % 2 ? hashes : [])
-  DEBRID.checkAvailability = async () => reply
-
-  await checkDebridAvailability([HASH])
-  assert.equal(debridReleaseNames.value.get(HASH), 'Old release')
-
-  reply = { answers: { [other]: 'cached' }, names: { [other]: 'New release' }, busy: false }
-  await checkDebridAvailability([other])
-  assert.equal(debridReleaseNames.value.has(HASH), false, 'a same-sized map is still different data')
-  assert.equal(debridReleaseNames.value.get(other), 'New release')
+test('release names ride along on answers and update in place', async () => {
+  DEBRID.publishEvent({ type: 'availability', data: { hash: HASH, state: 'cached', name: 'Old name' } })
+  await settled()
+  assert.equal(debridReleaseNames.value.get(HASH), 'Old name')
+  DEBRID.publishEvent({ type: 'availability', data: { hash: HASH, state: 'cached', name: 'New name' } })
+  await settled()
+  assert.equal(debridReleaseNames.value.get(HASH), 'New name')
+  assert.equal(debridAvailability.value.get(HASH), Availability.CACHED)
 })
 
 /** The queue window the store writes are collected into, plus room to fire. */
 const settled = () => new Promise(resolve => setTimeout(resolve, QUEUE_WINDOW + 20))
 
 test('answers pushed while a check is still running badge the list as they land', async () => {
-  assert.ok(DEBRID.publishAvailability, 'the module subscribes to the push channel at import')
-  DEBRID.publishAvailability(HASH, 'cached')
+  assert.ok(DEBRID.publishEvent, 'the module subscribes to the event channel at import')
+  DEBRID.publishEvent({ type: 'availability', data: { hash: HASH, state: 'cached' } })
   await settled()
   assert.equal(debridAvailability.value.get(HASH), Availability.CACHED)
 })
@@ -268,7 +258,7 @@ test('answers that arrive as separate events still reach the list as one write',
   const stop = debridAvailability.subscribe(() => { writes++ })
   writes = 0 // the subscription itself fires once
   for (const hash of hashes) {
-    DEBRID.publishAvailability(hash, 'cached')
+    DEBRID.publishEvent({ type: 'availability', data: { hash, state: 'cached' } })
     await new Promise(resolve => setTimeout(resolve, 0)) // a task apiece, as the host delivers them
   }
   await settled()
@@ -278,62 +268,69 @@ test('answers that arrive as separate events still reach the list as one write',
 })
 
 test('an unknown state clears a badge rather than painting a wrong one', async () => {
-  DEBRID.publishAvailability(HASH, 'cached')
+  DEBRID.publishEvent({ type: 'availability', data: { hash: HASH, state: 'cached' } })
   await settled()
-  DEBRID.publishAvailability(HASH, 'nonsense from a future service')
+  DEBRID.publishEvent({ type: 'availability', data: { hash: HASH, state: 'nonsense from a future service' } })
   await settled()
   assert.equal(debridAvailability.value.has(HASH), false)
 })
 
-test('badges from a request that outlived its account are dropped', async () => {
-  let release = null
-  DEBRID.checkAvailability = () => new Promise(resolve => { release = () => resolve({ answers: { [HASH]: 'cached' }, names: {}, busy: false }) })
-  const checking = checkDebridAvailability([HASH])
-  while (!release) await Promise.resolve() // the check reads unknownHashes first
-  configure({ service: 'realdebrid', key: 'other' }) // the user switched accounts mid-flight
-  release()
-  await checking
+test('checking events drive the badges-still-filling-in store', async () => {
+  DEBRID.publishEvent({ type: 'checking', data: { active: true } })
+  assert.equal(get(debridChecking), 1)
+  DEBRID.publishEvent({ type: 'checking', data: { active: false } })
+  assert.equal(get(debridChecking), 0)
+})
+
+test('an outage is said once, and an answer re-arms the toast', async () => {
+  toast.shown.length = 0
+  DEBRID.publishEvent({ type: 'outage', data: { kind: 'timeout', message: 'TorBox is not answering' } })
+  DEBRID.publishEvent({ type: 'outage', data: { kind: 'timeout', message: 'TorBox is not answering' } })
+  assert.equal(toast.shown.length, 1, 'a watch retries on its own; a toast per retry would be its own kind of broken')
+  // an answer means the service is talking again, so the next silence is news
+  DEBRID.publishEvent({ type: 'availability', data: { hash: HASH, state: 'cached' } })
+  DEBRID.publishEvent({ type: 'outage', data: { kind: 'timeout', message: 'quiet again' } })
+  assert.equal(toast.shown.length, 2)
+  await settled()
+})
+
+test('badges from a watch that outlived its account are dropped', async () => {
+  let leak = null
+  DEBRID.watchAvailability = async (service, apiKey, hashes, requestId) => {
+    leak = () => DEBRID.publishEvent({ type: 'availability', data: { hash: HASH, state: 'cached', requestId } })
+  }
+  await checkDebridAvailability([HASH])
+  configure({ service: 'realdebrid', key: 'other' }) // the user switched accounts mid-watch
+  leak()
+  await settled()
   assert.equal(debridAvailability.value.size, 0, "badging a new account with the old account's answers is worse than no badges")
 })
 
-test('an account switch while reading memory stops before spending an old account request', async () => {
-  let releaseUnknown = null
-  let checks = 0
-  DEBRID.unknownHashes = () => new Promise(resolve => { releaseUnknown = () => resolve([HASH]) })
-  DEBRID.checkAvailability = async () => { checks++; return { answers: {}, names: {}, busy: false } }
-
-  const checking = checkDebridAvailability([HASH])
-  while (!releaseUnknown) await Promise.resolve()
+test('switching accounts stops the watch in the core', async () => {
+  let cancels = 0
+  DEBRID.cancelAvailability = () => { cancels++ }
   configure({ service: 'realdebrid', key: 'other' })
-  releaseUnknown()
-  await checking
-
-  assert.equal(checks, 0, 'the account changed before any provider work began')
+  assert.ok(cancels >= 1, 'the core must not keep asking about a list for an account that is gone')
 })
 
-test('pushed answers identify their request so an old sweep cannot badge a new account', async () => {
-  let requestId
-  let releaseCheck = null
-  DEBRID.unknownHashes = async (service, apiKey, hashes) => hashes
-  DEBRID.checkAvailability = (service, apiKey, hashes, id) => {
-    requestId = id
-    return new Promise(resolve => { releaseCheck = () => resolve({ answers: {}, names: {}, busy: false }) })
-  }
-
-  const checking = checkDebridAvailability([HASH])
-  while (!releaseCheck) await Promise.resolve()
-  configure({ service: 'realdebrid', key: 'other' })
-  DEBRID.publishAvailability(HASH, 'cached', requestId)
-  releaseCheck()
-  await checking
+test('a slower old watch cannot repaint after a newer one took over', async () => {
+  const newerHash = 'b'.repeat(40)
+  const watches = []
+  DEBRID.watchAvailability = async (service, apiKey, hashes, requestId) => { watches.push(requestId) }
+  await checkDebridAvailability([HASH])
+  await checkDebridAvailability([newerHash])
+  assert.equal(typeof watches[0], 'number', 'the host needs an opaque request identity, never the API key')
+  DEBRID.publishEvent({ type: 'availability', data: { hash: HASH, state: 'cached', name: 'Old list', requestId: watches[0] } })
+  DEBRID.publishEvent({ type: 'availability', data: { hash: newerHash, state: 'cached', name: 'New list', requestId: watches[1] } })
   await settled()
-
-  assert.equal(typeof requestId, 'number', 'the host needs an opaque request identity, never the API key')
-  assert.equal(debridAvailability.value.has(HASH), false)
+  assert.equal(debridAvailability.value.has(HASH), false, 'late answers do not repaint a list the user left')
+  assert.equal(debridAvailability.value.get(newerHash), Availability.CACHED)
+  assert.equal(debridReleaseNames.value.get(newerHash), 'New list')
+  cancelDebridAvailability()
 })
 
 test('queued badge events are discarded when the account changes', async () => {
-  DEBRID.publishAvailability(HASH, 'cached')
+  DEBRID.publishEvent({ type: 'availability', data: { hash: HASH, state: 'cached' } })
   configure({ service: 'realdebrid', key: 'other' })
   await settled()
   assert.equal(debridAvailability.value.has(HASH), false, 'an event from the old account must not land after its badges were cleared')
@@ -341,41 +338,10 @@ test('queued badge events are discarded when the account changes', async () => {
 
 test('queued badge events are discarded when a newer results list takes over', async () => {
   const newerHash = 'b'.repeat(40)
-  DEBRID.publishAvailability(HASH, 'cached')
-  DEBRID.unknownHashes = async () => []
-
+  DEBRID.publishEvent({ type: 'availability', data: { hash: HASH, state: 'cached' } })
   await checkDebridAvailability([newerHash])
   await settled()
-
   assert.equal(debridAvailability.value.has(HASH), false, 'a late render batch must not badge a list the user left')
-})
-
-test('a slower old results list cannot replace or retry after a newer one', async () => {
-  const newerHash = 'b'.repeat(40)
-  let releaseOld = null
-  const unknownCalls = []
-  DEBRID.unknownHashes = async (service, apiKey, hashes) => {
-    unknownCalls.push([...hashes])
-    return hashes
-  }
-  DEBRID.checkAvailability = async (service, apiKey, hashes) => {
-    if (hashes[0] === HASH) {
-      return new Promise(resolve => { releaseOld = () => resolve({ answers: { [HASH]: 'cached' }, names: { [HASH]: 'Old list' }, busy: false }) })
-    }
-    return { answers: { [newerHash]: 'cached' }, names: { [newerHash]: 'New list' }, busy: false }
-  }
-
-  const oldCheck = checkDebridAvailability([HASH])
-  while (!releaseOld) await Promise.resolve()
-  await checkDebridAvailability([newerHash])
-  releaseOld()
-  await oldCheck
-
-  assert.equal(debridAvailability.value.has(HASH), false, 'late answers do not repaint a list the user left')
-  assert.equal(debridAvailability.value.get(newerHash), Availability.CACHED)
-  assert.equal(debridReleaseNames.value.get(newerHash), 'New list')
-  assert.equal(unknownCalls.filter(hashes => hashes[0] === HASH).length, 1, 'the obsolete check does not schedule follow-up work')
-  cancelDebridAvailability()
 })
 
 test('a release with no hash cannot silence the whole list', async () => {
@@ -383,27 +349,22 @@ test('a release with no hash cannot silence the whole list', async () => {
   // in a typed array, where the host refused the call outright: every badge on the screen
   // stayed empty, and the failure said nothing about any release so nothing was said at all
   let asked = null
-  DEBRID.unknownHashes = async (service, apiKey, hashes) => { asked = hashes; return hashes }
-  DEBRID.checkAvailability = async (service, apiKey, hashes) => ({
-    answers: Object.fromEntries(hashes.map(hash => [hash, 'cached'])),
-    names: {},
-    busy: false
-  })
-
+  DEBRID.watchAvailability = async (service, apiKey, hashes) => { asked = hashes }
   await checkDebridAvailability([HASH, undefined, null, '', 'b'.repeat(40)])
   assert.deepEqual(asked, [HASH, 'b'.repeat(40)], 'the releases that do have a hash are still asked about')
-  assert.equal(debridAvailability.value.get(HASH), Availability.CACHED)
   cancelDebridAvailability()
 
-  // and a list with nothing askable in it costs no request at all
+  // and a list with nothing askable in it costs no watch at all, and stops the old one
   asked = null
+  let cancels = 0
+  DEBRID.cancelAvailability = () => { cancels++ }
   await checkDebridAvailability([undefined, null])
   assert.equal(asked, null)
+  assert.ok(cancels >= 1, 'the old watch described a list that is gone')
 })
 
-test('a check that fails for no named reason still tells the user once', async () => {
-  DEBRID.unknownHashes = async (service, apiKey, hashes) => hashes
-  DEBRID.checkAvailability = async () => { throw new TypeError('invalid args for command debrid_check_availability') }
+test('a watch that fails to start still tells the user once', async () => {
+  DEBRID.watchAvailability = async () => { throw new TypeError('invalid args for command debrid_watch_availability') }
   toast.shown.length = 0
   await checkDebridAvailability([HASH])
   cancelDebridAvailability()
@@ -413,7 +374,7 @@ test('a check that fails for no named reason still tells the user once', async (
 
 test('nothing is asked while offline, or with cache checking turned off', async () => {
   let asked = 0
-  DEBRID.checkAvailability = async () => { asked++; return { answers: {}, names: {}, busy: false } }
+  DEBRID.watchAvailability = async () => { asked++ }
 
   configure({ online: false })
   await checkDebridAvailability([HASH])

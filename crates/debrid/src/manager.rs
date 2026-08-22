@@ -19,6 +19,11 @@ pub const PROVIDER_IDS: [&str; 4] = ["alldebrid", "premiumize", "realdebrid", "t
 
 /// Consecutive unanswered probes before a sweep gives up.
 const MAX_PROBE_FAILURES: usize = 3;
+/// How long a watch waits before asking again about releases a check could not answer.
+/// Without the retry, one bad minute leaves a results list half badged for good.
+const WATCH_RETRY_MS: u64 = 10_000;
+/// How far the retry backs off while the service keeps not answering.
+const WATCH_RETRY_MAX_MS: u64 = 4 * 60_000;
 /// Probes running at once. Small, since each briefly owns a torrent on the account.
 const MAX_PROBE_CONCURRENCY: usize = 3;
 /// How long a resolve waits for a probe of the same release to finish before going
@@ -43,6 +48,19 @@ pub fn create_provider(
         "premiumize" => Arc::new(Premiumize::new(api_key, transport, platform)),
         _ => return None,
     })
+}
+
+/// What a watch reports as it goes. Borrowed payloads: events are delivered inline and
+/// hosts serialize them on the spot.
+pub enum WatchEvent<'a> {
+    /// One release answered, with the service's own name for it when it has one.
+    Answer { hash: &'a str, state: Availability, name: Option<String> },
+    /// Whether a round of asking is on the wire right now, as opposed to waiting out a
+    /// backoff. The UI shows badges still filling in while this is true.
+    Checking(bool),
+    /// A round failed. The watch retries on its own unless the failure was auth, which
+    /// ends it — retrying a bad key answers nothing.
+    Outage(&'a DebridError),
 }
 
 /// Wraps a provider with the shared availability bookkeeping.
@@ -321,6 +339,82 @@ impl ManagedProvider {
         }
     }
 
+    /// Answers about a results list for as long as it takes, pushing each answer as it
+    /// lands. This is the whole badge lifecycle in one place: remembered answers first,
+    /// then a check round for the rest, then patient retries on a backing-off timer for
+    /// whatever the service left unanswered — a service may answer only part of a list,
+    /// and one bad minute must not leave the list half badged for good.
+    ///
+    /// Runs until everything asked about has an answer, or until the caller drops the
+    /// future — cancellation is the caller's word for "the user moved on", and every
+    /// claim this takes is released by a guard. An auth failure ends it early, since
+    /// retrying a bad key answers nothing.
+    pub async fn watch_availability(&self, hashes: &[String], mut on_event: impl FnMut(WatchEvent)) {
+        let platform = self.client().platform();
+        let mut delay = WATCH_RETRY_MS;
+        // remembered answers come back before any request, so a list the service has
+        // already described badges instantly
+        let known = DebridClient::normalize_hashes(hashes, self.provider.config().max_ask());
+        for hash in &known {
+            if let Some(state) = self.client().recall(hash) {
+                on_event(WatchEvent::Answer { hash, state, name: self.client().release_name(hash) });
+            }
+        }
+        loop {
+            let pending = self.unknown_hashes(hashes);
+            if pending.is_empty() {
+                return;
+            }
+            let busy = self.sweeping();
+            on_event(WatchEvent::Checking(true));
+            let round = self
+                .check_availability(&pending, |hash, state| {
+                    on_event(WatchEvent::Answer { hash, state, name: self.client().release_name(hash) })
+                })
+                .await;
+            on_event(WatchEvent::Checking(false));
+            match &round {
+                Ok(answers) => {
+                    tracing::info!(
+                        target: "debrid",
+                        service = self.provider.config().id,
+                        asked = pending.len(),
+                        answered = answers.len(),
+                        busy,
+                        "availability round"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(target: "debrid", service = self.provider.config().id, %error, "availability round failed");
+                    let fatal = matches!(error, DebridError::Auth { .. });
+                    on_event(WatchEvent::Outage(error));
+                    if fatal {
+                        return;
+                    }
+                }
+            }
+            let left = self.unknown_hashes(hashes);
+            if left.is_empty() {
+                return;
+            }
+            // any progress means the service is willing to talk, so start over at the
+            // short wait. Only a round that got nowhere backs off
+            if busy || left.len() < pending.len() {
+                delay = WATCH_RETRY_MS;
+            } else {
+                delay = (delay * 2).min(WATCH_RETRY_MAX_MS);
+            }
+            tracing::debug!(
+                target: "debrid",
+                service = self.provider.config().id,
+                unanswered = left.len(),
+                retry_in_ms = delay,
+                "asking again later"
+            );
+            platform.sleep(delay).await;
+        }
+    }
+
     /// Runs one probe. Only a reported state or a definite error counts as an answer;
     /// anything else errors, so the release stays re-checkable. `Ok(None)` means a probe
     /// of this hash is already in the air — the JS waited on that same promise, which is
@@ -434,6 +528,98 @@ mod tests {
         let second = managed.check_availability(&asked, |_, _| {}).await.unwrap();
         assert_eq!(second, first);
         assert!(managed.unknown_hashes(&asked).is_empty());
+    }
+
+    /// One line per event, so a whole watch can be asserted as a transcript.
+    fn describe(event: &WatchEvent) -> String {
+        match event {
+            WatchEvent::Answer { hash, state, name } => format!(
+                "answer {} {:?}{}",
+                &hash[..4],
+                state,
+                name.as_deref().map(|name| format!(" ({name})")).unwrap_or_default()
+            ),
+            WatchEvent::Checking(active) => format!("checking {active}"),
+            WatchEvent::Outage(error) => format!("outage {error}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_watch_answers_from_memory_first_and_finishes_once_everything_is_answered() {
+        let managed = torbox_with(vec![Route::json(
+            "checkcached",
+            200,
+            r#"{"success":true,"data":[{"hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","name":"Show B"}]}"#,
+        )]);
+        managed.client().remember(HASHES[0], Availability::Cached);
+        let asked: Vec<String> = HASHES[..2].iter().map(|h| h.to_string()).collect();
+        let mut events = Vec::new();
+        managed.watch_availability(&asked, |event| events.push(describe(&event))).await;
+        assert_eq!(
+            events,
+            [
+                "answer aaaa Cached",
+                "checking true",
+                "answer bbbb Cached (Show B)",
+                "checking false",
+            ],
+            "memory answers before any request, fresh answers as they land, then the watch ends"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_watch_that_gets_nowhere_backs_off_and_a_bad_key_ends_it() {
+        // a service that keeps failing: every round is an outage, and the wait between
+        // rounds must grow — retrying a dead service every ten seconds forever is how the
+        // old JS loop hammered a wedged API
+        let transport = Arc::new(MockTransport::new(vec![Route::json(
+            "checkcached",
+            500,
+            r#"{"success":false,"error":"SERVER_ERROR","detail":"the disk fell over"}"#,
+        )]));
+        let clock = Arc::new(ManualClock::new());
+        let managed = ManagedProvider::new(
+            create_provider("torbox", "key".into(), transport.clone(), clock.clone()).unwrap(),
+        );
+        let asked = vec![HASHES[0].to_string()];
+        let rounds = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        {
+            let seen = rounds.clone();
+            let recorder = clock.clone();
+            let watch = managed.watch_availability(&asked, move |event| {
+                if matches!(event, WatchEvent::Checking(true)) {
+                    seen.borrow_mut().push(recorder.now_ms());
+                }
+            });
+            futures::pin_mut!(watch);
+            for _ in 0..400 {
+                if rounds.borrow().len() >= 4 {
+                    break;
+                }
+                assert!(futures::poll!(watch.as_mut()).is_pending(), "a failing service never satisfies the watch");
+                tokio::task::yield_now().await;
+            }
+        }
+        let rounds = rounds.borrow();
+        assert_eq!(rounds.len(), 4, "the watch must keep asking");
+        let deltas: Vec<u64> = rounds.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        assert!(deltas[0] >= 10_000, "the first retry waits the short delay, got {deltas:?}");
+        assert!(deltas[1] >= 2 * deltas[0], "a round that got nowhere doubles the wait, got {deltas:?}");
+        assert!(deltas[2] >= 2 * deltas[1], "and keeps doubling, got {deltas:?}");
+
+        // auth is different: every retry would fail the same way, so the watch ends itself
+        let transport = Arc::new(MockTransport::new(vec![Route::json(
+            "checkcached",
+            401,
+            r#"{"success":false,"error":"BAD_TOKEN","detail":"nope"}"#,
+        )]));
+        let managed = ManagedProvider::new(
+            create_provider("torbox", "bad".into(), transport.clone(), Arc::new(ManualClock::new())).unwrap(),
+        );
+        let mut events = Vec::new();
+        managed.watch_availability(&asked, |event| events.push(describe(&event))).await;
+        assert_eq!(events, ["checking true", "checking false", "outage Invalid TorBox API key"]);
+        assert_eq!(transport.urls().len(), 1, "a bad key is not retried");
     }
 
     /// The wedge this pins: a Tauri command being cancelled (webview reload, window

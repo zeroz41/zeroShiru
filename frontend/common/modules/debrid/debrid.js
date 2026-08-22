@@ -31,11 +31,6 @@ function debridService (id) {
 
 const REFRESH_INTERVAL = 60_000
 
-// how long before asking again about releases a check could not answer, and how far that backs
-// off while it keeps not answering. Without it a bad minute leaves a results list half badged
-const RETRY_DELAY = 10_000
-const MAX_RETRY_DELAY = 4 * 60_000
-
 /** What the user is told when the routing policy blocks playback. */
 const blockedMessages = {
   key: () => 'Debrid only mode is on but no API key is set. Add your key in the debrid settings or disable debrid only mode.',
@@ -119,14 +114,21 @@ settings.subscribe(value => {
   serviceKey = key
 })
 
-// answers pushed by a check while it is still running, so a probing service badges the list as
-// it goes instead of all at once when the sweep ends
-DEBRID.onAvailability((hash, state, requestId) => {
-  // A probing sweep may keep answering after the user switches service or key. Its command
-  // result is generation-checked below; pushed answers need the same identity or they can
-  // repaint the new account with the old one's badges.
-  if (requestId != null && requestId !== availabilityGeneration) return
-  queueAvailability(hash, normalizeAvailability(state))
+// everything the watch reports arrives here: answers as they land, whether a round of
+// asking is on the wire, and outages. The core owns the whole retry lifecycle; this side
+// only paints. Every event carries the request id of the watch that produced it, and a
+// watch may keep reporting after the user switches service or key — without the identity
+// check it could repaint the new account with the old one's badges.
+DEBRID.onEvent(({ type, data } = {}) => {
+  if (data?.requestId != null && data.requestId !== availabilityGeneration) return
+  if (type === 'availability') {
+    outageReported = false // it is answering, so a later silence is worth saying out loud
+    queueAvailability(data.hash, normalizeAvailability(data.state), data.name)
+  } else if (type === 'checking') {
+    debridChecking.set(data.active ? 1 : 0)
+  } else if (type === 'outage') {
+    reportOutage(data)
+  }
 })
 
 /** Validates the configured service and API key, used by the settings test button. */
@@ -309,10 +311,6 @@ function isCurrent (used) {
   return serviceKey === `${used.id}:${used.apiKey}`
 }
 
-/** @type {ReturnType<typeof setTimeout> | null} A retry waiting to ask about what went unanswered. */
-let retry = null
-let retryDelay = RETRY_DELAY
-
 /**
  * The hashes out of a results list that a service can actually be asked about. A source is
  * free to list a release it has no info hash for — a link to a torrent file, an entry whose
@@ -329,15 +327,15 @@ function askable (hashes) {
 }
 
 /**
- * Asks the service about the releases on screen, so badges say what it can actually do with them
- * rather than only what the account has touched. Answers are remembered by the core, so browsing
- * the same show again is free. A service may answer only part of the list, so whatever is left is
- * asked about again on a backing off timer until it is done or the user moves on.
- * @param {(string | undefined | null)[]} results - Result hashes, most relevant first, since probing
- *   bites from the front. Entries without a hash are dropped rather than asked about.
+ * Points the core's availability watch at the releases on screen, so badges say what the
+ * service can actually do with them rather than only what the account has touched. The
+ * core owns the whole lifecycle — remembered answers, check rounds, backing-off retries —
+ * and pushes every answer as an event the moment it lands; this call only starts the
+ * watch and returns. A new list replaces the old watch, in the core.
+ * @param {(string | undefined | null)[]} results - Result hashes, most relevant first.
+ *   Entries without a hash are dropped rather than asked about.
  */
 export async function checkDebridAvailability (results) {
-  clearDebridRetry() // this list supersedes whatever the last one was waiting to retry
   clearQueuedAvailability()
   const generation = ++availabilityGeneration
   const current = account()
@@ -350,42 +348,22 @@ export async function checkDebridAvailability (results) {
       : status.value === 'offline'
         ? 'the app believes it is offline'
         : null
-  if (declined) return debug(`Not asking about ${results?.length ?? 0} releases: ${declined}`)
+  if (declined) {
+    DEBRID.cancelAvailability() // whatever list the old watch described is gone
+    return debug(`Not asking about ${results?.length ?? 0} releases: ${declined}`)
+  }
   const hashes = askable(results)
-  if (!hashes.length) return debug('Not asking: none of the results carry an info hash')
-  const pending = await DEBRID.unknownHashes(current.id, current.apiKey, hashes)
-  if (!isCurrent(current) || generation !== availabilityGeneration) return
-  if (!pending.length) return debug(`All ${hashes.length} releases already have an answer`)
-  debug(`Asking ${serviceTitle()} about ${pending.length} of ${hashes.length} releases`)
-  let busy = false
-  debridChecking.update(count => count + 1)
+  if (!hashes.length) {
+    DEBRID.cancelAvailability()
+    return debug('Not asking: none of the results carry an info hash')
+  }
+  debug(`Watching ${hashes.length} releases with ${serviceTitle()}`)
   try {
-    const answered = await DEBRID.checkAvailability(current.id, current.apiKey, hashes, generation)
-    busy = answered.busy // a check already owned the service, so this call only read memory back
-    outageReported = false // it is talking again, so a later silence is worth saying out loud
-    if (isCurrent(current) && generation === availabilityGeneration) publish(answered)
+    await DEBRID.watchAvailability(current.id, current.apiKey, hashes, generation)
   } catch (error) {
-    debug('Availability check failed:', error)
+    debug('Availability watch failed to start:', error)
     if (generation === availabilityGeneration) reportOutage(error)
-  } finally {
-    debridChecking.update(count => count - 1)
   }
-  if (!isCurrent(current) || generation !== availabilityGeneration) return
-  const left = await DEBRID.unknownHashes(current.id, current.apiKey, hashes)
-  if (!isCurrent(current) || generation !== availabilityGeneration) return
-  if (!left.length) {
-    retryDelay = RETRY_DELAY
-    return
-  }
-  // any progress means the service is willing to talk, so start over at the short wait. Only a
-  // round that got nowhere backs off
-  if (busy || left.length < pending.length) retryDelay = RETRY_DELAY
-  else retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY)
-  debug(`${left.length} of ${pending.length} releases unanswered, asking again in ${retryDelay}ms`)
-  retry = setTimeout(() => {
-    retry = null
-    if (generation === availabilityGeneration) checkDebridAvailability(hashes)
-  }, retryDelay)
 }
 
 /**
@@ -403,16 +381,12 @@ function reportOutage (error) {
   toast.error(notice.title, { description: notice.description, duration: 12_000 })
 }
 
-/** Drops a pending retry, for when the results it described are no longer on screen. */
+/** Stops the watch, for when the results it described are no longer on screen. */
 export function cancelDebridAvailability () {
   availabilityGeneration++
-  clearDebridRetry()
   clearQueuedAvailability()
-}
-
-function clearDebridRetry () {
-  if (retry) clearTimeout(retry)
-  retry = null
+  debridChecking.set(0)
+  DEBRID.cancelAvailability()
 }
 
 function clearQueuedAvailability () {
@@ -440,6 +414,20 @@ function publish (reply) {
 }
 
 /**
+ * Publishes names that arrived riding on watch answers, without dropping what is known.
+ * @param {Iterable<[string, string]>} names
+ */
+function publishNames (names) {
+  const entries = [...names]
+  if (!entries.length) return
+  const current = debridReleaseNames.value
+  if (entries.every(([hash, name]) => current.get(hash) === name)) return
+  const next = new Map(current)
+  for (const [hash, name] of entries) next.set(hash, name)
+  debridReleaseNames.set(next)
+}
+
+/**
  * Records one answer the app proved for itself, in both the core's memory and the badges.
  * @param {string} magnetOrHash
  * @param {string} state - An `Availability` value.
@@ -460,8 +448,9 @@ export const QUEUE_WINDOW = 50
  * the list once per hash. A probing service answers slowly enough that each still lands alone.
  * @param {string} hash
  * @param {string} state
+ * @param {string} [name] - The service's own name for the release, when it gave one.
  */
-function queueAvailability (hash, state) {
+function queueAvailability (hash, state, name) {
   if (!queued) {
     queued = new Map()
     // a task, not a microtask: each answer crosses from the host as its own event, so a
@@ -470,10 +459,12 @@ function queueAvailability (hash, state) {
       const answers = queued
       queued = null
       queueTimer = null
-      publishAvailability(answers)
+      const entries = [...answers]
+      publishAvailability(entries.map(([hash, entry]) => [hash, entry.state]))
+      publishNames(entries.filter(([, entry]) => entry.name).map(([hash, entry]) => [hash, entry.name]))
     }, QUEUE_WINDOW)
   }
-  queued.set(hash, state)
+  queued.set(hash, { state, name })
 }
 
 /**

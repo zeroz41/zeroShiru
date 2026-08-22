@@ -141,16 +141,17 @@ const debridDefaults = {
   validate: async (service, apiKey) => ({ username: '' }),
   /** what the account itself holds, the free badge source */
   listAvailability: async (service, apiKey) => ({ answers: {}, names: {} }),
-  /** ask about releases; answers also arrive one at a time via onAvailability */
-  checkAvailability: async (service, apiKey, hashes, requestId) => ({ answers: {}, names: {}, busy: false }),
-  /** the given hashes nothing is known about yet */
-  unknownHashes: async (service, apiKey, hashes) => [],
+  /** ask about releases; answers arrive as events via onEvent */
+  /** starts (or replaces) the core's availability watch; answers arrive as events */
+  watchAvailability: noopAsyncVoid,
+  /** stops the watch, because its results list left the screen */
+  cancelAvailability: noopVoid,
   /** record an answer the app proved itself, e.g. by playing the release */
   remember: noopAsyncVoid,
   /** magnet -> player-ready files; `episode` picks the right one out of a pack */
   resolve: async (service, apiKey, magnet, episode) => ({ hash: '', name: '', files: [] }),
-  /** fires per answer as a check goes, carrying its request id so old accounts cannot repaint */
-  onAvailability: noopVoid
+  /** fires per watch event as it happens, each carrying the request id of its watch */
+  onEvent: noopVoid
 }
 
 export const TORRENT = { ...torrentDefaults, ...window.torrent }
