@@ -14,7 +14,7 @@
   import { debridEnabled, debridAvailability, debridTransport, debridChecking, debridReleaseNames, refreshDebridAvailability, checkDebridAvailability, cancelDebridAvailability } from '@/modules/debrid/debrid.js'
   import { Availability, AVAILABILITY_ORDER, availabilityOf, describeAvailability, preferCached } from '@/modules/debrid/availability.js'
   import { get } from 'svelte/store'
-  import { listResult } from '@/modules/debrid/route.js'
+  import { listResult, createListResults } from '@/modules/debrid/route.js'
   import { getId, getHash } from '@/modules/anime/animehash.js'
   import AnimeResolver from '@/modules/anime/animeresolver.js'
   import { anilistClient } from '@/modules/providers/anilist/anilist.js'
@@ -116,38 +116,6 @@
         default: return b.seeders - a.seeders
       }
     })
-  }
-
-  const sameOrder = (a, b) => a.length === b.length && a.every((entry, index) => entry === b[index])
-
-  /**
-   * Splits sorted results into what is listed and what is hidden, and tallies what the debrid
-   * service said about each. Kept apart from the sorting above so an answer landing only redoes
-   * these passes, not the dedupe and sort. The previous split lives in the closure rather than a
-   * component variable to stay out of the reactive graph.
-   * @returns {(sorted: Result[], availability?: Map<string, string>, filters?: { cachedOnly?: boolean, only?: boolean }) => any}
-   */
-  function createListResults() {
-    let previous = null
-    return function listResults(sorted, availability, filters) {
-      const results = []
-      const hiddenResults = []
-      const counts = Object.fromEntries(AVAILABILITY_ORDER.map(state => [state, 0]))
-      for (const entry of sorted) {
-        const state = availability ? availabilityOf(availability, entry.hash) : Availability.UNKNOWN
-        counts[state]++
-        // narrows what the rest of the modal sees, so the best pick and autoplay follow it too
-        if (listResult(entry, state, filters)) results.push(entry)
-        else hiddenResults.push(entry)
-      }
-      // most answers only move the counts, since a seeded release was listed either way. Handing
-      // back the same arrays keeps the best-release pick from being redone, which reparses every
-      // result and is what made answers landing feel like a freeze
-      if (previous && sameOrder(previous.results, results) && sameOrder(previous.hiddenResults, hiddenResults)) {
-        return { ...previous, counts }
-      }
-      return (previous = { sorted, counts, results, hiddenResults })
-    }
   }
 
   const languages = [
@@ -472,7 +440,10 @@
   let bestPromiseId = current
   $: {
     bestPromiseId = ++current
-    resolveBest(search, lookup, $settings.audioLanguage, $settings.torrentProvider)
+    // cachedKey rides along so a badge landing re-picks the best release: the pick
+    // prefers cached, and autoplay picking an uncached release while the answers were
+    // still arriving was choosing a guaranteed resolve failure over a stream
+    resolveBest(search, lookup, $settings.audioLanguage, $settings.torrentProvider, queryResults?.cachedKey)
   }
   async function resolveBest(search, lookup, audioLanguage, torrentProvider = []) {
     const result = await getBest(search, lookup, audioLanguage, torrentProvider)

@@ -4,7 +4,7 @@
 // 2. In debrid only mode, NO input ever routes to the torrent client.
 import { test } from 'bun:test'
 import assert from 'node:assert/strict'
-import { routeDebrid, listResult, debridKey } from '../../../common/modules/debrid/route.js'
+import { routeDebrid, listResult, debridKey, createListResults } from '../../../common/modules/debrid/route.js'
 import { Availability } from '../../../common/modules/debrid/availability.js'
 
 const HASH = 'a'.repeat(40)
@@ -165,4 +165,38 @@ test('missing or half built settings never throw and never invent a key', () => 
     assert.equal(debridKey(settings), '', `${JSON.stringify(settings)} must read as no key`)
   }
   assert.equal(debridKey({ debridApiKeys: { realdebrid: 'rd' } }, 'realdebrid'), 'rd', 'unless the service is named explicitly')
+})
+
+// --- splitting the results list without churning identities ---
+// The contract the modal leans on: answers that only move the counts hand back the same
+// arrays (so the expensive best-release pick is not redone per answer), while `cachedKey`
+// changes exactly when which listed releases are cached changes — the one signal that must
+// escape the identity freeze, because autoplay picking an uncached release while answers
+// were still arriving was choosing a guaranteed resolve failure over a stream.
+
+const HASH_A = 'a'.repeat(40)
+const HASH_B = 'b'.repeat(40)
+const seededResult = hash => ({ hash, seeders: 12 })
+
+test('count-only answers keep the array identities but move the cached key', () => {
+  const listResults = createListResults()
+  const sorted = [seededResult(HASH_A), seededResult(HASH_B)]
+  const first = listResults(sorted, new Map())
+  assert.equal(first.cachedKey, '')
+  const second = listResults(sorted, new Map([[HASH_B, Availability.CACHED]]))
+  assert.equal(second.results, first.results, 'a seeded release was listed either way, so the pick input is unchanged')
+  assert.equal(second.cachedKey, HASH_B, 'but which releases are cached is a new question for the pick')
+  assert.equal(second.counts[Availability.CACHED], 1)
+})
+
+test('an answer that changes membership hands back new arrays', () => {
+  const listResults = createListResults()
+  const seedless = { hash: HASH_A, seeders: 0 }
+  const sorted = [seedless, seededResult(HASH_B)]
+  const before = listResults(sorted, new Map())
+  assert.deepEqual(before.results.map(result => result.hash), [HASH_B], 'a seedless release starts hidden')
+  const after = listResults(sorted, new Map([[HASH_A, Availability.CACHED]]))
+  assert.notEqual(after.results, before.results)
+  assert.deepEqual(after.results.map(result => result.hash), [HASH_A, HASH_B], 'cached streams without seeders, so it surfaces')
+  assert.equal(after.cachedKey, HASH_A)
 })

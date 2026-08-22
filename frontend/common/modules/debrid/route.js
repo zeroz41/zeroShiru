@@ -1,6 +1,7 @@
 // Pure debrid policy, free of UI imports so it can be tested under plain Node: how a play
-// request is routed, and which search results are listed.
-import { Availability, streamsInstantly } from './availability.js'
+// request is routed, which search results are listed, and how a results list is split for
+// the modal without churning identities.
+import { Availability, AVAILABILITY_ORDER, availabilityOf, streamsInstantly } from './availability.js'
 
 const magnetRx = /^magnet:.*urn:btih:[a-f\d]{40}/i
 const hexRx = /^[a-f\d]{40}$/i
@@ -60,4 +61,42 @@ export function listResult (result, availability, { cachedOnly, only } = {}) {
   if (cachedOnly) return cached
   if (only && availability === Availability.UNAVAILABLE) return false
   return result?.seeders > 0 || Boolean(result?.source?.managed) || cached
+}
+
+const sameOrder = (a, b) => a.length === b.length && a.every((entry, index) => entry === b[index])
+
+/**
+ * Splits sorted results into what is listed and what is hidden, and tallies what the debrid
+ * service said about each. A closure so the previous split lives outside any reactive graph.
+ *
+ * Identity is the contract here: most answers only move the counts, since a seeded release
+ * was listed either way, and handing back the same arrays keeps the best-release pick from
+ * being redone — which reparses every result, and is what made answers landing feel like a
+ * freeze. `cachedKey` is the one thing that must escape that: the pick prefers a cached
+ * release, so which listed releases are cached is returned as a comparable string that
+ * changes exactly when the answer to "what should the best pick be" might.
+ * @returns {(sorted: any[], availability?: Map<string, string>, filters?: { cachedOnly?: boolean, only?: boolean }) => any}
+ */
+export function createListResults () {
+  let previous = null
+  return function listResults (sorted, availability, filters) {
+    const results = []
+    const hiddenResults = []
+    const counts = Object.fromEntries(AVAILABILITY_ORDER.map(state => [state, 0]))
+    const cachedListed = []
+    for (const entry of sorted) {
+      const state = availability ? availabilityOf(availability, entry.hash) : Availability.UNKNOWN
+      counts[state]++
+      // narrows what the rest of the modal sees, so the best pick and autoplay follow it too
+      if (listResult(entry, state, filters)) {
+        results.push(entry)
+        if (state === Availability.CACHED) cachedListed.push(entry.hash)
+      } else hiddenResults.push(entry)
+    }
+    const cachedKey = cachedListed.join()
+    if (previous && sameOrder(previous.results, results) && sameOrder(previous.hiddenResults, hiddenResults)) {
+      return { ...previous, counts, cachedKey }
+    }
+    return (previous = { sorted, counts, results, hiddenResults, cachedKey })
+  }
 }
