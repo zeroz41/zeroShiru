@@ -1,7 +1,7 @@
 import Metadata from 'matroska-metadata'
 import { EbmlTagId } from 'ebml-iterator'
 import { arr2hex, hex2bin } from 'uint8-util'
-import { parseCues, cueJumpTarget } from '@/modules/playback/cue-index.js'
+import { parseCues, cueJumpTarget, lastClusterBefore, mergeCovered, coversByte } from '@/modules/playback/cue-index.js'
 import { fontRx, matroskaRx, matchFontFiles, matchSubtitleFiles, sleep } from '@/modules/util.js'
 import { SUPPORTS } from '@/modules/support.js'
 import Debug from 'debug'
@@ -76,8 +76,11 @@ class RemoteFile {
 export default class DebridMetadata {
   /** How long the subtitle stream may deliver nothing before its request is retried. Static so tests can shorten it. */
   static STALL_TIMEOUT = 30_000
-  /** How often the watcher looks at the playback position while the parser waits on bytes. */
-  static WATCH_INTERVAL = 1_000
+  /** How often the watcher looks at the playback position while the parser waits on bytes.
+   * It is arithmetic on a number, so it is cheap — and it is the delay between a user
+   * seeking and the stream being asked to move, which used to be a whole second of the
+   * few the subtitles took to come back. */
+  static WATCH_INTERVAL = 250
   /** How long a restart after a seek may deliver nothing before it is worth reporting. */
   static SILENCE_TIMEOUT = 12_000
 
@@ -90,6 +93,9 @@ export default class DebridMetadata {
   metadata = null
   /** @type {{ time: number, byte: number }[] | null} The file's own seek index, once read. */
   cuesIndex = null
+  /** @type {{ start: number, end: number }[]} Byte ranges whose cues are already in the
+   * renderer, so a seek back into one needs nothing from the link. See cue-index.js. */
+  #covered = []
   #cuesRequested = false
   /** Media duration in ms once known, bounding what counts as a real seek target. */
   #durationMs = 0
@@ -213,6 +219,7 @@ export default class DebridMetadata {
         for await (const chunk of this.metadata.parseStream(source.stream(), offset === 0)) {
           if (this.destroyed) return
           offset += chunk.length
+          this.#claimCoverage(start, offset)
           progressed = Date.now()
           const next = await this.#pace(byteRate, start, offset)
           if (next !== offset) {
@@ -325,6 +332,17 @@ export default class DebridMetadata {
    * without one — the average-bitrate estimate stands in, with its safety margin.
    */
   #jumpTarget (byteRate, start, offset) {
+    const target = this.#restartTarget(byteRate, start, offset)
+    // the cues in a range already parsed were handed to the renderer, and it keeps them:
+    // seeking back into one shows subtitles instantly, so asking the link to serve those
+    // bytes a second time buys nothing but the wait it used to cost
+    if (target !== null && coversByte(this.#covered, target)) return null
+    return target
+  }
+
+  /** Where a restart would have to begin to cover the playhead, ignoring what is already
+   * parsed. See [#jumpTarget]. */
+  #restartTarget (byteRate, start, offset) {
     if (this.cuesIndex) {
       const position = this.getTime()
       // a playhead past the end of the file is not a seek, it is a caller reading
@@ -338,6 +356,19 @@ export default class DebridMetadata {
     // a target beyond the file means the estimate overshot, sequential reading covers it
     if (jump < this.file.size && (position < start || jump > offset)) return jump
     return null
+  }
+
+  /**
+   * Remember what has been parsed, up to the last cluster the parser FINISHED — the one
+   * it is inside may have delivered only some of its lines, and a seek that landed there
+   * would show a scene with half its subtitles. Without the file's own index there is no
+   * exact boundary to claim, so nothing is remembered and seeks re-read as they always
+   * have: this only ever makes the link do less work, never a cue go missing.
+   */
+  #claimCoverage (start, offset) {
+    if (!this.cuesIndex) return
+    const finished = lastClusterBefore(this.cuesIndex, offset)
+    if (finished > start) this.#covered = mergeCovered(this.#covered, start, finished)
   }
 
   /**

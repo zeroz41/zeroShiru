@@ -90,6 +90,30 @@ test('a seek back before the parsed window restarts the stream behind the seek',
   assert.ok(restarts.length >= 1, 'a range request must restart at or before the seek')
 })
 
+test('seeking back into subtitles already parsed asks the link for nothing at all', async () => {
+  // the ordinary "wait, what did they say" seek. Those cues are in the renderer for the
+  // session, so the bytes behind them never need asking for twice — but the stream only
+  // knew about the window it was in the middle of, so it tore the connection down and
+  // re-read the whole scene while the user watched an empty screen
+  const { state, spy, clock, metadata } = play()
+  await until(() => (metadata.cuesIndex?.length ?? 0) > 0, 8_000)
+  await until(() => cueNear(spy, 30, 30), 8_000)
+  // let the parse get properly past the opening so there is real coverage behind us
+  await until(() => state.served > 12_000, 8_000)
+
+  clock.time = 450 // away...
+  await until(() => cueNear(spy, 450), 8_000)
+  const requestsBefore = state.requests.length
+  const servedBefore = state.served
+
+  clock.time = 20 // ...and back into the part already parsed
+  await new Promise(resolve => setTimeout(resolve, 1_000)) // several watcher passes
+  metadata.destroy()
+  assert.equal(state.requests.length, requestsBefore, `a seek into parsed subtitles must not open a request, saw ${state.requests.length - requestsBefore} new`)
+  assert.equal(state.served, servedBefore, 'and must not download a byte')
+  assert.ok(cueNear(spy, 20, 30), 'sanity: the cues for where the user seeked really were delivered earlier')
+})
+
 test('a seek while the connection is stalled still restarts the stream', async () => {
   // the head of the file loads, then the connection dies silently: bytes stop, nothing errors.
   // A seek must abort that read and land near the target anyway — this used to hang forever.
