@@ -20,18 +20,29 @@ use tauri::Emitter;
 /// goes rather than all at once when it ends.
 const DEBRID_EVENT: &str = "shiru://debrid";
 
+/// How many (service, key) providers stay warm at once. One slot was not enough: the
+/// settings test button validating a different service evicted the live account's whole
+/// state — availability memory, the listing cache, the orphan list, and any pause a 429
+/// had installed — in the middle of whatever it was doing.
+const PROVIDER_SLOTS: usize = 4;
+
 #[derive(Default)]
 pub struct DebridState {
-    active: Mutex<Option<(String, String, Arc<ManagedProvider>)>>,
+    /// Most recently used first.
+    active: Mutex<Vec<(String, String, Arc<ManagedProvider>)>>,
 }
 
 impl DebridState {
     fn managed(&self, service: &str, api_key: &str) -> Result<Arc<ManagedProvider>, DebridFailure> {
         let mut active = self.active.lock().unwrap();
-        if let Some((known_service, known_key, managed)) = active.as_ref() {
-            if known_service == service && known_key == api_key {
-                return Ok(managed.clone());
-            }
+        if let Some(index) = active
+            .iter()
+            .position(|(known_service, known_key, _)| known_service == service && known_key == api_key)
+        {
+            let entry = active.remove(index);
+            let managed = entry.2.clone();
+            active.insert(0, entry);
+            return Ok(managed);
         }
         let provider = create_provider(
             service,
@@ -44,11 +55,12 @@ impl DebridState {
             message: format!("unknown debrid service: {service}"),
         })?;
         let managed = Arc::new(ManagedProvider::new(provider));
-        let replaced = active.replace((service.to_string(), api_key.to_string(), managed.clone()));
-        // whatever the outgoing account is still owed, it is owed on that account and no
-        // other — a probe that dropped mid-flight left a magnet behind, and once this
-        // provider is gone nothing else holds the id to take it off again
-        if let Some((_, _, outgoing)) = replaced {
+        active.insert(0, (service.to_string(), api_key.to_string(), managed.clone()));
+        while active.len() > PROVIDER_SLOTS {
+            let (_, _, outgoing) = active.pop().expect("len checked");
+            // whatever the outgoing account is still owed, it is owed on that account and
+            // no other — a probe that dropped mid-flight left a magnet behind, and once
+            // this provider is gone nothing else holds the id to take it off again
             if outgoing.client().orphaned() > 0 {
                 tauri::async_runtime::spawn(async move { outgoing.provider().retry_cleanup().await });
             }

@@ -16,7 +16,7 @@
 //! most one check at a time, cap asking at 10 hashes, and read an unanswered hash as
 //! unknown rather than "not cached".
 
-use crate::client::{DebridClient, Dialect, RequestOpts};
+use crate::client::{DebridClient, Dialect, OrphanOnDrop, RequestOpts};
 use crate::error::DebridError;
 use crate::platform::Platform;
 use crate::window::window_files;
@@ -365,17 +365,21 @@ impl AllDebrid {
     /// real failure. A removal that fails is remembered by the client and retried before the
     /// next check adds anything, so a dropped link cannot leave a magnet on the account.
     async fn delete(&self, id: &str) {
-        self.client
-            .release(
-                &AllDebridDialect,
-                &format!("{V4}/magnet/delete"),
-                RequestOpts {
-                    method: Some(Method::Post),
-                    body: Some(vec![("id".to_string(), Value::String(id.to_string()))]),
-                    ..Default::default()
-                },
-            )
-            .await;
+        let (url, opts) = Self::delete_request(id);
+        self.client.release(&AllDebridDialect, &url, opts).await;
+    }
+
+    /// The request that removes a magnet from the account, as (url, opts) so it can be
+    /// sent now or armed on a drop guard.
+    fn delete_request(id: &str) -> (String, RequestOpts) {
+        (
+            format!("{V4}/magnet/delete"),
+            RequestOpts {
+                method: Some(Method::Post),
+                body: Some(vec![("id".to_string(), Value::String(id.to_string()))]),
+                ..Default::default()
+            },
+        )
     }
 
     /// The part of resolve that runs once a magnet is on the account, split out so the caller
@@ -519,9 +523,14 @@ impl DebridProvider for AllDebrid {
         let uploaded = self.upload(hashes).await?;
         let mut answers = HashMap::new();
         let mut ours = Vec::new();
+        // every magnet this call adds is removed again below; if the future is dropped
+        // before that loop runs, the guard owes each removal to the orphan list
+        let mut cleanup = OrphanOnDrop::unarmed(&self.client);
         for entry in &uploaded {
             if let Some(id) = id_string(entry.get("id")) {
                 if !existing.contains(&id) {
+                    let (url, opts) = Self::delete_request(&id);
+                    cleanup.arm(url, opts);
                     ours.push(id);
                 }
             }
@@ -545,6 +554,7 @@ impl DebridProvider for AllDebrid {
         for id in &ours {
             self.delete(id).await;
         }
+        cleanup.disarm();
         Ok(answers)
     }
 
@@ -581,7 +591,15 @@ impl DebridProvider for AllDebrid {
             code: None,
         })?;
         let added = !existing.contains(&id);
+        let mut cleanup = OrphanOnDrop::unarmed(&self.client);
+        if added {
+            let (url, opts) = Self::delete_request(&id);
+            cleanup.arm(url, opts);
+        }
         let resolved = self.resolve_ready(&uploaded, &id, &hash, opts).await;
+        // the future survived to a verdict: a success keeps its magnet, the error arm
+        // below deletes in person — either way the guard's removal is no longer owed
+        cleanup.disarm();
         // only clean up a magnet this call put on the account, never the user's own
         if resolved.is_err() && added {
             self.delete(&id).await;

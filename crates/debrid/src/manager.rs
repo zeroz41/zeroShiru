@@ -191,11 +191,20 @@ impl ManagedProvider {
         }
 
         // one at a time where asking adds magnets: services rate limit adding far
-        // harder than reading, so overlapping checks do not answer faster, they get refused
+        // harder than reading, so overlapping checks do not answer faster, they get refused.
+        // The claim is released by the guard's Drop rather than by code after the sweep —
+        // a Tauri command being cancelled drops this future wherever it is, and a flag
+        // that only reset on the happy path stayed true forever, after which every later
+        // check returned memory-only answers while the UI retried on its shortest timer
         let guarded = config.check_adds_magnets;
-        if guarded && self.sweeping.swap(true, Ordering::SeqCst) {
-            return Ok(answers);
-        }
+        let _sweep_claim = if guarded {
+            if self.sweeping.swap(true, Ordering::SeqCst) {
+                return Ok(answers);
+            }
+            Some(SweepClaim(&self.sweeping))
+        } else {
+            None
+        };
         // clear our own leftovers before adding more: a check that dropped mid-probe owes
         // the account a removal, and asking again would stack a second one on top of it
         if self.client().orphaned() > 0 {
@@ -218,9 +227,6 @@ impl ManagedProvider {
             }
             AvailabilityCheck::None => unreachable!(),
         };
-        if guarded {
-            self.sweeping.store(false, Ordering::SeqCst);
-        }
         result.map(|()| answers)
     }
 
@@ -324,24 +330,48 @@ impl ManagedProvider {
         if !self.in_flight.lock().unwrap().insert(hash.to_string()) {
             return Ok(None);
         }
-        let outcome = async {
-            let state = match self.provider.probe_availability(hash).await {
-                Ok(state) => state,
-                Err(error) => error.proven_availability().ok_or(error)?,
-            };
-            if state == Availability::Unknown {
-                return Err(DebridError::Service {
-                    message: format!("{} gave no usable answer for {hash}", self.provider.config().title),
-                    status: None,
-                    code: None,
-                });
-            }
-            self.client().remember(hash, state);
-            Ok(Some(state))
+        // released on Drop, not by code after the await: a dropped probe future used to
+        // leave its hash in the set forever, after which it could never be badged again
+        // and every resolve of it paid the full probe-handover wait
+        let _claim = InFlightClaim { set: &self.in_flight, hash };
+        let state = match self.provider.probe_availability(hash).await {
+            Ok(state) => state,
+            Err(error) => match error.proven_availability() {
+                Some(state) => state,
+                None => return Err(error),
+            },
+        };
+        if state == Availability::Unknown {
+            return Err(DebridError::Service {
+                message: format!("{} gave no usable answer for {hash}", self.provider.config().title),
+                status: None,
+                code: None,
+            });
         }
-        .await;
-        self.in_flight.lock().unwrap().remove(hash);
-        outcome
+        self.client().remember(hash, state);
+        Ok(Some(state))
+    }
+}
+
+/// Resets the sweep flag when the sweep ends, however it ends — including the future
+/// being dropped mid-flight.
+struct SweepClaim<'a>(&'a AtomicBool);
+
+impl Drop for SweepClaim<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Takes a hash back out of the in-flight set when its probe ends, however it ends.
+struct InFlightClaim<'a> {
+    set: &'a Mutex<std::collections::HashSet<String>>,
+    hash: &'a str,
+}
+
+impl Drop for InFlightClaim<'_> {
+    fn drop(&mut self) {
+        self.set.lock().unwrap().remove(self.hash);
     }
 }
 
@@ -404,6 +434,42 @@ mod tests {
         let second = managed.check_availability(&asked, |_, _| {}).await.unwrap();
         assert_eq!(second, first);
         assert!(managed.unknown_hashes(&asked).is_empty());
+    }
+
+    /// The wedge this pins: a Tauri command being cancelled (webview reload, window
+    /// close) drops the check's future wherever it is. The sweep claim and the in-flight
+    /// hashes are released by Drop guards now — before that, the flag stayed true
+    /// forever, every later check returned memory-only answers with `busy: true`, and the
+    /// UI retried on its shortest timer without the service ever being asked again.
+    #[tokio::test]
+    async fn a_dropped_sweep_releases_its_claim_and_its_hashes() {
+        let transport = Arc::new(Silent);
+        let platform = Arc::new(ManualClock::new());
+        let managed =
+            ManagedProvider::new(create_provider("realdebrid", "key".into(), transport, platform).unwrap());
+        let asked = vec![HASHES[0].to_string()];
+        {
+            let sweep = managed.check_availability(&asked, |_, _| {});
+            futures::pin_mut!(sweep);
+            for _ in 0..20 {
+                assert!(
+                    futures::poll!(sweep.as_mut()).is_pending(),
+                    "a silent service cannot have answered"
+                );
+                tokio::task::yield_now().await;
+            }
+            assert!(managed.sweeping(), "the sweep owns the account while it runs");
+            assert!(
+                managed.unknown_hashes(&asked).is_empty(),
+                "the hash is in flight, so nothing should re-ask about it yet"
+            );
+        }
+        assert!(!managed.sweeping(), "a dropped sweep must hand the account back");
+        assert_eq!(
+            managed.unknown_hashes(&asked).len(),
+            1,
+            "a dropped probe leaves its hash unknown and re-checkable, not stuck in flight"
+        );
     }
 
     #[tokio::test]

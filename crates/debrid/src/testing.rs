@@ -15,6 +15,9 @@ pub enum Outcome {
     Network(String),
     /// The request outlived its budget. Says nothing about the release.
     Timeout(u64),
+    /// The request never completes — the connection is accepted and nothing comes back,
+    /// and no budget fires. For tests that drop a future mid-flight at a known request.
+    Pending,
 }
 
 /// One scripted exchange: a URL substring to match and what to answer with.
@@ -39,6 +42,12 @@ impl Route {
     /// A route that outlives its budget.
     pub fn timeout(matches: &'static str, after_ms: u64) -> Route {
         Route { matches, outcome: Outcome::Timeout(after_ms) }
+    }
+
+    /// A route that never answers and never times out, so a test can park a future at
+    /// exactly this request and drop it there.
+    pub fn pending(matches: &'static str) -> Route {
+        Route { matches, outcome: Outcome::Pending }
     }
 
     pub fn with_headers(mut self, headers: Vec<(&'static str, &'static str)>) -> Route {
@@ -89,21 +98,28 @@ impl HttpTransport for MockTransport {
         if let Some((clock, latency)) = self.link.lock().unwrap().as_ref() {
             clock.advance(*latency);
         }
-        let routes = self.routes.lock().unwrap();
-        let route = routes
-            .iter()
-            .find(|route| url.contains(route.matches))
-            .ok_or_else(|| TransportError::Network(format!("no scripted answer for {url}")))?;
-        match &route.outcome {
-            Outcome::Answer { status, body, headers } => {
-                let headers: HashMap<String, String> = headers
-                    .iter()
-                    .map(|(name, value)| (name.to_string(), value.to_string()))
-                    .collect();
-                Ok(HttpResponse { status: *status, headers, body: body.clone().into_bytes() })
+        let result = {
+            let routes = self.routes.lock().unwrap();
+            let route = routes
+                .iter()
+                .find(|route| url.contains(route.matches))
+                .ok_or_else(|| TransportError::Network(format!("no scripted answer for {url}")))?;
+            match &route.outcome {
+                Outcome::Answer { status, body, headers } => {
+                    let headers: HashMap<String, String> = headers
+                        .iter()
+                        .map(|(name, value)| (name.to_string(), value.to_string()))
+                        .collect();
+                    Some(Ok(HttpResponse { status: *status, headers, body: body.clone().into_bytes() }))
+                }
+                Outcome::Network(message) => Some(Err(TransportError::Network(message.clone()))),
+                Outcome::Timeout(ms) => Some(Err(TransportError::Timeout(*ms))),
+                Outcome::Pending => None,
             }
-            Outcome::Network(message) => Err(TransportError::Network(message.clone())),
-            Outcome::Timeout(ms) => Err(TransportError::Timeout(*ms)),
+        };
+        match result {
+            Some(result) => result,
+            None => futures::future::pending().await,
         }
     }
 }

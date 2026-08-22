@@ -28,6 +28,24 @@ const RATE_LIMIT_RETRIES: u32 = 2;
 /// How long to wait out a `429` that arrived without a `retry-after` header.
 const RATE_LIMIT_FALLBACK_MS: u64 = 5_000;
 
+/// How long one unanswered round trip keeps the whole account treated as quiet.
+///
+/// TorBox wedges per endpoint: connections are accepted and never answered, for minutes,
+/// while `curl` proves the server itself is up (2026-08-19 and again 2026-08-22 in the
+/// user's own log). A resolve is a chain of round trips, and paying the full request
+/// budget for every link in the chain against a service that just proved it is not
+/// answering turned one play click into 30-60 seconds of spinner before the fallback
+/// could even be offered. One full-budget timeout has already been paid — that is the
+/// evidence — so while it is fresh, later requests only probe whether the service came
+/// back, and the first answer of any kind clears the state instantly.
+const QUIET_COOLDOWN_MS: u64 = 30_000;
+
+/// The round-trip budget while the service is quiet. Not a verdict on the service — the
+/// verdict was the full-budget timeout that installed the quiet state — just how long a
+/// "did it come back yet" question is worth. Stretched by the measured link latency like
+/// every other budget, so a slow connection is not mistaken for a quiet service.
+const QUIET_PROBE_MS: u64 = 3_000;
+
 /// The longest `retry-after` worth obeying. TorBox has answered a link-request burst
 /// with `retry-after: 300`, and honouring it froze every request on the account —
 /// playback included — for five minutes. Past this, failing fast beats waiting: the
@@ -93,6 +111,10 @@ pub struct DebridClient {
     platform: Arc<dyn Platform>,
     /// Rolling estimate of one round trip, 0 until the first answer.
     latency: AtomicU64,
+    /// Round trips in a row that never came back, and when the last one gave up.
+    /// Together they say whether the service is quiet right now; see QUIET_COOLDOWN_MS.
+    quiet_timeouts: AtomicU64,
+    quiet_at: AtomicU64,
     /// What the service has already said about a hash, with when it said it.
     availability: Mutex<HashMap<String, (Availability, u64)>>,
     /// The real release name behind a hash, as the service knows it.
@@ -128,6 +150,8 @@ impl DebridClient {
             transport,
             platform,
             latency: AtomicU64::new(0),
+            quiet_timeouts: AtomicU64::new(0),
+            quiet_at: AtomicU64::new(0),
             availability: Mutex::new(HashMap::new()),
             release_names: Mutex::new(HashMap::new()),
             orphans: Mutex::new(HashMap::new()),
@@ -198,6 +222,11 @@ impl DebridClient {
         }
         let mut rate_limited = 0;
         let mut timed_out = 0;
+        // whether the service was already known-quiet before this call spent anything.
+        // If so, a timeout here is confirmation rather than news, and the one-more-ask
+        // retry below is skipped — it is what turned a wedged service into a chain of
+        // full-budget waits, one per round trip of a resolve
+        let quiet_at_entry = self.quiet();
         loop {
             // the permit lives exactly as long as the round trip, so a request that
             // failed hands its place back before anything waits on the retry
@@ -221,7 +250,7 @@ impl DebridClient {
                 rate_limited += 1;
                 continue;
             }
-            if matches!(error, DebridError::Timeout { .. }) && timed_out < 1 {
+            if matches!(error, DebridError::Timeout { .. }) && timed_out < 1 && !quiet_at_entry {
                 self.platform.sleep(NETWORK_RETRY_DELAY_MS).await;
                 timed_out += 1;
                 continue;
@@ -247,7 +276,12 @@ impl DebridClient {
             .body
             .as_ref()
             .map(|fields| Self::encode_body(fields, opts.encoding.unwrap_or(self.config.encoding)));
-        let timeout_ms = opts.timeout_ms.unwrap_or(self.config.timeouts.request);
+        let mut timeout_ms = opts.timeout_ms.unwrap_or(self.config.timeouts.request);
+        // while the service is quiet the full budget has already been paid once; this
+        // round trip only asks whether it came back
+        if self.quiet() {
+            timeout_ms = timeout_ms.min(self.budget(QUIET_PROBE_MS));
+        }
         let request = HttpRequest {
             method: opts.method.unwrap_or(Method::Get),
             url: authorized_url,
@@ -262,6 +296,9 @@ impl DebridClient {
             .await
             .map_err(|error| match error {
                 shiru_networking::TransportError::Timeout(ms) => {
+                    // an unanswered round trip is the evidence the quiet state runs on
+                    self.quiet_timeouts.fetch_add(1, Ordering::Relaxed);
+                    self.quiet_at.store(self.platform.now_ms(), Ordering::Relaxed);
                     DebridError::Timeout { message: format!("request timed out after {ms}ms") }
                 }
                 shiru_networking::TransportError::Network(message) => DebridError::Network { message },
@@ -269,6 +306,8 @@ impl DebridClient {
             .map_err(|error| (error, None))?;
         // only round trips that came back, so a timeout cannot inflate it
         self.observe_latency(self.platform.now_ms().saturating_sub(sent));
+        // any answer at all — even an error status — is the service talking again
+        self.quiet_timeouts.store(0, Ordering::Relaxed);
         self.finish(dialect, response)
     }
 
@@ -386,6 +425,22 @@ impl DebridClient {
         self.orphans.lock().unwrap().len()
     }
 
+    /// Whether the service is quiet right now: a round trip recently spent its whole
+    /// budget without an answer, and nothing has answered since. Requests made in this
+    /// state are short probes rather than full-budget waits.
+    pub fn quiet(&self) -> bool {
+        self.quiet_timeouts.load(Ordering::Relaxed) > 0
+            && self.platform.now_ms().saturating_sub(self.quiet_at.load(Ordering::Relaxed)) < QUIET_COOLDOWN_MS
+    }
+
+    /// Records a removal the account is owed without sending it, for cleanup paths that
+    /// cannot make a request — a future dropped mid-resolve has only its `Drop` to speak
+    /// from. The next `retry_cleanup` sends it like any other outstanding removal.
+    pub fn note_orphan(&self, url: String, opts: RequestOpts) {
+        let key = Self::request_key(&url, &opts);
+        self.orphans.lock().unwrap().insert(key, (url, opts, 0));
+    }
+
     /// Retries removals that failed earlier. Only ever replays a removal `release` was
     /// already asked to make, so it can no more reach a torrent the user wanted than the
     /// original call could. Never persisted: a stale id would eventually name something else.
@@ -477,6 +532,47 @@ impl DebridClient {
             }
         }
         hashes
+    }
+}
+
+/// Arms a removal that fires only if the surrounding future dies without disarming it.
+///
+/// A Tauri command being cancelled, a webview reload, the resolve budget expiring — all
+/// of them drop the provider's future wherever it happens to be awaiting. A future
+/// dropped between "magnet added to the account" and "cleanup ran" used to leave that
+/// torrent on the account with nothing tracking it. This guard is created the moment an
+/// add succeeds and disarmed on every path that takes responsibility another way; if it
+/// drops still armed, the removal lands in the client's orphan list, which the next
+/// sweep retries before adding anything new.
+pub struct OrphanOnDrop<'a> {
+    client: &'a DebridClient,
+    requests: Vec<(String, RequestOpts)>,
+}
+
+impl<'a> OrphanOnDrop<'a> {
+    pub fn unarmed(client: &'a DebridClient) -> Self {
+        OrphanOnDrop { client, requests: Vec::new() }
+    }
+
+    /// Arms the guard with a request that would undo something just created. A guard can
+    /// owe several removals at once — a batch check uploads a whole list of magnets.
+    pub fn arm(&mut self, url: String, opts: RequestOpts) {
+        self.requests.push((url, opts));
+    }
+
+    /// Stands the guard down: the caller is taking responsibility for cleanup itself,
+    /// or the created thing is meant to outlive the call (a successful resolve).
+    pub fn disarm(&mut self) {
+        self.requests.clear();
+    }
+}
+
+impl Drop for OrphanOnDrop<'_> {
+    fn drop(&mut self) {
+        for (url, opts) in self.requests.drain(..) {
+            tracing::debug!(target: "debrid", service = self.client.config.id, "a dropped call left a torrent behind; its removal is now owed");
+            self.client.note_orphan(url, opts);
+        }
     }
 }
 
@@ -584,6 +680,105 @@ mod connection {
     }
 
     const READY: u64 = 5_000; // Timeouts::default().ready
+
+    /// A client on a scripted transport with a hand-advanced clock, both shared back.
+    fn wired() -> (DebridClient, Arc<MockTransport>, Arc<ManualClock>) {
+        let transport = Arc::new(MockTransport::new(vec![]));
+        let clock = Arc::new(ManualClock::new());
+        let config = crate::ProviderConfig {
+            id: "test",
+            title: "Test",
+            auth: AuthScheme::Bearer,
+            auth_param: "apikey",
+            encoding: BodyEncoding::Form,
+            timeouts: Timeouts::default(),
+            nominal_latency: 300,
+            max_files: 60,
+            availability_check: crate::AvailabilityCheck::None,
+            check_adds_magnets: false,
+            max_batch: 100,
+            max_probes: 10,
+            max_concurrent: 4,
+            min_time_ms: 250,
+            reservoir: None,
+        };
+        let client = DebridClient::new(config, "key".into(), transport.clone(), clock.clone());
+        (client, transport, clock)
+    }
+
+    /// The timeout each recorded request went out with, in order.
+    fn sent_budgets(transport: &MockTransport) -> Vec<u64> {
+        transport.requests.lock().unwrap().iter().map(|request| request.timeout_ms).collect()
+    }
+
+    // --- the quiet state: what one unanswered round trip is allowed to cost the next ---
+    //
+    // TorBox wedges per endpoint — connections accepted, nothing answered — and a resolve
+    // is a chain of round trips. In the user's log (2026-08-22) one play click spent
+    // 30-60s of spinner paying the full budget for every link of that chain against a
+    // service that had already proven it was not answering.
+
+    #[tokio::test]
+    async fn a_full_budget_timeout_makes_later_requests_probes_rather_than_waits() {
+        let (client, transport, _) = wired();
+        transport.rescript(vec![Route::timeout("wedged", 30_000)]);
+        let error = client.request(&PlainDialect, "https://api/wedged", RequestOpts::default()).await.unwrap_err();
+        assert!(matches!(error, DebridError::Timeout { .. }));
+        let budgets = sent_budgets(&transport);
+        assert_eq!(budgets.len(), 2, "the first offender still gets its one more ask");
+        assert_eq!(budgets[0], 30_000, "the first ask pays the full budget — that is the evidence");
+        assert_eq!(budgets[1], 3_000, "the retry only probes whether the service came back");
+
+        // the service is now known quiet: a different request gets one probe, no retry
+        let error = client.request(&PlainDialect, "https://api/wedged", RequestOpts::default()).await.unwrap_err();
+        assert!(matches!(error, DebridError::Timeout { .. }));
+        let budgets = sent_budgets(&transport);
+        assert_eq!(budgets.len(), 3, "confirming a known-quiet service is one request, not a full-budget chain");
+        assert_eq!(budgets[2], 3_000);
+    }
+
+    #[tokio::test]
+    async fn an_answer_of_any_kind_ends_the_quiet_state() {
+        let (client, transport, _) = wired();
+        transport.rescript(vec![
+            Route::timeout("wedged", 30_000),
+            Route::json("healthy", 500, r#"{"error":"the disk fell over"}"#),
+        ]);
+        client.request(&PlainDialect, "https://api/wedged", RequestOpts::default()).await.unwrap_err();
+        assert!(client.quiet());
+        // a 500 is a bad answer, but it is an answer: the service is talking again
+        client.request(&PlainDialect, "https://api/healthy", RequestOpts::default()).await.unwrap_err();
+        assert!(!client.quiet());
+        client.request(&PlainDialect, "https://api/wedged", RequestOpts::default()).await.unwrap_err();
+        let budgets = sent_budgets(&transport);
+        assert_eq!(
+            &budgets[3..],
+            &[30_000, 3_000],
+            "after an answer, the next timeout is news again and gets the full treatment"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_quiet_state_expires_when_the_evidence_goes_stale() {
+        let (client, transport, clock) = wired();
+        transport.rescript(vec![Route::timeout("wedged", 30_000)]);
+        client.request(&PlainDialect, "https://api/wedged", RequestOpts::default()).await.unwrap_err();
+        assert!(client.quiet());
+        clock.advance(31_000);
+        assert!(!client.quiet(), "a timeout half a minute ago says nothing about the service now");
+    }
+
+    #[tokio::test]
+    async fn a_slow_link_stretches_the_quiet_probe_like_every_other_budget() {
+        let (client, transport, _) = wired();
+        for _ in 0..20 {
+            client.observe_latency(900); // three times what the defaults assume
+        }
+        transport.rescript(vec![Route::timeout("wedged", 30_000)]);
+        client.request(&PlainDialect, "https://api/wedged", RequestOpts::default()).await.unwrap_err();
+        let budgets = sent_budgets(&transport);
+        assert_eq!(budgets[1], 9_000, "a slow connection must not be mistaken for a quiet service");
+    }
 
     #[test]
     fn a_healthy_link_gets_the_time_limits_as_written() {

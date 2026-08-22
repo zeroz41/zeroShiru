@@ -7,7 +7,7 @@
 //! inside a 200, and `/torrents/requestdl` authenticates with a `token` query parameter
 //! rather than a bearer header.
 
-use crate::client::{DebridClient, Dialect, RequestOpts};
+use crate::client::{DebridClient, Dialect, OrphanOnDrop, RequestOpts};
 use crate::error::DebridError;
 use crate::platform::Platform;
 use crate::window::window_files;
@@ -405,25 +405,29 @@ impl TorBox {
         Ok(files)
     }
 
+    /// The request that removes a torrent from the account, as (url, opts) so it can be
+    /// sent now, remembered for later, or armed on a drop guard.
+    fn delete_request(id: &Value) -> (String, RequestOpts) {
+        (
+            format!("{API}/torrents/controltorrent"),
+            RequestOpts {
+                method: Some(Method::Post),
+                encoding: Some(BodyEncoding::Json),
+                body: Some(vec![
+                    ("torrent_id".into(), id.clone()),
+                    ("operation".into(), Value::String("delete".into())),
+                ]),
+                ..RequestOpts::default()
+            },
+        )
+    }
+
     /// Best-effort removal of a torrent this call created, never surfacing its own failure.
     /// A removal that fails is remembered by the client and retried before the next check
     /// adds anything, so a dropped link cannot leave a torrent on the account.
     async fn delete(&self, id: &Value) {
-        self.client
-            .release(
-                &TorBoxDialect,
-                &format!("{API}/torrents/controltorrent"),
-                RequestOpts {
-                    method: Some(Method::Post),
-                    encoding: Some(BodyEncoding::Json),
-                    body: Some(vec![
-                        ("torrent_id".into(), id.clone()),
-                        ("operation".into(), Value::String("delete".into())),
-                    ]),
-                    ..RequestOpts::default()
-                },
-            )
-            .await;
+        let (url, opts) = Self::delete_request(id);
+        self.client.release(&TorBoxDialect, &url, opts).await;
     }
 
     /// The resolve body; `resolve` wraps it so a failure after adding still cleans up.
@@ -433,6 +437,7 @@ impl TorBox {
         magnet_uri: &str,
         torrent: &mut Option<Value>,
         added: &mut bool,
+        cleanup: &mut OrphanOnDrop<'_>,
         opts: &ResolveOptions,
     ) -> Result<DebridResolved, DebridError> {
         if torrent.is_none() {
@@ -448,6 +453,14 @@ impl TorBox {
                 }
             }
             let (found, was_added) = self.add(magnet_uri, hash).await?;
+            // from here to the caller disarming it, this future dying leaves a torrent
+            // this call created on the account — the guard owes its removal for us
+            if was_added {
+                if let Some(id) = found.get("id").filter(|id| !id.is_null()) {
+                    let (url, opts) = Self::delete_request(id);
+                    cleanup.arm(url, opts);
+                }
+            }
             *torrent = Some(found);
             *added = was_added;
         }
@@ -644,7 +657,11 @@ impl DebridProvider for TorBox {
         let magnet_uri = to_magnet(magnet).expect("parse_hash found a hash");
         let mut torrent = self.existing_torrent(&hash).await?;
         let mut added = false;
-        let result = self.resolve_inner(&hash, &magnet_uri, &mut torrent, &mut added, opts).await;
+        let mut cleanup = OrphanOnDrop::unarmed(&self.client);
+        let result = self.resolve_inner(&hash, &magnet_uri, &mut torrent, &mut added, &mut cleanup, opts).await;
+        // the future survived to a verdict: a success keeps its torrent, and the failure
+        // arm below deletes in person — either way the guard's removal is no longer owed
+        cleanup.disarm();
         if result.is_err() && added {
             // only clean up a torrent this call put on the account, never the user's own
             if let Some(id) = torrent.as_ref().and_then(|entry| entry.get("id")).filter(|id| !id.is_null()) {
@@ -929,6 +946,52 @@ mod tests {
     }
 
     // --- resolve ---
+
+    /// The leak this pins: the manager's resolve budget expiring drops the provider's
+    /// future wherever it is. Dropped between "magnet added" and any cleanup, the torrent
+    /// used to stay on the account with nothing tracking it — the explicit cleanup arm
+    /// never ran and `release` was never called, so the orphan list knew nothing either.
+    #[tokio::test]
+    async fn a_resolve_dropped_after_adding_still_owes_the_removal() {
+        let (torbox, transport) = service(vec![
+            Route::json("checkcached", 200, &ok(json!([{ "hash": HASH, "name": "Test Torrent" }]))),
+            Route::json("createtorrent", 200, &ok(json!({ "torrent_id": 42 }))),
+            // polling the freshly added torrent sees it; the plain listing beforehand does
+            // not, so the resolve takes the add path rather than reusing an account entry
+            Route::json("bypass_cache", 200, &ok(json!([torrent(json!({}))]))),
+            Route::json("mylist", 200, &ok(json!([]))),
+            // the link request is where TorBox has been seen going silent mid-resolve
+            Route::pending("requestdl"),
+        ]);
+        let opts = video_filter();
+        {
+            let work = torbox.resolve(MAGNET, &opts);
+            futures::pin_mut!(work);
+            let mut reached = false;
+            for _ in 0..50 {
+                assert!(futures::poll!(work.as_mut()).is_pending(), "the link request never answers");
+                tokio::task::yield_now().await;
+                if transport.urls().iter().any(|url| url.contains("requestdl")) {
+                    reached = true;
+                    break;
+                }
+            }
+            assert!(reached, "the resolve must get as far as requesting links before it is dropped");
+        }
+        assert_eq!(torbox.client.orphaned(), 1, "the dropped resolve owes the account one removal");
+
+        // the next sweep pays the debt before adding anything new
+        transport.rescript(vec![Route::json("controltorrent", 200, &ok(json!(null)))]);
+        torbox.retry_cleanup().await;
+        assert_eq!(torbox.client.orphaned(), 0);
+        let removals: Vec<String> = transport
+            .urls()
+            .iter()
+            .filter(|url| url.contains("controltorrent"))
+            .cloned()
+            .collect();
+        assert_eq!(removals.len(), 1, "exactly the torrent this resolve created is removed");
+    }
 
     #[tokio::test]
     async fn resolve_streams_a_torrent_the_account_already_holds_without_adding_it_again() {

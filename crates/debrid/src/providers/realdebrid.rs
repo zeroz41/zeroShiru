@@ -9,7 +9,7 @@
 //! - Selecting multiple files can serve one RAR archive instead of individual links, so when
 //!   that happens the torrent is re-added selecting only the target file.
 
-use crate::client::{DebridClient, Dialect, RequestOpts};
+use crate::client::{DebridClient, Dialect, OrphanOnDrop, RequestOpts};
 use crate::error::DebridError;
 use crate::platform::Platform;
 use crate::window::window_files;
@@ -241,9 +241,17 @@ impl RealDebrid {
     /// client and retried before the next check adds anything — the likeliest cause is the
     /// link dropping mid-probe, and a magnet left behind is the one trace a check can leave.
     async fn release(&self, torrent_id: &str) {
-        let url = format!("{API}/torrents/delete/{torrent_id}");
-        let opts = RequestOpts { method: Some(Method::Delete), ..Default::default() };
+        let (url, opts) = Self::delete_request(torrent_id);
         self.client.release(&RdDialect, &url, opts).await;
+    }
+
+    /// The request that removes a torrent from the account, as (url, opts) so it can be
+    /// sent now or armed on a drop guard.
+    fn delete_request(torrent_id: &str) -> (String, RequestOpts) {
+        (
+            format!("{API}/torrents/delete/{torrent_id}"),
+            RequestOpts { method: Some(Method::Delete), ..Default::default() },
+        )
     }
 
     /// The account's torrent listing, the whole account in one request, read at most
@@ -468,6 +476,7 @@ impl RealDebrid {
         magnet: &str,
         opts: &ResolveOptions,
         added: &mut Option<String>,
+        cleanup: &mut OrphanOnDrop<'_>,
     ) -> Result<DebridResolved, DebridError> {
         let hash = parse_hash(magnet);
         let magnet_uri = to_magnet(magnet).ok_or_else(|| DebridError::Service {
@@ -501,6 +510,8 @@ impl RealDebrid {
             Some(torrent) => (torrent.id.clone(), Some(torrent)),
             None => {
                 let id = self.add_and_select(&magnet_uri, Some(filter), None, None).await?;
+                let (url, opts) = Self::delete_request(&id);
+                cleanup.arm(url, opts);
                 *added = Some(id.clone());
                 (id, None)
             }
@@ -541,6 +552,8 @@ impl RealDebrid {
                     self.release(&torrent_id).await;
                 }
                 torrent_id = retry_id;
+                let (url, opts) = Self::delete_request(&torrent_id);
+                cleanup.arm(url, opts);
                 *added = Some(torrent_id.clone());
                 let ready = self.client.budget(self.client.config.timeouts.ready);
                 info = self.await_status(&torrent_id, "downloaded", ready, None).await?;
@@ -637,17 +650,28 @@ impl DebridProvider for RealDebrid {
         let torrent_id = self
             .add_and_select(&magnet_uri, Some(&(|_: &str| true)), None, Some(PROBE_CONVERSION_READS))
             .await?;
+        // a probe's torrent must never outlive the probe: if this future is dropped
+        // before the removal below has run, the guard owes it to the orphan list
+        let mut cleanup = OrphanOnDrop::unarmed(&self.client);
+        let (url, opts) = Self::delete_request(&torrent_id);
+        cleanup.arm(url, opts);
         let budget = self.client.budget(self.client.config.timeouts.probe);
         let result = self.await_status(&torrent_id, "downloaded", budget, None).await;
         // awaited, so the account is as we found it by the time this answers. Playback and
         // teardown both wait on it, so neither can trip over a half-finished probe
         self.release(&torrent_id).await;
+        cleanup.disarm();
         result.map(|_| Availability::Cached)
     }
 
     async fn resolve(&self, magnet: &str, opts: &ResolveOptions) -> Result<DebridResolved, DebridError> {
         let mut added: Option<String> = None;
-        match self.resolve_inner(magnet, opts, &mut added).await {
+        let mut cleanup = OrphanOnDrop::unarmed(&self.client);
+        let result = self.resolve_inner(magnet, opts, &mut added, &mut cleanup).await;
+        // the future survived to a verdict: a success keeps its torrent, the error arm
+        // below deletes in person — either way the guard's removal is no longer owed
+        cleanup.disarm();
+        match result {
             Ok(resolved) => Ok(resolved),
             Err(error) => {
                 // only clean up torrents this call added, never the user's own downloads
