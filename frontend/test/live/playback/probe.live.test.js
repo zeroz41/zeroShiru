@@ -1,8 +1,9 @@
 // Live proof of the three CDN facts the dead-link recovery is built on. Each was verified
 // by hand against TorBox on 2026-08-21; these keep them true, because if TorBox changes
 // any of them the recovery ladder changes meaning:
-//   1. a healthy link answers a 2-byte range probe fast — that is what makes probing every
-//      play affordable, and what makes a silent link a verdict rather than slowness;
+//   1. a healthy link streams the probe's proof chunk fast, under the same open-ended
+//      range the player sends — that is what makes probing every play affordable, and
+//      what makes a silent link a verdict rather than slowness;
 //   2. the CDN accepts an unknown query parameter — the stall watchdog re-opens a stream
 //      under a busted URL, and if the CDN started 400ing those the re-open would break;
 //   3. requestdl pins one URL per (torrent, file) — the reason a dead link is routed
@@ -39,11 +40,31 @@ afterAll(async () => {
   for (const [id] of [...after_].filter(([id]) => !before_.has(id))) await deleteTorrent(id)
 })
 
-test.skipIf(Boolean(skip))('a healthy link answers the 2-byte probe, so probing every play costs nothing', async () => {
+test.skipIf(Boolean(skip))('a healthy link streams the probe fast, so probing every play costs nothing', async () => {
   const verdict = await verifiedStream(video.url)
   assert.equal(verdict.alive, true, `the probe called a live link dead: ${verdict.reason}`)
   assert.equal(verdict.attempts, 1, 'a healthy link must not pay for the retry machinery')
   console.log(`  probe answered in ${verdict.elapsed}ms`)
+}, 120_000)
+
+test.skipIf(Boolean(skip))('a probe beside an open stream starves neither — what makes probing a preroll safe', async () => {
+  // The stall watchdog probes the link WHILE the player holds its own open-ended request
+  // (a starting load that shows no progress for 15s). Measured 2026-08-21: a node serves
+  // three concurrent open-ended requests on one link in under 400ms each. If TorBox ever
+  // starts serializing connections per link, this fails — and the watchdog's probe would
+  // be starving the player it is trying to diagnose, so the plan must change with it.
+  const held = new AbortController()
+  const stream = await fetch(video.url, { headers: { Range: 'bytes=0-' }, signal: held.signal })
+  const reader = stream.body.getReader()
+  const first = await reader.read() // the held stream is genuinely delivering, like the player's
+  assert.equal(first.done, false)
+  try {
+    const probe = await probeStream(video.url, { timeoutMs: 8_000 })
+    assert.equal(probe.alive, true, `a probe beside an open stream starved (${probe.reason}); the watchdog would misread every slow preroll as dead`)
+  } finally {
+    reader.cancel().catch(() => {})
+    held.abort()
+  }
 }, 120_000)
 
 test.skipIf(Boolean(skip))('the CDN accepts the cache-busting parameter a stalled re-open goes out under', async () => {

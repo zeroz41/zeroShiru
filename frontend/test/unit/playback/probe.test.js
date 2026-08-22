@@ -5,7 +5,29 @@
 // nothing knew that re-resolving returns the identical pinned URL.
 import { test } from 'bun:test'
 import assert from 'node:assert/strict'
-import { probeTarget, probeStream, verifiedStream, bustedUrl } from '../../../common/modules/playback/probe.js'
+import { probeTarget, probeStream, verifiedStream, bustedUrl, PROBE_BYTES } from '../../../common/modules/playback/probe.js'
+
+/** A response whose body streams the given chunks, or never yields when given none. */
+function streamingResponse (chunks, { status = 206, signal } = {}) {
+  let index = 0
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    body: {
+      getReader: () => ({
+        read () {
+          if (index < chunks.length) return Promise.resolve({ done: false, value: new Uint8Array(chunks[index++]) })
+          if (chunks.ended) return Promise.resolve({ done: true, value: undefined })
+          // a sick node: the connection stays open and nothing ever arrives
+          return new Promise((resolve, reject) => {
+            signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+          })
+        },
+        cancel: () => Promise.resolve()
+      })
+    }
+  }
+}
 
 const FILES = [
   { path: '/Pack/Episode 001.mkv', url: 'https://nexus-143.cdn/dld/aa?token=t' },
@@ -31,17 +53,43 @@ test('a re-opened stream goes out under a URL the far end has never seen', () =>
   assert.equal(bustedUrl(null, 3), '')
 })
 
-test('a 2xx within the deadline is a live link, asked for as little as possible', async () => {
+test('a link is alive only once its body actually streams the probe chunk', async () => {
   let asked = null
   const fetcher = async (url, options) => {
     asked = { url, options }
-    return { ok: true, status: 206 }
+    return streamingResponse([65536, 65536, 65536, 65536], { signal: options.signal })
   }
   const verdict = await probeStream('https://cdn/a.mkv', { fetcher })
   assert.equal(verdict.alive, true)
   assert.equal(verdict.status, 206)
-  assert.equal(asked.options.headers.Range, 'bytes=0-1', 'two bytes prove everything worth proving')
+  assert.equal(verdict.received, PROBE_BYTES)
+  assert.equal(asked.options.headers.Range, 'bytes=0-', 'the player asks open-ended: sick nodes serve bounded ranges instantly while starving exactly this request, so any other question blesses dead links')
   assert.equal(asked.options.cache, 'no-store', 'a cached answer would prove nothing about the host')
+  assert.equal(asked.options.signal.aborted, true, 'an open-ended request must be torn down once the mark is proven, never left draining the file')
+})
+
+test('headers with a body that never arrives is a dead link — the mode that fooled the 2-byte probe', async () => {
+  // watched live in gst logs: 206 with full headers in 480ms, then not one byte of body
+  const fetcher = async (url, { signal }) => streamingResponse([], { signal })
+  const verdict = await probeStream('https://cdn/a.mkv', { fetcher, timeoutMs: 40 })
+  assert.equal(verdict.alive, false)
+  assert.match(verdict.reason, /did not answer|no data/)
+})
+
+test('a body that starts and then starves is dead, and says how far it got', async () => {
+  const fetcher = async (url, { signal }) => streamingResponse([1024], { signal })
+  const verdict = await probeStream('https://cdn/a.mkv', { fetcher, timeoutMs: 40 })
+  assert.equal(verdict.alive, false)
+  assert.match(verdict.reason, /stopped after 1024 bytes/)
+})
+
+test('a body shorter than the probe that properly ENDS is delivery, not starvation', async () => {
+  // tiny files answer short ranges; only silence is a verdict against the host
+  const chunks = [512]
+  chunks.ended = true
+  const verdict = await probeStream('https://cdn/tiny.bin', { fetcher: async (url, { signal }) => streamingResponse(chunks, { signal }) })
+  assert.equal(verdict.alive, true)
+  assert.equal(verdict.received, 512)
 })
 
 test('an error status is a dead link with a name', async () => {

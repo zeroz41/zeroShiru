@@ -4,8 +4,11 @@
   import { showsSpinner, BUFFER_RECHECK_MS } from '@/modules/playback/buffering.js'
   import { createStartupTimer } from '@/modules/playback/first-frame.js'
   import { mediaErrorReport, stillFailing, CONFIRM_MS } from '@/modules/playback/errors.js'
-  import { watchesForStall, loadProgressMark, advanceStall, reloadPlan, STALL_PATIENCE_MS } from '@/modules/playback/stall.js'
+  import { watchesForStall, loadProgressMark, advanceStall, reloadPlan, STALL_PATIENCE_MS, STALL_RELOADS, START_RELOADS } from '@/modules/playback/stall.js'
   import { probeStream, bustedUrl } from '@/modules/playback/probe.js'
+  import { idleState, showsLoadingArt, loadingArt } from '@/modules/playback/loading-screen.js'
+  import { helpersMayStart } from '@/modules/playback/quiet-start.js'
+  import SmartImage from '@/components/visual/SmartImage.svelte'
   import { savesProgress } from '@/modules/playback/resume.js'
   import { episodePrompt, EPISODE_PROMPT_DEADLINE } from '@/modules/playback/prompts.js'
   import { withDeadline } from '@/modules/lib/deadline.js'
@@ -88,6 +91,9 @@
   // true from the moment playback is routed to debrid, not just once its files have resolved,
   // so the player never shows torrent peers and speeds during the seconds a resolve takes
   $: isDebrid = current?.debrid || $debridPlayback
+  /** The art shown between choosing an episode and its first frame; null renders the plain
+   * spinner (a raw magnet play has no described media). See playback/loading-screen.js */
+  $: loadingCover = showsLoadingArt({ current, canPlay, externalPlayback }) ? loadingArt(media, value => anilistClient.title(value)) : null
   // the player shows the service name in place of peers and speeds, which debrid streams have none of
   $: debridTitle = `Streaming from ${$debridTransport?.title ?? 'your debrid service'}, no torrent peers involved`
   let duration = 0.1
@@ -236,9 +242,13 @@
 
   function handleHeaders () {
     subHeaders = subs?.headers
+    // the metadata parser starts at canplay now (see quiet-start.js), so on debrid the
+    // track list lands AFTER the loadedmetadata pass that restores the remembered
+    // subtitle choice — re-apply it the moment the tracks actually exist
+    checkSubtitle()
   }
 
-  function updateFiles (files) {
+  async function updateFiles (files) {
     if (files?.length) {
       videos = files.filter(file => videoRx.test(file.name))
       if (videos?.length) {
@@ -247,15 +257,13 @@
         }
       }
     } else {
-      // null removes the attribute; an EMPTY one is a load of nothing, which the element
-      // reports as a failed load — one bogus "unsupported" error per episode
-      src = null
       cancelRebuild()
       stall = null
-      buffering = true
-      current = null
-      currentTime = 0
-      targetTime = 0
+      // one contract, not a scatter of resets: what the player is between files.
+      // See modules/playback/loading-screen.js for why every field is on the list —
+      // each one left stale was a way the PREVIOUS episode kept showing or playing
+      ;({ src, current, videos, canPlay, buffer, paused, buffering, currentTime, targetTime } = idleState())
+      video?.pause?.()
       if (subs) {
         subs.destroy()
         subs = null
@@ -264,6 +272,12 @@
         debridMeta.destroy()
         debridMeta = null
       }
+      // removing the src attribute alone does NOT unload a media element — only load()
+      // re-runs resource selection. Without this the old episode stays decoded and on
+      // screen (null src, not '': an EMPTY src is a load of nothing, which the element
+      // reports as a bogus "unsupported" error per episode)
+      await tick()
+      if (!src && video) video.load()
     }
   }
 
@@ -293,6 +307,7 @@
     externalPlayerReady = false
     cancelRebuild()
     stall = null
+    streamHelpersStarted = false
     showBuffering()
     if (file) {
       if (thumbnailData.video?.src) URL.revokeObjectURL(thumbnailData.video?.src)
@@ -333,8 +348,10 @@
       src = file.url
       if (!launchExternal) {
         subs = new Subtitles(video, files, current, handleHeaders)
-        // every stream (debrid or the torrent gateway) is a range-served URL; parse embedded metadata from it
-        if (current?.url) debridMeta = new DebridMetadata(current, files, subs, { getTime: () => currentTime, onChapters: _chapters => { chapters = _chapters; embeddedChapters = _chapters } })
+        // the metadata parser and the thumbnailer start at canplay, NOT here: before the
+        // first frame the pipeline is pulling megabytes across several requests, and every
+        // rival stream on the same host comes straight out of how long the start takes.
+        // See modules/playback/quiet-start.js for the measurement
         await tick() // the attribute is written on the next flush; loading before it reloads the old one
         video.load()
         await loadAnimeProgress()
@@ -447,6 +464,9 @@
   let pagePaused = 0
   function pagePause(_page, _playPage, _modal) {
     if (externalPlayback) return
+    // between files there is no playback to pause or resume — and the element may still
+    // hold the PREVIOUS episode, which un-pausing here audibly restarted
+    if (!current) return
     if (buffer === 0 && pagePaused) {
       pagePaused = 1
       return
@@ -709,7 +729,10 @@
     // with nothing selected — that instant is what silenced the element
     const writes = audioSelectionWrites(tracks, id)
     if (!writes.length) return
-    if (needsPipelineRebuild({ readyState: video.readyState, currentTime: video.currentTime })) return rebuildPipeline({ audio: id, reason: 'audio track' })
+    // a debrid rebuild always goes out under a fresh URL: tonight's freeze was a reopen of
+    // the SAME address against a CDN node that had gone quiet, which re-answers with the
+    // same silence (see playback/probe.js on changed identity)
+    if (needsPipelineRebuild({ readyState: video.readyState, currentTime: video.currentTime })) return rebuildPipeline({ audio: id, reason: 'audio track', bustCache: isDebrid })
     const before = describeTracks(tracks)
     for (const write of writes) {
       const track = tracks.find(track => track.id === write.id)
@@ -773,32 +796,48 @@
     if (bustCache && current?.url) src = bustedUrl(current.url, ++streamNonce)
     frozen = frozen || freezeFrame()
     rebuild = { at: Number.isFinite(at) && at > 0 ? at : 0, duration: rebuild ? rebuild.duration : duration, audio: wanted, playing: wasPlaying, started: Number.isFinite(at) && at > 0 }
-    if (rebuildListener) video.removeEventListener('loadedmetadata', rebuildListener)
-    rebuildListener = () => {
-      rebuildListener = null
+    removeRebuildListener()
+    const rebuilt = () => {
+      removeRebuildListener()
       // last of the loadedmetadata handlers, so this selection is the one that stands
-      const rebuilt = [...(video?.audioTracks || [])]
-      for (const write of audioSelectionWrites(rebuilt, wanted)) {
-        const track = rebuilt.find(track => track.id === write.id)
+      const tracksNow = [...(video?.audioTracks || [])]
+      for (const write of audioSelectionWrites(tracksNow, wanted)) {
+        const track = tracksNow.find(track => track.id === write.id)
         if (track) track.enabled = write.enabled
       }
       if (rebuild?.at) video.currentTime = rebuild.at
       // the held frame comes down when a real one has been presented, not a moment before
       video.requestVideoFrameCallback?.(() => { frozen = false })
       if (wasPlaying) video.play()?.catch?.(error => debug('The rebuilt pipeline would not resume', error))
-      console.warn(`[player] rebuilt at ${video.currentTime.toFixed(2)}s: ${describeTracks(rebuilt)}`)
+      console.warn(`[player] rebuilt at ${video.currentTime.toFixed(2)}s: ${describeTracks(tracksNow)}`)
       rebuild = null
     }
-    video.addEventListener('loadedmetadata', rebuildListener, { once: true })
+    // whichever readiness event arrives first ends the rebuild: this webview has been
+    // watched playing with readyState pinned at 0, so no single event is guaranteed
+    rebuildListener = rebuilt
+    for (const event of REBUILD_DONE_EVENTS) video.addEventListener(event, rebuilt)
     await tick() // the held frame has to be on screen before the element is emptied
     video.load()
+    // the spinner's recheck interval IS the stall watchdog's clock: without it a rebuild
+    // whose stream never answers held the frozen frame forever with nothing watching —
+    // the audio-switch freeze. With it, a silent reopen escalates through the same
+    // ladder a silent first load does (see playback/stall.js)
+    showBuffering(true)
+  }
+
+  /** The events any one of which proves the rebuilt pipeline came back. */
+  const REBUILD_DONE_EVENTS = ['loadedmetadata', 'loadeddata', 'canplay', 'playing']
+
+  function removeRebuildListener () {
+    if (!rebuildListener) return
+    for (const event of REBUILD_DONE_EVENTS) video?.removeEventListener(event, rebuildListener)
+    rebuildListener = null
   }
 
   /** A rebuild that never got its header leaves a listener that would seek the NEXT file
    * back to this one's position, and a frame held over a video that has moved on. */
   function cancelRebuild () {
-    if (rebuildListener) video?.removeEventListener('loadedmetadata', rebuildListener)
-    rebuildListener = null
+    removeRebuildListener()
     rebuild = null
     frozen = false
   }
@@ -1308,14 +1347,19 @@
       stall = null
       return
     }
-    const { state, action } = advanceStall(stall, loadProgressMark({ readyState, bufferedEnd: bufferedEnd(), currentTime: time, downloaded: buffer }), BUFFER_RECHECK_MS)
+    // before metadata a debrid preroll shows the page NOTHING — readyState 0, empty
+    // buffered, downloaded pinned at 100 — and healthy desktop prerolls have measured
+    // 10-27s. That phase gets more, gentler firings: probe the link, never yank it
+    const starting = (readyState ?? 0) < 1
+    const maxReloads = starting && isDebrid ? START_RELOADS : STALL_RELOADS
+    const { state, action } = advanceStall(stall, loadProgressMark({ readyState, bufferedEnd: bufferedEnd(), currentTime: time, downloaded: buffer }), BUFFER_RECHECK_MS, maxReloads)
     stall = state
     if (action === 'wait') return
     if (action === 'reload') {
-      console.warn(`[stall] nothing about the stream has changed in ${Math.round(STALL_PATIENCE_MS / 1_000)}s at readyState=${readyState}; recovering (attempt ${state.reloads})`)
-      return recoverStalledStream(state.reloads)
+      console.warn(`[stall] nothing about the stream has changed in ${Math.round(STALL_PATIENCE_MS / 1_000)}s at readyState=${readyState}; ${starting ? 'asking the link' : 'recovering'} (attempt ${state.reloads}/${maxReloads})`)
+      return recoverStalledStream(state.reloads, { starting, lastAttempt: state.reloads >= maxReloads })
     }
-    console.warn(`[stall] the stream is still not answering after ${state.reloads} re-opens; telling the user`)
+    console.warn(`[stall] the stream is still not answering after ${state.reloads} re-opens; telling the user (file: ${current?.name || 'unknown'}, networkState=${video?.networkState}, ${videos?.length || 0} files in release)`)
     toast.error('Stream Not Responding', {
       description: isDebrid
         ? 'The link answers over HTTP but the player cannot start it. Dismiss this toast to route the play again from the top.'
@@ -1338,12 +1382,19 @@
    * torrent fallback or an honest error. See modules/playback/stall.js and probe.js.
    * @param {number} attempt - 1-based, from the watchdog.
    */
-  async function recoverStalledStream (attempt) {
-    let plan = reloadPlan({ attempt, debrid: isDebrid })
+  async function recoverStalledStream (attempt, { starting = false, lastAttempt = false } = {}) {
+    let plan = reloadPlan({ attempt, debrid: isDebrid, starting, lastAttempt })
     if (plan === 'probe') {
       const { alive, reason, elapsed } = await probeStream(current?.url)
-      console.warn(`[stall] the link was probed before re-opening again: ${alive ? `alive in ${elapsed}ms` : reason}`)
-      plan = reloadPlan({ attempt, debrid: isDebrid, linkAlive: alive })
+      console.warn(`[stall] the link was probed: ${alive ? `alive in ${elapsed}ms` : reason}`)
+      plan = reloadPlan({ attempt, debrid: isDebrid, linkAlive: alive, starting, lastAttempt })
+    }
+    if (plan === 'wait') {
+      // the link streams fine, so this is a slow preroll — the one thing that must never
+      // be yanked, because a re-open restarts the whole pull from zero. THAT loop was the
+      // "90% of videos infinitely spin" bug
+      console.warn('[stall] the link streams fine; a slow preroll is left to finish')
+      return
     }
     if (plan === 'replay') {
       console.warn('[stall] the link is dead and cannot be re-opened; routing the play again from the top')
@@ -1573,6 +1624,31 @@
     }
   }
   let videoWidth, videoHeight
+  /** Whether the stream helpers already run for the file being played. Reset per file in
+   * handleCurrent; deliberately NOT reset by a pipeline rebuild, which would start a second
+   * parser and a second thumbnail stream against the same link. */
+  let streamHelpersStarted = false
+
+  /**
+   * Starts everything that reads the stream besides the player itself — the embedded
+   * metadata parser (subtitles, chapters, fonts) and the thumbnailer — once the element
+   * says it has what it needs. Until canplay these would compete with the pipeline's own
+   * startup reads on the same host, and their seconds came straight out of every start.
+   * See modules/playback/quiet-start.js
+   */
+  function startStreamHelpers () {
+    if (!helpersMayStart({ hasFrame: true, started: streamHelpersStarted, externalPlayback })) return
+    streamHelpersStarted = true
+    if (current?.url && !debridMeta) {
+      // held.position, never the element: a rebuild's load() resets currentTime to 0
+      // through the binding, and a playhead at 0 read as a seek that restarted the
+      // subtitle stream from byte 0 — a rival range request on the same host in the
+      // exact window the reopened pipeline was trying to preroll
+      debridMeta = new DebridMetadata(current, files, subs, { getTime: () => held.position, onChapters: _chapters => { chapters = _chapters; embeddedChapters = _chapters } })
+    }
+    initThumbnails()
+  }
+
   function initThumbnails () {
     if (externalPlayback) return
     const height = 200 / (videoWidth / videoHeight)
@@ -1612,7 +1688,7 @@
           debug('Thumbnail generation process was interrupted due to a change in the video url, exiting...')
           return
         }
-        let dynamicDuration = thumbnailHorizon({ duration: videoDraw.duration, bufferPercent: buffer, currentTime: video?.currentTime, reachable: !!current?.debrid })
+        let dynamicDuration = thumbnailHorizon({ duration: videoDraw.duration, bufferPercent: buffer, currentTime: held.position, reachable: !!current?.debrid })
         if (!isFinite(dynamicDuration)) {
           debug('Video is still loading... waiting to generate thumbnails...')
           setTimeout(() => captureThumbnail(), 1_000)
@@ -1626,7 +1702,7 @@
             debug(`Reached currently downloaded video duration, current seek time is: ${currentTime}s (${index} of ${buffer}%), waiting for buffer update...`)
           }
           setTimeout(() => {
-            if (currentTime < thumbnailHorizon({ duration: videoDraw.duration, bufferPercent: buffer, currentTime: video?.currentTime, reachable: !!current?.debrid })) {
+            if (currentTime < thumbnailHorizon({ duration: videoDraw.duration, bufferPercent: buffer, currentTime: held.position, reachable: !!current?.debrid })) {
               lastIndex = 0
               debug('Detected a buffer change, continuing thumbnail generation...')
             }
@@ -1953,13 +2029,14 @@
     on:loadeddata={hideBuffering}
     on:pause={() => { immersed = false }}
     on:canplay={hideBuffering}
+    on:loadeddata={startStreamHelpers}
+    on:playing={startStreamHelpers}
     on:playing={hideBuffering}
     on:playing={() => { frozen = false }}
     on:playing={() => startup.playing()}
     on:loadedmetadata={hideBuffering}
     on:loadedmetadata={() => startup.metadata()}
     on:ended={tryPlayNext}
-    on:loadedmetadata={perFile('thumbnails', initThumbnails)}
     on:loadedmetadata={perFile('chapters', findChapters)}
     on:loadedmetadata={perFile('autoplay', () => autoPlay())}
     on:loadedmetadata={perFile('audio', checkAudio)}
@@ -1970,6 +2047,29 @@
   <!-- the frame the element was showing, held over it while it has none: rebuilding the
        pipeline to switch audio track empties the element, and an empty element is black -->
   <canvas class='freeze-frame position-absolute h-full w-full' class:d-none={!frozen} bind:this={freezeCanvas} style={`margin-top: ${menubarOffset}px`} aria-hidden='true'></canvas>
+  <!-- the seconds between choosing an episode and its first frame get the show's own art
+       instead of a black screen (or worse, the tail of the previous episode). The media
+       object rides on the play request itself, so this is up before anything resolves;
+       the spinner in the controls stays on top of it. See playback/loading-screen.js -->
+  {#if loadingCover}
+    <div class='loading-screen position-absolute w-full h-full overflow-hidden d-flex align-items-center justify-content-center' style={`margin-top: ${menubarOffset}px`} aria-hidden='true'>
+      {#if loadingCover.banner}
+        <SmartImage class='loading-banner position-absolute w-full h-full img-cover' images={[loadingCover.banner]} eager={true}/>
+      {/if}
+      <div class='loading-scrim position-absolute w-full h-full top-0 left-0'/>
+      <div class='loading-details d-flex align-items-center px-20 z-1' class:flex-column={miniplayer} class:text-center={miniplayer}>
+        {#if loadingCover.cover}
+          <SmartImage class='loading-cover rounded' images={[loadingCover.cover]} eager={true}/>
+        {/if}
+        <div class='mx-20 mt-10 text-white'>
+          <div class='font-scale-24 font-weight-bold loading-title'>{loadingCover.title}</div>
+          {#if loadingCover.episode != null}
+            <div class='font-scale-16 mt-5 loading-episode'>Episode {loadingCover.episode}</div>
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
   {#if stats && !miniplayer}
     <div class='position-absolute top-0 bg-tp p-10 ml-20 mt-100 text-monospace rounded z-50'>
       <button class='close btn btn-square mt-5' type='button' use:click={toggleStats}>
@@ -2489,6 +2589,39 @@
   .freeze-frame {
     object-fit: contain;
     pointer-events: none;
+  }
+  .loading-screen {
+    pointer-events: none;
+    background: var(--dark-color, #000);
+  }
+  .loading-screen :global(.loading-banner) {
+    filter: blur(24px) brightness(.45) saturate(1.15);
+    transform: scale(1.12); /* the blur must not show its own edges */
+  }
+  .loading-scrim {
+    background: radial-gradient(ellipse at center, transparent 0%, hsla(0, 0%, 0%, .55) 100%);
+  }
+  .loading-screen :global(.loading-cover) {
+    height: min(46vh, 34rem);
+    aspect-ratio: 2 / 3;
+    object-fit: cover;
+    box-shadow: 0 1rem 3rem hsla(0, 0%, 0%, .6);
+  }
+  .miniplayer .loading-screen :global(.loading-cover) {
+    height: 40%;
+  }
+  .loading-details {
+    animation: loading-rise .45s cubic-bezier(.25, .8, .25, 1);
+  }
+  .loading-episode {
+    color: hsla(0, 0%, 100%, .75);
+  }
+  .loading-title {
+    text-shadow: 0 .2rem 1rem hsla(0, 0%, 0%, .8);
+  }
+  @keyframes loading-rise {
+    from { opacity: 0; transform: translateY(1.4rem); }
+    to { opacity: 1; transform: translateY(0); }
   }
   .fitWidth video, .fitWidth :global(.deband-canvas), .fitWidth .freeze-frame {
     object-fit: cover !important;

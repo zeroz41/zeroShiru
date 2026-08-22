@@ -16,11 +16,21 @@
 /** `HTMLMediaElement.HAVE_CURRENT_DATA`: a frame exists, so the load got somewhere. */
 const HAVE_CURRENT_DATA = 2
 
-/** How long nothing at all may change before a stream counts as dead rather than slow. */
+/** How long nothing at all may change before the watchdog looks harder. */
 export const STALL_PATIENCE_MS = 15_000
 
 /** How many times a dead stream is quietly re-opened before the user is told. */
 export const STALL_RELOADS = 2
+
+/** How many watchdog firings a STARTING debrid load gets before the user is told.
+ * A debrid preroll is invisible to the page — readyState 0, empty buffered ranges,
+ * downloaded pinned at 100 — and healthy desktop starts have been MEASURED at 10-27s
+ * to metadata. The old 15s-then-reload rule was killing healthy prerolls mid-pull and
+ * restarting them from zero, over and over: the "90% of videos infinitely spin" bug
+ * was the watchdog itself. So a starting load is given firings at 15s intervals that
+ * PROBE instead of reload (measured: a concurrent probe is harmless to the stream),
+ * and only the last one before the report is allowed to touch the pipeline. */
+export const START_RELOADS = 4
 
 /**
  * Whether the element is supposed to be making progress right now.
@@ -66,40 +76,57 @@ export function loadProgressMark ({ readyState = 0, bufferedEnd = 0, currentTime
  * @param {null | { mark: string | null, stalledMs: number, reloads: number, reported: boolean }} stall
  * @param {string} mark The element's fingerprint now, from [loadProgressMark].
  * @param {number} [elapsedMs] Since the last look.
+ * @param {number} [maxReloads] Firings before `report` — [STALL_RELOADS] mid-play,
+ *   [START_RELOADS] for a starting debrid load, whose firings mostly probe-and-wait.
  * @returns {{ state: { mark: string | null, stalledMs: number, reloads: number, reported: boolean }, action: 'wait' | 'reload' | 'report' }}
- *   `reload` re-opens the stream where it was; `report` tells the user and gives up, once,
- *   so a stream nobody can fix cannot turn into a reload loop.
+ *   `reload` hands one firing to the recovery plan; `report` tells the user and gives up,
+ *   once, so a stream nobody can fix cannot turn into a reload loop.
  */
-export function advanceStall (stall, mark, elapsedMs = 0) {
+export function advanceStall (stall, mark, elapsedMs = 0, maxReloads = STALL_RELOADS) {
   const previous = stall ?? { mark: null, stalledMs: 0, reloads: 0, reported: false }
   if (mark !== previous.mark) return { state: { ...previous, mark, stalledMs: 0 }, action: 'wait' }
   const stalledMs = previous.stalledMs + elapsedMs
   if (stalledMs < STALL_PATIENCE_MS) return { state: { ...previous, stalledMs }, action: 'wait' }
-  if (previous.reloads < STALL_RELOADS) return { state: { ...previous, stalledMs: 0, reloads: previous.reloads + 1 }, action: 'reload' }
+  if (previous.reloads < maxReloads) return { state: { ...previous, stalledMs: 0, reloads: previous.reloads + 1 }, action: 'reload' }
   if (!previous.reported) return { state: { ...previous, stalledMs, reported: true }, action: 'report' }
   return { state: { ...previous, stalledMs }, action: 'wait' }
 }
 
 /**
- * What one `reload` from the watchdog should actually do, given what is known.
+ * What one watchdog firing should actually do, given what is known.
  *
  * Re-opening in place is the whole answer for a torrent: the data comes from the client,
- * and the client's download percentage is already in the fingerprint. A debrid link is an
- * HTTP address that can be dead in a way no re-open fixes — and it cannot be exchanged for
- * a fresh one, the service pins one URL per file — so before burning a second 15s window
- * on it the link is asked directly (see playback/probe.js). A link that answers makes it
- * the local pipeline's fault, worth another rebuild; a link that does not makes every
- * further attempt on it a lie to the user, and the play is routed again from the top,
- * where a dead link now fails fast into the torrent fallback or an honest error.
+ * and the client's download percentage is already in the fingerprint, so a frozen one
+ * really is stuck. Debrid divides in two:
+ *
+ * **Starting** (no metadata yet): the page cannot tell a healthy preroll from a dead link
+ * — every fingerprint field sits at zero for both — and healthy desktop prerolls have been
+ * measured taking up to 27s. So the firing PROBES (measured harmless to the stream, see
+ * playback/probe.js): a dead link makes waiting a lie and the play is routed again from
+ * the top immediately, where it fails fast into the torrent fallback or an honest error;
+ * a live link means a slow preroll, which is left completely alone — yanking it restarts
+ * the pull from zero, which was the infinite-spinner bug. Only the last firing before the
+ * report may re-open, in case the pipeline and not the link is what is stuck.
+ *
+ * **Mid-play** (metadata existed, playback froze): the fingerprint moves during any real
+ * progress, so a frozen one earns an immediate re-open, then a probe before the second —
+ * a link that answers makes it the pipeline's fault, one that does not gets the replay.
  *
  * @param {object} state
- * @param {number} state.attempt - Which reload this is, 1-based.
+ * @param {number} state.attempt - Which firing this is, 1-based.
  * @param {boolean} [state.debrid]
  * @param {boolean | null} [state.linkAlive] - What a probe just said, or null before one ran.
- * @returns {'reopen' | 'probe' | 'replay'}
+ * @param {boolean} [state.starting] - The element has not yet produced metadata.
+ * @param {boolean} [state.lastAttempt] - No more firings after this one before the report.
+ * @returns {'wait' | 'reopen' | 'probe' | 'replay'}
  */
-export function reloadPlan ({ attempt, debrid = false, linkAlive = null }) {
+export function reloadPlan ({ attempt, debrid = false, linkAlive = null, starting = false, lastAttempt = false }) {
   if (!debrid) return 'reopen'
+  if (starting) {
+    if (linkAlive === null) return 'probe'
+    if (!linkAlive) return 'replay'
+    return lastAttempt ? 'reopen' : 'wait'
+  }
   if (attempt < 2) return 'reopen'
   if (linkAlive === null) return 'probe'
   return linkAlive ? 'reopen' : 'replay'

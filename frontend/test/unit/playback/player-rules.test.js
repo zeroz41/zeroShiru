@@ -7,9 +7,11 @@ import { audioSelectionWrites, safeGain, storedVolume, describeTracks, needsPipe
 import { showsSpinner } from '../../../common/modules/playback/buffering.js'
 import { thumbnailHorizon, THUMBNAIL_LOOKAHEAD_SECONDS } from '../../../common/modules/playback/thumbnails.js'
 import { mediaErrorReport, stillFailing } from '../../../common/modules/playback/errors.js'
-import { watchesForStall, loadProgressMark, advanceStall, reloadPlan, STALL_PATIENCE_MS, STALL_RELOADS } from '../../../common/modules/playback/stall.js'
+import { watchesForStall, loadProgressMark, advanceStall, reloadPlan, STALL_PATIENCE_MS, STALL_RELOADS, START_RELOADS } from '../../../common/modules/playback/stall.js'
 import { savesProgress } from '../../../common/modules/playback/resume.js'
 import { episodePrompt } from '../../../common/modules/playback/prompts.js'
+import { idleState, showsLoadingArt, loadingArt } from '../../../common/modules/playback/loading-screen.js'
+import { helpersMayStart } from '../../../common/modules/playback/quiet-start.js'
 
 const tracks = [{ id: 'jpn' }, { id: 'eng' }, { id: 'spa' }]
 
@@ -225,6 +227,43 @@ test('a stalled torrent is re-opened in place; its bytes come from the client, n
   assert.equal(reloadPlan({ attempt: 2, debrid: false, linkAlive: false }), 'reopen', 'no probe verdict changes what a torrent can do')
 })
 
+// --- the rule the infinite-spinner bug taught: a preroll is not a stall ---------------
+// A starting debrid load shows the page NOTHING it can distinguish from a dead link —
+// readyState 0, empty buffered, downloaded pinned at 100 — while healthy desktop starts
+// have been MEASURED taking 10-27s to metadata. The old plan re-opened at 15s, which
+// restarts the preroll from zero, which stalls again at 15s: most plays never escaped
+// the loop. The plan now asks the link and leaves a live one completely alone.
+
+test('a slow but healthy debrid preroll is NEVER yanked before the final attempt', () => {
+  for (let attempt = 1; attempt < START_RELOADS; attempt++) {
+    assert.equal(reloadPlan({ attempt, debrid: true, starting: true }), 'probe', 'the only honest first move is asking the link, not touching the pipeline')
+    assert.equal(reloadPlan({ attempt, debrid: true, starting: true, linkAlive: true }), 'wait', 'a live link means a slow preroll; a re-open restarts it from zero — the bug itself')
+  }
+  assert.equal(reloadPlan({ attempt: START_RELOADS, debrid: true, starting: true, linkAlive: true, lastAttempt: true }), 'reopen', 'a full minute of alive-but-nothing is the pipeline stuck, worth one fresh start')
+})
+
+test('a dead link at start exits at the FIRST check, not after three spent windows', () => {
+  assert.equal(reloadPlan({ attempt: 1, debrid: true, starting: true, linkAlive: false }), 'replay', 'waiting on a dead link is a lie; route the play again where the fallback lives')
+})
+
+test('a starting load gets the longer firing budget, and it still ends in one report', () => {
+  assert.ok(START_RELOADS > STALL_RELOADS, 'the start phase is the one that cannot tell slow from dead, so it gets the patience')
+  const mark = loadProgressMark({ readyState: 0, downloaded: 100 })
+  let state = null
+  let reloads = 0
+  let reports = 0
+  // 100 firings of a fingerprint that never changes: a real 27s preroll fits inside the
+  // reload budget with room to spare, and the end of the road is one report, not a loop
+  for (let tick = 0; tick < 100; tick++) {
+    const result = advanceStall(state, mark, STALL_PATIENCE_MS, START_RELOADS)
+    state = result.state
+    if (result.action === 'reload') reloads++
+    if (result.action === 'report') reports++
+  }
+  assert.equal(reloads, START_RELOADS)
+  assert.equal(reports, 1, 'told once, never a toast a second')
+})
+
 test('a stalled debrid link is asked directly before a second 15s window is spent on it', () => {
   // the live failure: two re-opens of a link whose CDN node never sent a byte, then a
   // toast whose retry re-opened it a third time. The service pins one URL per file, so
@@ -271,6 +310,62 @@ test('a position is saved from a frame existing, not from the file being fully b
   assert.equal(savesProgress({ readyState: 4, currentTime: 0 }), false, 'the start of a file is not progress worth storing over the last watch')
   assert.equal(savesProgress({ readyState: 0, currentTime: NaN }), false)
   assert.equal(savesProgress({ readyState: 0, currentTime: 0, error: true }), true, 'a failure resets the position deliberately')
+})
+
+// --- what the player is between files ---
+
+test('leaving the player between files stops and forgets the previous episode', () => {
+  // each of these left stale was a shipped bug: the old episode kept playing under the
+  // spinner, the page-return logic un-paused it, and next/previous indexed into the
+  // previous release's file list
+  const idle = idleState()
+  assert.equal(idle.paused, true, 'removing src does not stop a media element; pausing is explicit')
+  assert.equal(idle.buffer, 0, 'at its stale 100 the page-return logic would un-pause the OLD episode')
+  assert.deepEqual(idle.videos, [], 'a stale list sent next/previous into the previous release')
+  assert.equal(idle.src, null, 'null removes the attribute; an empty string is a bogus failed load')
+  assert.equal(idle.current, null)
+  assert.equal(idle.canPlay, false)
+  assert.equal(idle.buffering, true, 'the gap shows a loading screen, never the last frame')
+  assert.equal(idle.currentTime, 0)
+})
+
+test('the loading art is up exactly while the file being played cannot put a frame up', () => {
+  assert.equal(showsLoadingArt({ current: null, canPlay: false }), true, 'between files')
+  assert.equal(showsLoadingArt({ current: { name: 'ep.mkv' }, canPlay: false }), true, 'arrived but headerless')
+  assert.equal(showsLoadingArt({ current: { name: 'ep.mkv' }, canPlay: true }), false, 'playing: the video owns the screen')
+  assert.equal(showsLoadingArt({ current: null, canPlay: false, externalPlayback: true }), false, 'an external player owns its own screen')
+})
+
+test('the loading screen draws from the play request itself, before anything resolves', () => {
+  const media = {
+    media: { title: { userPreferred: 'Sousou no Frieren' }, coverImage: { extraLarge: 'https://cdn/cover-xl.jpg', medium: 'https://cdn/cover-m.jpg' }, bannerImage: 'https://cdn/banner.jpg' },
+    episode: 7
+  }
+  assert.deepEqual(loadingArt(media), { cover: 'https://cdn/cover-xl.jpg', banner: 'https://cdn/banner.jpg', title: 'Sousou no Frieren', episode: 7 })
+  // a missing banner leans on the cover, so the screen is never a black void with a title
+  assert.equal(loadingArt({ media: { ...media.media, bannerImage: null } }).banner, 'https://cdn/cover-xl.jpg')
+  assert.equal(loadingArt({ media: media.media }).episode, null, 'a play with no episode number says nothing rather than "Episode NaN"')
+})
+
+test('a raw magnet with no described media gets the plain spinner, not a broken art screen', () => {
+  assert.equal(loadingArt({ torrent: true }), null)
+  assert.equal(loadingArt(null), null)
+  assert.equal(loadingArt({ media: {} }), null)
+})
+
+// --- who may touch the stream while playback is starting ---
+
+test('the stream helpers wait for a decoded frame and start exactly once', () => {
+  // measured: the pipeline pulls ~6.5MB across three requests before the first frame,
+  // and the subtitle parser + thumbnailer used to spend that window competing with it
+  // on the same host — seconds added to every single start
+  assert.equal(helpersMayStart({ hasFrame: false }), false, 'until a frame exists the stream belongs to the player alone')
+  assert.equal(helpersMayStart({ hasFrame: true }), true)
+  assert.equal(helpersMayStart({ hasFrame: true, started: true }), false, 'loadeddata AND playing both report; a second parser and a second thumbnail stream is the amplifier bug again')
+  assert.equal(helpersMayStart({ hasFrame: true, externalPlayback: true }), false, 'an external player owns the stream entirely')
+  // the gate is an EVENT (loadeddata/playing), never canplay: this webview pins
+  // readyState below HAVE_FUTURE_DATA on debrid streams, so canplay never fired and
+  // the shipped canplay gate meant no subtitles at all
 })
 
 test('the track list reads as a line a log can carry', () => {
