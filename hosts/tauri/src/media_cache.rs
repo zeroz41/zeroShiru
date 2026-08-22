@@ -14,8 +14,11 @@
 //! Linux keeps this under `~/.cache/<id>`, Windows under `%LOCALAPPDATA%\<id>`,
 //! macOS under `~/Library/Caches/<id>` — wherever Tauri says the cache dir is.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Instant, SystemTime};
 
 /// The scheme the frontend bridge rewrites http(s) image URLs into.
 pub const SCHEME: &str = "shiru-media";
@@ -28,6 +31,37 @@ const TRIM_TARGET_BYTES: u64 = CAP_BYTES / 10 * 9;
 /// A single "image" larger than this is not an image worth keeping.
 const MAX_IMAGE_BYTES: u64 = 24 * 1024 * 1024;
 const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
+/// How long a failed fetch is remembered. A dead art URL used to be refetched on every
+/// single mount — one missing cover on a grid page was a network round trip per card
+/// render, forever. Failures are only ever remembered in memory: a restart forgets them.
+const FAILURE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Fetches in flight, keyed by URL. Two cards showing the same art used to fetch it
+/// twice and interleave writes into one shared temp path; now the second waits for the
+/// first and reads the stored file.
+fn pending() -> &'static Mutex<HashMap<String, tokio::sync::watch::Receiver<()>>> {
+    static PENDING: OnceLock<Mutex<HashMap<String, tokio::sync::watch::Receiver<()>>>> = OnceLock::new();
+    PENDING.get_or_init(Default::default)
+}
+
+/// Recent failures, keyed by URL.
+fn failures() -> &'static Mutex<HashMap<String, Instant>> {
+    static FAILURES: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    FAILURES.get_or_init(Default::default)
+}
+
+/// Whether this URL failed recently enough that asking again is just noise.
+fn recently_failed(url: &str) -> bool {
+    let mut failed = failures().lock().unwrap();
+    match failed.get(url) {
+        Some(at) if at.elapsed() < FAILURE_TTL => true,
+        Some(_) => {
+            failed.remove(url);
+            false
+        }
+        None => false,
+    }
+}
 
 /// Where the images live: `media/` under the app's cache directory.
 pub fn media_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -88,7 +122,10 @@ fn store(dir: &Path, url: &str, bytes: &[u8], content_type: &str) {
         return;
     }
     let file = file_for(dir, url);
-    let temp = file.with_extension("tmp");
+    // a name of this writer's own, so two writers can never interleave into one temp
+    // file and rename a torn image into place — it would be served forever
+    static WRITER: AtomicU64 = AtomicU64::new(0);
+    let temp = file.with_extension(format!("tmp{}", WRITER.fetch_add(1, Ordering::Relaxed)));
     if std::fs::write(&temp, bytes).is_ok() && std::fs::rename(&temp, &file).is_ok() {
         let _ = std::fs::write(meta_path(&file), content_type);
     }
@@ -108,18 +145,58 @@ pub async fn respond(app: &tauri::AppHandle, request: tauri::http::Request<Vec<u
         // no cache directory is no reason to show no art
         None => return fetch_only(&url).await,
     };
-    if let Some((bytes, content_type)) = lookup(&dir, &url) {
-        return image_response(bytes, &content_type);
-    }
-    match fetch(&url).await {
-        Ok((bytes, content_type)) => {
-            store(&dir, &url, &bytes, &content_type);
-            image_response(bytes, &content_type)
+    // disk reads and writes run off the async workers: a grid page asks for hundreds
+    // of covers at once, and blocking file IO on the executor stalled everything else
+    // the runtime was doing, playback commands included
+    loop {
+        let looked_up = {
+            let dir = dir.clone();
+            let url = url.clone();
+            tauri::async_runtime::spawn_blocking(move || lookup(&dir, &url)).await.ok().flatten()
+        };
+        if let Some((bytes, content_type)) = looked_up {
+            return image_response(bytes, &content_type);
         }
-        Err(error) => {
-            tracing::debug!(target: "media-cache", url = %url, error = %error, "image fetch failed");
-            plain_response(502, "image fetch failed")
+        if recently_failed(&url) {
+            return plain_response(502, "image fetch failed recently");
         }
+        // one fetch per URL: the first asker owns it, everyone else waits for the file.
+        // The claim is decided under the lock but awaited outside it, so the guard never
+        // crosses an await
+        let claimed = {
+            let mut in_flight = pending().lock().unwrap();
+            match in_flight.get(&url) {
+                Some(receiver) => Err(receiver.clone()),
+                None => {
+                    let (sender, receiver) = tokio::sync::watch::channel(());
+                    in_flight.insert(url.clone(), receiver);
+                    Ok(sender)
+                }
+            }
+        };
+        let sender = match claimed {
+            Err(mut receiver) => {
+                let _ = receiver.changed().await; // resolves when the owner finishes, however it went
+                continue; // the file is there now, or the failure is remembered
+            }
+            Ok(sender) => sender,
+        };
+        let outcome = fetch(&url).await;
+        let response = match outcome {
+            Ok((bytes, content_type)) => {
+                let stored = (dir.clone(), url.clone(), bytes.clone(), content_type.clone());
+                let _ = tauri::async_runtime::spawn_blocking(move || store(&stored.0, &stored.1, &stored.2, &stored.3)).await;
+                image_response(bytes, &content_type)
+            }
+            Err(error) => {
+                tracing::debug!(target: "media-cache", url = %url, error = %error, "image fetch failed");
+                failures().lock().unwrap().insert(url.clone(), Instant::now());
+                plain_response(502, "image fetch failed")
+            }
+        };
+        pending().lock().unwrap().remove(&url);
+        drop(sender); // waking the waiters only after the entry is gone and the file is down
+        return response;
     }
 }
 
@@ -192,7 +269,7 @@ fn trim_plan(entries: &mut Vec<Entry>, cap: u64, target: u64) -> Vec<PathBuf> {
     let mut doomed: Vec<PathBuf> = Vec::new();
     let mut total: u64 = 0;
     entries.retain(|entry| {
-        if entry.file.extension().is_some_and(|extension| extension == "tmp") {
+        if entry.file.extension().is_some_and(|extension| extension.to_string_lossy().starts_with("tmp")) {
             doomed.push(entry.file.clone());
             false
         } else {
@@ -304,6 +381,39 @@ mod tests {
     }
 
     #[test]
+    fn a_recent_failure_is_refused_and_an_old_one_is_forgiven() {
+        let url = "https://cdn/negative-cache-test.png";
+        assert!(!recently_failed(url), "nothing recorded yet");
+        failures().lock().unwrap().insert(url.into(), Instant::now());
+        assert!(recently_failed(url), "a fresh failure is not worth refetching");
+        // a monotonic clock young enough (fresh boot) cannot be backdated; the rule
+        // still holds, it just cannot be exercised on such a machine
+        if let Some(expired) = Instant::now().checked_sub(FAILURE_TTL * 2) {
+            failures().lock().unwrap().insert(url.into(), expired);
+            assert!(!recently_failed(url), "an old failure earns another try");
+            assert!(!failures().lock().unwrap().contains_key(url), "and its record is cleaned up");
+        } else {
+            failures().lock().unwrap().remove(url);
+        }
+    }
+
+    #[test]
+    fn a_rewrite_of_the_same_art_leaves_one_file_and_no_temp_droppings() {
+        let dir = scratch("rewrite");
+        store(&dir, "https://cdn/a.png", b"first", "image/png");
+        store(&dir, "https://cdn/a.png", b"second", "image/png");
+        let (bytes, _) = lookup(&dir, "https://cdn/a.png").unwrap();
+        assert_eq!(bytes, b"second");
+        let strays: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext.to_string_lossy().starts_with("tmp")))
+            .collect();
+        assert!(strays.is_empty(), "every temp name is renamed away or belongs to the janitor");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn under_the_cap_nothing_is_evicted() {
         let mut entries = vec![entry("a", 100, 10), entry("b", 100, 0)];
         assert!(trim_plan(&mut entries, 500, 450).is_empty());
@@ -318,8 +428,8 @@ mod tests {
 
     #[test]
     fn interrupted_writes_are_always_swept() {
-        let mut entries = vec![entry("kept", 10, 0), entry("half-written.tmp", 10, 0)];
-        assert_eq!(trim_plan(&mut entries, u64::MAX, u64::MAX), vec![PathBuf::from("half-written.tmp")]);
+        let mut entries = vec![entry("kept", 10, 0), entry("half-written.tmp3", 10, 0)];
+        assert_eq!(trim_plan(&mut entries, u64::MAX, u64::MAX), vec![PathBuf::from("half-written.tmp3")]);
     }
 
     #[test]
