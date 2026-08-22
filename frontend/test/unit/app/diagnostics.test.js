@@ -230,3 +230,31 @@ test('terminal colouring never reaches the log', () => {
   assert.ok(!line.includes('\u001b'), JSON.stringify(line))
   assert.match(line, /ui:settings/)
 })
+
+test('an aborted request is teardown noise, not an error the log should drown in', () => {
+  // the subtitle streamer ends its open-ended range reads by aborting them — that is
+  // the mechanism working, and it was reaching main.log as an error per teardown
+  const host = fakeHost()
+  const events = fakeEvents()
+  attachDiagnostics({ send: host.send, console: fakeConsole(), target: events, schedule: host.schedule })
+
+  const abort = new Error('The operation was aborted.')
+  abort.name = 'AbortError'
+  events.fire('unhandledrejection', { reason: abort })
+  events.fire('unhandledrejection', { reason: new Error('a real failure') })
+  host.run()
+
+  const entries = host.batches.flat()
+  assert.equal(entries.length, 1, 'with debug logging off, only the real failure crosses')
+  assert.match(entries[0].message, /real failure/)
+
+  // with debug logging on the abort still appears, at debug level, for whoever is tracing
+  const verboseHost = fakeHost()
+  const verboseEvents = fakeEvents()
+  attachDiagnostics({ send: verboseHost.send, verbose: () => true, console: fakeConsole(), target: verboseEvents, schedule: verboseHost.schedule })
+  verboseEvents.fire('unhandledrejection', { reason: abort })
+  verboseHost.run()
+  const verboseEntries = verboseHost.batches.flat()
+  assert.equal(verboseEntries.length, 1)
+  assert.equal(verboseEntries[0].level, 'debug')
+})

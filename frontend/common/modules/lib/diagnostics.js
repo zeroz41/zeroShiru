@@ -225,7 +225,15 @@ export function attachDiagnostics ({ send, verbose, console: target = console, t
   }
 
   const onError = (event) => forwarder.record('error', 'uncaught', describeFailure(event?.error ?? event?.message, event))
-  const onRejection = (event) => forwarder.record('error', 'unhandled rejection', describeFailure(event?.reason))
+  // an AbortError is a request this app tore down on purpose — the subtitle streamer
+  // aborts its open-ended range reads as its ordinary way of ending them (see
+  // debrid/metadata.js, where an attempt to "tidy" that broke playback outright). The
+  // teardown races the fetch promise, so some of them surface here; they are the sound
+  // of things working, and they were drowning main.log at error level.
+  const onRejection = (event) => {
+    const level = event?.reason?.name === 'AbortError' ? 'debug' : 'error'
+    forwarder.record(level, 'unhandled rejection', describeFailure(event?.reason))
+  }
   events?.addEventListener?.('error', onError)
   events?.addEventListener?.('unhandledrejection', onRejection)
 

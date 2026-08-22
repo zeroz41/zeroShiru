@@ -383,6 +383,11 @@ export function dragScroll(node) {
     }
     dragging = false
   }, opts)
+  // the node's box, measured once per drag: getBoundingClientRect per mousemove after
+  // scrollBy was a forced layout per pointer event, on the row being dragged. The box
+  // cannot change during a drag the drag itself did not cause, and a scrollBy does not
+  // move the container's own box.
+  let dragBounds = null
   node.addEventListener('mousedown', e => {
     const target = e.target
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable) return
@@ -392,10 +397,11 @@ export function dragScroll(node) {
     draggedY = 0
     startX = e.clientX
     startY = e.clientY
+    dragBounds = node.getBoundingClientRect()
   }, opts)
   node.addEventListener('mousemove', e => {
     if (!dragging) return true
-    if (isMouseLeave(node, e.clientX, e.clientY)) {
+    if (isMouseLeave(e.clientX, e.clientY)) {
       if (activePointer) try { node.releasePointerCapture(activePointer) } catch {}
       dragging = false
       return true
@@ -411,8 +417,8 @@ export function dragScroll(node) {
       try { node.setPointerCapture(activePointer) } catch {}
     }
   }, opts)
-  function isMouseLeave(node, x, y) {
-    const rect = node.getBoundingClientRect()
+  function isMouseLeave(x, y) {
+    const rect = dragBounds ?? node.getBoundingClientRect()
     return x < rect.left || x > rect.right || y < rect.top || y > rect.bottom
   }
   return { destroy: () => controller.abort() }
