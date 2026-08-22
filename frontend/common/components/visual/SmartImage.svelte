@@ -1,6 +1,7 @@
 <script>
   import { nearViewport } from '@/modules/preload.js'
   import { COMMON } from '@/modules/bridge.js'
+  import { rememberShown, wasShown } from '@/modules/lib/image-memory.js'
 
   export let images = []
   /** Skip the wait: for art that is on screen from the start, like the home banner. */
@@ -10,15 +11,25 @@
   export let color = null
   export let title = ''
 
+  /** A transparent pixel: what the element shows while there is nothing real to show. */
+  const PLACEHOLDER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+
   let near = eager
   let index = 0
   let resolvedImages = []
   let failed = false
   let loading = false
+  /** First time on screen: fade it in so its arrival is an entrance rather than a pop.
+   * An image the session has already shown skips both the lazy gate and the fade. */
+  let reveal = false
+  let ready = eager
   $: if (images) { index = 0; resolvedImages = []; failed = false; }
   $: filteredImages = images.filter(Boolean)
   $: loadNextImage(index, filteredImages)
   async function loadNextImage(index, filteredImages) {
+    // nothing to try is a plain miss: without this the element asked the host for a
+    // literal "0_404.jpg", a file that has never existed, on every render with no art
+    if (!filteredImages.length) { failed = true; return }
     let image = filteredImages[index]
     loading = true
     try {
@@ -28,17 +39,47 @@
         filteredImages.splice(index, 1, ...image.filter(Boolean))
         image = filteredImages[index]
       }
-    } catch { image = `${index}_404.jpg` }
+    } catch { image = null }
+    if (!image) {
+      // a candidate that failed to produce a URL is skipped like one that failed to load,
+      // without a round trip through a request that cannot succeed
+      loading = false
+      advance(index)
+      return
+    }
     if (typeof image === 'string' && image.includes('/cover/') && image.endsWith('/default.jpg')) image = 'no_image_cover.jpg'
     // hosts with a native media cache serve remote art from disk; local fallbacks
     // and data: URIs pass through untouched
     resolvedImages[index] = COMMON.mediaSrc(image)
+    // an image this session already showed is local and warm: the lazy gate and the fade
+    // would only re-play a loading story for something that is not loading. This is what
+    // stops a whole grid of known art flashing placeholders on every page switch
+    if (wasShown(resolvedImages[index])) {
+      near = true
+      ready = true
+      reveal = false
+    } else if (!eager) {
+      reveal = true
+    }
     loading = false
+  }
+  /** Moves to the next candidate, or gives up when this was the last one. Writing `index`
+   * re-runs the loader reactively. */
+  function advance(from) {
+    if (from < filteredImages.filter(Boolean).length - 1) index = from + 1
+    else failed = true
   }
   function handleError() {
     if (loading) return
-    if (index < filteredImages.filter(Boolean).length - 1) index += 1
-    else failed = true
+    advance(index)
+  }
+  function handleLoad(event) {
+    validate(event)
+    if (failed || hidden) return
+    const src = event.target?.currentSrc || event.target?.src || ''
+    if (src.startsWith('data:')) return // the placeholder pixel is not an arrival
+    ready = true
+    rememberShown(src)
   }
   function validate(event) {
     const image = event.target
@@ -49,13 +90,27 @@
     class={($$restProps.class ? $$restProps.class.split(' ').filter(_class => (_class !== 'cover-rotated' && _class !== 'cr-380' && _class !== 'cr-400') || !resolvedImages[index]?.includes('404')).join(' ') : '') + (color ? ' cover-color' : '')}
     style={(color ? `--color: ${color};` : '') + (style ? `${style}` : '')}
     class:d-none={hidden || failed}
+    class:img-reveal={reveal}
+    class:img-ready={ready}
     use:nearViewport={{ near: () => { near = true }, skip: eager }}
     on:error={handleError}
-    on:load={validate}
+    on:load={handleLoad}
     alt='preview'
     title={title}
     draggable='false'
     loading='eager'
+    decoding='async'
     referrerpolicy='no-referrer'
-    src={(!hidden && !failed) ? ((loading || !near) ? 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' : resolvedImages[index] || `${index}_404.jpg`) : ''}
+    src={(!hidden && !failed) ? ((loading || !near) ? PLACEHOLDER : resolvedImages[index] || PLACEHOLDER) : ''}
 />
+<style>
+  /* the first time an image arrives it fades up from the colored placeholder instead of
+     popping over it; a remount of art the session has shown skips this entirely */
+  .img-reveal.img-ready {
+    animation: image-reveal .25s ease-out;
+  }
+  @keyframes image-reveal {
+    from { opacity: .35; }
+    to { opacity: 1; }
+  }
+</style>
