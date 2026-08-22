@@ -8,6 +8,7 @@
   import { probeStream, bustedUrl } from '@/modules/playback/probe.js'
   import { idleState, showsLoadingArt, loadingArt } from '@/modules/playback/loading-screen.js'
   import { helpersMayStart } from '@/modules/playback/quiet-start.js'
+  import { subtitleRestoreTarget } from '@/modules/playback/subtitle-restore.js'
   import SmartImage from '@/components/visual/SmartImage.svelte'
   import { savesProgress } from '@/modules/playback/resume.js'
   import { episodePrompt, EPISODE_PROMPT_DEADLINE } from '@/modules/playback/prompts.js'
@@ -192,23 +193,24 @@
     subs.renderer.resize()
     if (delayChanged) subs.renderer._timeupdate({ type: 'seeking' })
   }, 200) // stupid fix (resize) because video metadata doesn't update for multiple frames
+  /** Whether the remembered subtitle choice has already been applied to this file.
+   * selectCaptions announces itself through handleHeaders, which calls back in here —
+   * without this the pair recursed until the stack overflowed, taking the subtitle
+   * stream down with it. See modules/playback/subtitle-restore.js */
+  let subtitleRestored = false
   function checkSubtitle() {
     const lastSubtitle = cache.getEntry(caches.HISTORY, 'lastSubtitle')?.[`${media?.media?.id || media?.title || media?.parseObject?.title || media?.parseObject?.file_name}`]
-    if (subHeaders?.length && lastSubtitle) {
-      if (lastSubtitle === 'OFF') {
-        subs.selectCaptions(-1)
-        updateSubs()
-      } else {
-        for (const track of subHeaders) {
-          const trackName = (track?.language || (!Object.values(subs?.headers).some(header => header?.language === 'eng' || header?.language === 'en') ? 'eng' : track?.type)) + (track?.name ? ' - ' + track?.name : '')
-          if (matchPhrase(lastSubtitle, trackName, trackName?.length > 10 ? 3 : 2, true) && track?.number) {
-            subs.selectCaptions(track.number)
-            updateSubs()
-            break
-          }
-        }
-      }
-    }
+    const target = subtitleRestoreTarget({
+      headers: subHeaders,
+      remembered: lastSubtitle,
+      restored: subtitleRestored,
+      matches: (remembered, label, tolerance) => matchPhrase(remembered, label, tolerance, true)
+    })
+    if (target == null) return
+    // claimed BEFORE selecting, because selecting calls straight back in here
+    subtitleRestored = true
+    subs.selectCaptions(target)
+    updateSubs()
   }
 
   // if ('PresentationRequest' in window) {
@@ -308,6 +310,7 @@
     cancelRebuild()
     stall = null
     streamHelpersStarted = false
+    subtitleRestored = false
     showBuffering()
     if (file) {
       if (thumbnailData.video?.src) URL.revokeObjectURL(thumbnailData.video?.src)

@@ -127,13 +127,21 @@
   .nav-link > span,
   .nav-link-text {
     /* fast enough to feel like the button answered the pointer; .8s here read as lag */
-    transition: background .15s cubic-bezier(.25, .8, .25, 1), color .15s cubic-bezier(.25, .8, .25, 1), opacity .15s cubic-bezier(.25, .8, .25, 1) !important;
+    transition: background var(--motion-quick) var(--ease-settle), color var(--motion-quick) var(--ease-settle), opacity var(--motion-quick) var(--ease-settle) !important;
   }
   .nav-link > span:not(.nav-link-text) {
-    transition: background .15s cubic-bezier(.25, .8, .25, 1), color .15s cubic-bezier(.25, .8, .25, 1), transform .12s ease-out !important;
+    transition: background var(--motion-quick) var(--ease-settle), color var(--motion-quick) var(--ease-settle), scale var(--motion-quick) var(--ease-settle) !important;
+  }
+  /* the icon swells to meet the pointer and dips under a press: the whole of what makes a
+     menu button feel like it answered rather than merely changed colour */
+  @media (hover: hover) and (pointer: fine) {
+    .nav-link:hover > span:not(.nav-link-text) {
+      scale: 1.08;
+    }
   }
   .nav-link:active > span:not(.nav-link-text) {
-    transform: scale(.92);
+    scale: .92;
+    transition: scale var(--motion-press) var(--ease-press) !important;
   }
 
   .sidebar-center {

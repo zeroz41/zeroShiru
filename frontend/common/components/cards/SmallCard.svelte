@@ -113,7 +113,7 @@
   })
 </script>
 
-<div bind:this={container} class='d-flex px-md-20 px-sm-10 px-5 py-20 position-relative small-card-ct' class:not-reactive={!$reactive} use:hoverClick={[viewMedia, setHoverState, viewMedia]} on:focus={handleFocus}>
+<div bind:this={container} class='d-flex px-md-20 px-sm-10 px-5 py-20 position-relative small-card-ct' class:not-reactive={!$reactive} class:lift-parent={$reactive} use:hoverClick={[viewMedia, setHoverState, viewMedia]} on:focus={handleFocus}>
   {#if preview}
     <PreviewCard {media} {type} {_variables} bind:element={previewCard}/>
   {/if}
@@ -126,7 +126,7 @@
         </span>
       </div>
     {/if}
-    <div use:trackWidth class='d-inline-block position-relative mb-5'>
+    <div use:trackWidth class='d-inline-block position-relative mb-5 rounded lift' style:--lift-color={media.coverImage?.color || 'var(--tertiary-color)'}>
       <span class='airing-badge rounded-10 font-weight-semi-bold text-light bg-success' class:d-none={!airingInfo?.episode?.match(/out for/i)}>AIRING</span>
       <SmartImage class='d-inline-block cover-img cover-ratio w-full h-full rounded' color={media.coverImage?.color || 'var(--tertiary-color)'} images={[media.coverImage.extraLarge, media.coverImage?.medium, './no_image_cover.jpg']}/>
       {#if !_variables?.scheduleList}
@@ -203,16 +203,17 @@
   .item {
     width: 100%;
     aspect-ratio: 152/296;
-    /* a small, immediate answer to the pointer. Transform only — anything that paints
-       (shadows, filters) costs a repaint per frame per card on this webview, and a
-       springy overshoot read as the UI wobbling rather than responding */
-    transition: transform .15s ease-out;
+    /* a small, immediate answer to the pointer, on the `translate` property rather than
+       `transform` so nothing that positions itself with a transform is disturbed. The
+       shadow that comes with it is the .lift layer on the poster — see css.css */
+    transition: translate var(--motion) var(--ease-settle);
   }
   .small-card-ct:not(.not-reactive):hover .item {
-    transform: translateY(-.3rem);
+    translate: 0 -.5rem;
   }
   .small-card-ct:not(.not-reactive):active .item {
-    transform: translateY(0);
+    translate: 0 0;
+    transition: translate var(--motion-press) var(--ease-press);
   }
   .list-status-circle {
     background: var(--statusColor);

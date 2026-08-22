@@ -135,14 +135,37 @@ export function mutationObserver(callback, options = {}) {
  */
 export function resizeObserver(callback, options = {}) {
   return (node, _param) => {
-    const observer = new ResizeObserver(([entry]) => callback(node, entry))
+    // Answer on the next frame, never inside the observation.
+    //
+    // Every one of these callbacks measures an element and then writes a style back — a
+    // column height, a font scale, a row marker. Doing that while the engine is still
+    // delivering resize notifications restarts the whole cycle, which is exactly what
+    // "ResizeObserver loop completed with undelivered notifications" means: the user's
+    // main.log carried 59 of them, and each is a layout pass computed and thrown away.
+    // Deferring breaks the loop, and coalesces a burst — a window drag, the sidebar
+    // opening — into one call instead of one per intermediate size.
+    let frame = null
+    let latest = null
+    const deliver = entry => {
+      latest = entry
+      if (frame !== null) return
+      frame = raf(() => { frame = null; callback(node, latest) })
+    }
+    const observer = new ResizeObserver(([entry]) => deliver(entry))
     observer.observe(node, options)
     return {
-      update: () => requestAnimationFrame(() => callback(node, { contentRect: node.getBoundingClientRect() })),
-      destroy: () => observer.disconnect()
+      update: () => deliver({ contentRect: node.getBoundingClientRect() }),
+      destroy: () => {
+        if (frame !== null) cancelRaf(frame)
+        observer.disconnect()
+      }
     }
   }
 }
+
+/** Frame scheduling that also works where there are no frames — the TV core's shims. */
+const raf = callback => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(callback) : setTimeout(callback, 16))
+const cancelRaf = handle => (typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame(handle) : clearTimeout(handle))
 
 /**
  * Converts a number of seconds into a human-readable countdown string.

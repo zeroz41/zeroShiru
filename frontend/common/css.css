@@ -27,6 +27,46 @@
   --safe-area-navigation-bottom: var(--navigation-inset-bottom, 0px);
   --safe-area-gesture-bottom: var(--gesture-inset-bottom, 0px);
 
+  /* --- motion ------------------------------------------------------------------------
+     One vocabulary for how this app answers a pointer, so every surface answers the same
+     way. Fast off the mark and slow to stop is what reads as liquid rather than
+     mechanical; a press is quicker still, because a press that lags feels like a click
+     that was missed. Durations are short on purpose — this is feedback, not choreography.
+     What is animated is deliberately limited to the properties this webview composites:
+     opacity, and the individual `scale` and `translate` properties. NOT `transform`,
+     which is layout here — drawers, the miniplayer, cards and modals all position
+     themselves with it, and a blanket transform transition made every one of them trail
+     its own layout by a quarter second. `scale`/`translate` are separate properties that
+     sit at zero unless something here sets them, so they can be transitioned globally
+     without touching anything's position. */
+  --ease-settle: cubic-bezier(.16, .84, .34, 1);
+  --ease-press: cubic-bezier(.2, 0, 0, 1);
+  --motion-press: .09s;
+  --motion-quick: .12s;
+  --motion: .16s;
+  /* panels that change size or slide: long enough to read as a movement, short enough
+     that the pointer is never waiting on it. The sidebar used to take .8s to widen,
+     re-laying out and re-blurring its backdrop on every one of those frames. */
+  --motion-panel: .24s;
+  /* Elevation, on a DARK interface.
+     A black drop shadow is invisible against a near-black page. The first version of this
+     was exactly that — `hsla(var(--black-color-hsl), .5)`, which resolves to black at half
+     alpha over a background at 0-8% lightness — and the honest report was "I don't see a
+     single shadow". What reads as raised here is a thin light rim, a deep shadow under it
+     to seat it, and a bloom in the artwork's own colour where the surface has one
+     (`--lift-color`, set by the cards that know it).
+     Painted once and faded by opacity — never transitioned as a box-shadow, which re-blurs
+     the whole thing on every frame. Literal colours on purpose: a shadow built out of
+     variables is a shadow that vanishes entirely the day one of them does. */
+  --lift-shadow:
+    0 0 0 .15rem hsla(0, 0%, 100%, .22),
+    0 1.2rem 2.4rem hsla(0, 0%, 0%, .75),
+    0 0 3rem -.6rem var(--lift-color, transparent);
+  --lift-shadow-soft:
+    0 0 0 .1rem hsla(0, 0%, 100%, .16),
+    0 .6rem 1.4rem hsla(0, 0%, 0%, .6),
+    0 0 2rem -.6rem var(--lift-color, transparent);
+
   --accent-color: #e5204c;
   --highlight-color: #FFFFFF !important;
   --current-color: #3DB4F2 !important;
@@ -418,7 +458,7 @@
    miniplayer, cards and modals all POSITION themselves with transforms, and a blanket
    transform transition made all of it trail the layout by a quarter second. */
 a[href]:active, button:not([disabled], .not-reactive):active:not([data-sonner-toast] > button), fieldset:not([disabled]):active, input:not([disabled], [type='range'], .not-reactive):active, optgroup:not([disabled]):active, option:not([disabled]):active, select:not([disabled]):active, textarea:not([disabled]):active, details:active, [tabindex]:not([disabled], [tabindex="-1"], [aria-hidden="true"], .seekbar, .dropdown, .scoring, .not-reactive):active, [contenteditable]:active, [controls]:active {
-  transition: box-shadow 0.1s ease, filter 0.1s ease, transform 0.1s ease !important;
+  transition: box-shadow var(--motion-press) var(--ease-press), filter var(--motion-press) var(--ease-press), transform var(--motion-press) var(--ease-press) !important;
   filter: brightness(0.95) contrast(1.05) !important;
   box-shadow: 0 0 2rem hsla(var(--black-color-hsl), 0.1), 0 .4rem .6rem hsla(var(--black-color-hsl), 0.05) !important;
   transform: translateY(0.1rem) scale(.99) !important;
@@ -955,8 +995,11 @@ img[src=''], img[src=' '] {
 }
 
 .load-in {
+  /* no `will-change` here: this is on every card on the page, and a standing hint gives
+     every one of them its own compositing layer for the sake of 400ms it plays once. A
+     running animation is promoted while it runs anyway, which is exactly as long as the
+     promotion is worth having. */
   animation: .4s ease 0s 1 load-in;
-  will-change: transform;
 }
 @keyframes load-in {
   0% { transform: translateY(1.5rem) scale(0.98) }
@@ -1189,7 +1232,7 @@ img[src=''], img[src=' '] {
 
 @media (hover: hover) and (pointer: fine) {
   button:not([disabled]), input:not([disabled]), input:not([disabled]):not(.input-group input, .long-input), .input-group:not(:has(input:disabled)):not(:has(input.long-input)):not(.long-input), .icon.text-white:not([disabled]) > svg, .icon.text-dark-light:not([disabled]) > svg, .button:not([disabled]) > svg, .custom-switch:not([disabled]), .form-control:not([disabled], .long-input), .progressive:not([disabled]), .long-input:not([disabled]), .long-button:not([disabled]) {
-    transition: scale 0.2s ease;
+    transition: scale var(--motion) var(--ease-settle);
   }
   button.bg-dark:not([disabled]):hover {
     background: var(--dark-color-light) !important;
@@ -1232,15 +1275,58 @@ img[src=''], img[src=' '] {
   }
 }
 /* --- motion ------------------------------------------------------------------------
-   Interactive elements answer the pointer instead of snapping: one fast, consistent
-   ease for the states that change on hover/focus. Transform is deliberately NOT here —
-   drawers, the miniplayer, cards and modals all POSITION themselves with transforms,
-   and dragged elements (seekbar, sliders) must track the pointer with no lag. The
-   :active press above pins its own transition. Nothing here repaints large surfaces. */
+   Interactive elements answer the pointer instead of snapping: one ease, one duration,
+   everywhere. See the tokens at the top of this file for what may be animated and why
+   `transform` is not on the list. The :active press above pins its own transition. */
 .btn,
 .badge,
 .dropdown-item,
 a[href],
 [role='button'] {
-  transition: background-color .15s ease, color .15s ease, border-color .15s ease, opacity .15s ease, filter .15s ease;
+  transition:
+    background-color var(--motion) var(--ease-settle),
+    color var(--motion) var(--ease-settle),
+    border-color var(--motion) var(--ease-settle),
+    opacity var(--motion) var(--ease-settle),
+    filter var(--motion) var(--ease-settle),
+    translate var(--motion) var(--ease-settle),
+    scale var(--motion) var(--ease-settle);
+}
+
+/* A surface that rises to meet the pointer.
+   The shadow is a layer that is always there and always drawn, at zero opacity until it
+   is wanted: fading it is a composite, where transitioning the box-shadow itself would
+   re-blur a card-sized area on every frame — and a grid of cards means paying that for
+   every card the pointer crosses. The layer only ever paints OUTSIDE its own box, so it
+   covers nothing, and it takes the corner radius of whatever it is put on. */
+.lift {
+  position: relative;
+}
+.lift::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: var(--lift-shadow);
+  transition: opacity var(--motion) var(--ease-settle);
+}
+.lift-soft::after {
+  box-shadow: var(--lift-shadow-soft);
+}
+/* `.lift` on the surface that should cast the shadow; `.lift-parent` on whichever
+   ancestor owns the hover, where that is not the same element (a card hovers as a whole
+   and lifts only its poster). */
+@media (hover: hover) and (pointer: fine) {
+  .lift:hover::after,
+  .lift-parent:hover .lift::after {
+    opacity: 1;
+  }
+}
+/* the press takes the lift back down with it, so a click lands rather than hovers */
+.lift:active::after,
+.lift-parent:active .lift::after {
+  opacity: .4;
+  transition: opacity var(--motion-press) var(--ease-press);
 }

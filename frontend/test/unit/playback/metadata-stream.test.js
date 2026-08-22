@@ -140,3 +140,24 @@ test('destroy aborts every range request in flight', async () => {
   await new Promise(resolve => setTimeout(resolve, 300))
   assert.equal(spy.seen.subtitles.length, events, 'no events after destroy')
 })
+
+test('every read the parser opens stops early, and lets go of its connection', async () => {
+  // Each container tag the parser wants opens `bytes=0-` — the whole file — and breaks out
+  // the moment it has its tag. The abort in the stream's `finally` is the only thing that
+  // ends those requests, so NOTHING may be awaited before it.
+  //
+  // A caution, because this test would not have caught the bug that prompted it: the mock's
+  // body is an async generator and lets go the instant it is abandoned, where a real network
+  // stream does not. An `await reader.cancel()` was once put in front of that abort to tidy
+  // an AbortError out of the log; every suite here stayed green and the user could not play
+  // anything. Treat teardown order in RemoteFile as something tests cannot fully vouch for.
+  const { state, spy, metadata } = play({ getTime: () => 0 })
+  await until(() => spy.seen.subtitles.length >= 3, 8_000)
+  metadata.destroy()
+  await until(() => state.requests.every(request => request.done || request.aborted), 3_000)
+  const holding = state.requests.filter(request => !request.done && !request.aborted)
+  assert.deepEqual(holding.map(request => request.start), [], 'every read must have let go of its connection')
+  const runaway = state.requests.filter(request => request.served > 30_000)
+  assert.deepEqual(runaway.map(request => request.start), [], 'no read may drain the file looking for a tag')
+  assert.ok(state.served < FIXTURE.length, `starting up must not cost the file once over, served ${state.served} of ${FIXTURE.length}`)
+})

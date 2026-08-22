@@ -26,7 +26,7 @@
   }
   .tab-label > span {
     color: var(--highlight-color);
-    transition: background .8s cubic-bezier(0.25, 0.8, 0.25, 1), color .8s cubic-bezier(0.25, 0.8, 0.25, 1);
+    transition: background var(--motion) var(--ease-settle), color var(--motion) var(--ease-settle);
   }
   .tab-label:active > span {
     background: var(--highlight-color);

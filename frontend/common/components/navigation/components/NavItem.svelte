@@ -141,14 +141,12 @@
     opacity: .5;
   }
   .noselect-transition {
-    transition: opacity .8s cubic-bezier(.25, .8, .25, 1);
+    transition: opacity var(--motion) var(--ease-settle);
   }
   :global(.donate) {
     animation: pink_glow 1s ease-in-out infinite alternate;
-    will-change: drop-shadow;
   }
   :global(.notify) {
-    will-change: drop-shadow;
     animation: purple_glow 1s ease-in-out infinite alternate, bell_shake 10s infinite;
   }
   :global(.fill-1) {

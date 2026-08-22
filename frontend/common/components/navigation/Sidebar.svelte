@@ -86,7 +86,7 @@
     left: unset;
   }
   .sidebar.animated, .sidebar-overlay.animated {
-    transition: width .8s cubic-bezier(.25, .8, .25, 1), left .8s cubic-bezier(.25, .8, .25, 1) !important;
+    transition: width var(--motion-panel) var(--ease-settle), left var(--motion-panel) var(--ease-settle) !important;
   }
   .sidebar.animated:not(.open):hover {
     width: 22rem;

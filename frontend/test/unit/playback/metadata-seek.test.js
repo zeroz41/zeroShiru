@@ -28,6 +28,11 @@ function play (opts = {}) {
   return { state, spy, clock, metadata }
 }
 
+/** The subtitle stream's own read: open-ended, and — since it starts on the cluster holding
+ * the playhead rather than at the top of the file — never at byte zero. The container reads
+ * the parser makes for its header tags all start at zero, and the cue index read is bounded. */
+const isStream = request => request.openEnded && request.start > 0
+
 const cueTimes = spy => spy.seen.subtitles.map(({ subtitle }) => subtitle.time)
 const cueNear = (spy, seconds, slack = 45) => cueTimes(spy).some(time => Math.abs(time - seconds * 1_000) <= slack * 1_000)
 
@@ -118,7 +123,7 @@ test('a seek while the connection is stalled still restarts the stream', async (
   // the head of the file loads, then the connection dies silently: bytes stop, nothing errors.
   // A seek must abort that read and land near the target anyway — this used to hang forever.
   const { state, spy, clock, metadata } = play({
-    behave: (request, position) => request.start === 0 && position >= 8_192 ? 'stall' : undefined
+    behave: (request, position) => isStream(request) && request.start < 20_000 && position >= 8_192 ? 'stall' : undefined
   })
   await until(() => spy.seen.subtitles.length >= 1)
 
@@ -126,7 +131,7 @@ test('a seek while the connection is stalled still restarts the stream', async (
   await until(() => cueNear(spy, 450), 8_000)
   metadata.destroy()
   assert.ok(cueNear(spy, 450), 'the seek must escape the stalled request')
-  const stalledRequest = state.requests.find(request => request.start === 0)
+  const stalledRequest = state.requests.find(isStream)
   assert.ok(stalledRequest.aborted, 'the stalled request must have been torn down, not left hanging')
 })
 
@@ -136,36 +141,37 @@ test('a connection that goes quiet is retried, and subtitles resume where they s
   let stalls = 0
   const { state, spy, metadata } = play({
     behave: (request, position) => {
-      if (request.start === 0 && position >= 8_192 && stalls === 0) {
+      if (isStream(request) && position >= 8_192 && stalls === 0) {
         stalls++
         return 'stall'
       }
     }
   })
-  await until(() => state.requests.some(request => request.start >= 4_096 && request.served > 0), 8_000)
+  await until(() => state.requests.filter(isStream).length >= 2, 8_000)
+  const retry = state.requests.filter(isStream).at(-1)
   await until(() => spy.seen.subtitles.length >= 8, 8_000)
   metadata.destroy()
   assert.ok(stalls === 1 && spy.seen.subtitles.length >= 8, `the retry must pick the stream back up, got ${spy.seen.subtitles.length} cues`)
-  const retry = state.requests.at(-1)
-  assert.ok(retry.start >= 4_096, `the retry must resume near where the stall cut off, not from zero, started at ${retry.start}`)
+  assert.ok(retry.start >= 8_192, `the retry must resume where the stall cut off, not from the beginning, started at ${retry.start}`)
 })
 
 test('a connection error mid-stream is retried from the same offset', async () => {
   let dropped = false
   const { state, spy, metadata } = play({
     behave: (request, position) => {
-      if (request.start === 0 && position >= 8_192 && !dropped) {
+      if (isStream(request) && position >= 8_192 && !dropped) {
         dropped = true
         return 'error'
       }
     }
   })
+  await until(() => state.requests.filter(isStream).length >= 2, 10_000)
   await until(() => spy.seen.subtitles.length >= 8, 10_000)
   metadata.destroy()
   assert.ok(dropped, 'sanity: the error fired')
   assert.ok(spy.seen.subtitles.length >= 8, 'cues keep streaming after the drop')
-  const retry = state.requests.find(request => request.start >= 4_096 && request.start <= 12_288)
-  assert.ok(retry, `the retry must resume from the failure offset, saw starts: ${state.requests.map(request => request.start).join(', ')}`)
+  const retry = state.requests.filter(isStream).at(-1)
+  assert.ok(retry.start >= 8_192 && retry.start <= 12_288, `the retry must resume from the failure offset, saw starts: ${state.requests.map(request => request.start).join(', ')}`)
 })
 
 test('a link that keeps dying is given up on after its retries, quietly', async () => {
@@ -241,3 +247,35 @@ test('a seek that produces no subtitles says so, and a seek that works says noth
     console.warn = realWarn
   }
 }, 20_000)
+
+test('the first read starts at the first cluster, not at byte zero', async () => {
+  // Reading from zero downloads the header, the chapters and every embedded font before the
+  // first cue — tens of megabytes on a real release, paid while the video is prerolling on
+  // the same link. The file's own seek index says exactly where the first cluster is.
+  const { state, spy, metadata } = play()
+  await until(() => spy.seen.subtitles.length >= 3, 8_000)
+  metadata.destroy()
+
+  const first = state.requests.find(isStream)
+  assert.ok(first, `the subtitle stream must open a read past the header, saw starts: ${state.requests.map(request => request.start).join(', ')}`)
+  // and not somewhere approximate: on the exact cluster the file's own index names
+  assert.equal(first.start, metadata.cuesIndex[0].byte, 'the first read lands on the first indexed cluster')
+  assert.ok(state.requests.every(request => request.start !== 0 || request.served < first.start + 4_096),
+    'nothing streams the header block twice over')
+  const times = cueTimes(spy)
+  assert.ok(times.includes(0), `the cue at the very start must still arrive, got ${times.slice(0, 5)}`)
+  assert.ok(times.every(time => time >= 0 && time <= 600_000), 'cue timestamps stay in the file')
+})
+
+test('a file whose seek index cannot be read still reads from the top', async () => {
+  // no index means no way to know where the clusters are: the old, slower path is the only
+  // one that cannot miss a cue, so it must still be there
+  const { state, spy, metadata } = play({
+    behave: request => { if (!request.openEnded) return 'error' } // the bounded cue index read fails
+  })
+  await until(() => spy.seen.subtitles.length >= 3, 8_000)
+  metadata.destroy()
+  assert.equal(metadata.cuesIndex, null, 'the cue read was refused')
+  assert.ok(!state.requests.some(isStream), 'without an index every read starts at the top')
+  assert.ok(cueTimes(spy).includes(0), 'and the first cue still arrives')
+})

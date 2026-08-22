@@ -41,7 +41,9 @@ export function serveRemote (bytes, url, opts = {}) {
     const start = match ? Number(match[1]) : 0
     const end = match?.[2] ? Number(match[2]) : bytes.length - 1
     const signal = init.signal
-    const request = { start, end, served: 0, done: false, get aborted () { return Boolean(signal?.aborted) } }
+    // open-ended is how the subtitle stream reads and how a bounded index read does not:
+    // it is the only thing that tells the two apart once the stream stopped starting at zero
+    const request = { start, end, openEnded: !match?.[2], served: 0, done: false, get aborted () { return Boolean(signal?.aborted) } }
     state.requests.push(request)
     const chunkSize = opts.chunkSize ?? 4096
     async function * body () {

@@ -13,6 +13,10 @@ const AHEAD_SECONDS = 120
 const JUMP_BACK_SECONDS = 15
 const RETRIES = 3
 const MAX_ANDROID_FONT = 15_000_000 // matches the torrent client's guard
+// how long the first read waits for the file's own seek index before giving up and reading
+// from the top. It is one bounded range request against a link that just answered a probe,
+// so this is a backstop, not a budget
+const FIRST_READ_CUE_WAIT = 2_500
 
 /**
  * Blob-like wrapper around a remote URL so matroska-metadata can read it through HTTP range
@@ -53,6 +57,17 @@ class RemoteFile {
             // end the stream quietly rather than surfacing a failure nobody can act on
             if (error?.name !== 'AbortError') throw error
           } finally {
+            // NOTHING may be awaited before this abort, and the body must be iterated
+            // rather than read through a reader of our own. Every reader of this file stops
+            // early on purpose — each header tag the parser wants opens `bytes=0-`, the
+            // whole file, and breaks out the moment it has its tag — so this abort is what
+            // ends those requests, and it must be the first thing that happens.
+            // 2026-08-22: an `await reader.cancel()` was put in front of it to tidy an
+            // AbortError out of the log. Every suite stayed green and the user could not
+            // play anything at all until it was reverted. The mechanism was never pinned
+            // down — the mock body lets go instantly where a network stream need not — so
+            // treat this as measured behaviour rather than a theory, and change it only
+            // with evidence from a real link.
             controllers.delete(controller)
             controller.abort()
           }
@@ -97,6 +112,8 @@ export default class DebridMetadata {
    * renderer, so a seek back into one needs nothing from the link. See cue-index.js. */
   #covered = []
   #cuesRequested = false
+  /** @type {Promise<void> | null} Settles when the cue read has finished, either way. */
+  #cuesReady = null
   /** Media duration in ms once known, bounding what counts as a real seek target. */
   #durationMs = 0
 
@@ -182,6 +199,8 @@ export default class DebridMetadata {
     const durationMs = await this.metadata.duration
     this.#durationMs = durationMs > 0 ? durationMs : 0
     const byteRate = durationMs > 0 ? this.file.size / (durationMs / 1_000) : 0
+    if (from === 0) from = await this.#firstReadTarget(byteRate)
+    if (this.destroyed) return
     // the window of bytes fed to the parser so far, seeks outside it restart the stream
     let start = from
     let offset = from
@@ -262,6 +281,57 @@ export default class DebridMetadata {
   }
 
   /**
+   * Where the very first read should begin.
+   *
+   * Reading a Matroska file from byte zero means downloading everything the muxer put in
+   * front of the video: the header, the chapters, and — in ordinary anime releases — the
+   * font attachments, which are commonly ten to thirty megabytes. Not one byte of that
+   * produces a subtitle cue; the fonts are read separately through their own request, and
+   * this pass discards them. The user waits through the download anyway, at the exact
+   * moment the video pipeline is prerolling on the same link and the same six-connection
+   * pool. That was "subtitles take a few seconds at the start of an episode", and on a
+   * resumed episode it was worse: the read started at zero and only jumped once the cue
+   * index landed.
+   *
+   * So the first read starts where the first cue the viewer can see actually lives: the
+   * cluster holding the playhead, from the file's own seek index. Without an index — or
+   * if it does not arrive promptly — this is byte zero and the old behaviour stands, which
+   * is slow but never misses a cue.
+   *
+   * @param {number} byteRate
+   * @returns {Promise<number>}
+   */
+  async #firstReadTarget (byteRate) {
+    try {
+      await Promise.race([this.#cuesReady, sleep(FIRST_READ_CUE_WAIT)])
+    } catch { /* a failed cue read just leaves the estimate in charge */ }
+    if (this.destroyed || !this.cuesIndex) return 0
+    // cue times are in raw timecode units; skipping the header means the stream never sees
+    // the TimecodeScale tag, so take it from the Info element the duration read cached
+    await this.#syncTimecodeScale()
+    if (this.destroyed) return 0
+    const target = this.#restartTarget(byteRate, 0, 0)
+    if (!target || target <= 0) return 0
+    debug(`Starting the subtitle stream at cluster byte ${target}, skipping ${target} bytes of header and attachments`)
+    return target
+  }
+
+  /**
+   * Reads TimecodeScale off the Info element, which the duration read has already fetched.
+   * Every cue timestamp is scaled by it, and the parser only learns it by reading the
+   * header — which the first-cluster start deliberately skips.
+   */
+  async #syncTimecodeScale () {
+    try {
+      const info = await this.metadata.readSeekHeadTag('Info')
+      const scale = info?.Children?.find(child => child?.id === EbmlTagId.TimecodeScale)?.data
+      if (scale) this.metadata.timecodeScale = Number(scale) / 1_000_000
+    } catch (error) {
+      debug('Failed to read the timecode scale, the default stands:', error)
+    }
+  }
+
+  /**
    * Says so, once, if a restart after a seek delivers nothing.
    *
    * Subtitles going missing after a seek is a symptom with several possible causes — a
@@ -304,9 +374,9 @@ export default class DebridMetadata {
    * link that will not serve them, just leaves the estimate in charge as before.
    */
   #loadCues () {
-    if (this.#cuesRequested || !this.metadata || !this.remote) return
+    if (this.#cuesRequested || !this.metadata || !this.remote) return this.#cuesReady
     this.#cuesRequested = true
-    Promise.resolve(this.metadata.seekHead).then(async seekHead => {
+    this.#cuesReady = Promise.resolve(this.metadata.seekHead).then(async seekHead => {
       const position = seekHead?.Cues?.data
       if (position == null || this.destroyed) return
       const start = this.metadata.segmentStart + Number(position)
@@ -321,6 +391,7 @@ export default class DebridMetadata {
         ? `Read ${this.cuesIndex.length} cue points; seeks will restart the subtitle stream exactly`
         : 'The file lists no usable cue points; seeks fall back to the bitrate estimate')
     }).catch(error => debug('Failed to read cues, seeks fall back to the bitrate estimate:', error))
+    return this.#cuesReady
   }
 
   /**

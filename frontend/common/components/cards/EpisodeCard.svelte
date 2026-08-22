@@ -133,11 +133,15 @@
   $: if (!preview) document.removeEventListener('pointerup', handleOutsideClick)
 </script>
 
-<div bind:this={container} class='d-flex p-20 pb-10 position-relative episode-card' class:mb-100={section} class:not-reactive={!$reactive} use:hoverClick={[setClickState, setHoverState, viewMedia]} on:focus={handleFocus}>
+<div bind:this={container} class='d-flex p-20 pb-10 position-relative episode-card' class:mb-100={section} class:not-reactive={!$reactive} class:lift-parent={$reactive} use:hoverClick={[setClickState, setHoverState, viewMedia]} on:focus={handleFocus}>
   {#if preview}
     <EpisodePreviewCard {data} {zeroEpisode} bind:prompt={$prompt} bind:element={previewCard} />
   {/if}
   <div class='item load-in d-flex flex-column h-full pointer content-visibility-auto' class:opacity-half={completed}>
+    <!-- the shadow lives on a wrapper, not on .image: that one clips its own overflow to
+         keep the artwork inside its rounded corners, and a shadow drawn inside it would be
+         clipped away with everything else -->
+    <div class='w-full rounded lift lift-soft' style:--lift-color={media?.coverImage?.color || 'var(--tertiary-color)'}>
     <div class='image h-200 w-full position-relative rounded overflow-hidden d-flex justify-content-between align-items-end text-white'>
       <SmartImage class='cover-img w-full h-full position-absolute {!(data.episodeData?.image || media?.bannerImage) && media?.genres?.includes(`Hentai`) ? `cover-rotated cr-380` : ``}' color={media?.coverImage?.color || 'var(--tertiary-color)'} images={[episodeThumbnail, (!media ? './404_episode.jpg' : './no_image_episode.jpg')]}/>
       {#if data.failed}
@@ -166,6 +170,7 @@
           <div class='progress-bar' style='width: {$progress}%' />
         </div>
       {/if}
+    </div>
     </div>
     <div class='row pt-15'>
       <div class='col pr-10'>
@@ -235,13 +240,14 @@
   }
   /* same quiet answer as the show cards: a small immediate rise, transform only */
   .episode-card .item {
-    transition: transform .15s ease-out;
+    transition: translate var(--motion) var(--ease-settle);
   }
   .episode-card:not(.not-reactive):hover .item {
-    transform: translateY(-.3rem);
+    translate: 0 -.4rem;
   }
   .episode-card:not(.not-reactive):active .item {
-    transform: translateY(0);
+    translate: 0 0;
+    transition: translate var(--motion-press) var(--ease-press);
   }
   .mt-3 {
     margin-top: 0.3rem;

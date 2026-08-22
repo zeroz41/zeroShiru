@@ -1,7 +1,7 @@
 <script>
   import { nearViewport } from '@/modules/preload.js'
   import { COMMON } from '@/modules/bridge.js'
-  import { rememberShown, wasShown } from '@/modules/lib/image-memory.js'
+  import { rememberShown, wasShown, imageSignature } from '@/modules/lib/image-memory.js'
 
   export let images = []
   /** Skip the wait: for art that is on screen from the start, like the home banner. */
@@ -23,9 +23,23 @@
    * An image the session has already shown skips both the lazy gate and the fade. */
   let reveal = false
   let ready = eager
-  $: if (images) { index = 0; resolvedImages = []; failed = false; }
+  /** What the current candidate list actually IS, rather than which array object it came
+   * in as. Every call site builds the list inline — `images={[cover, fallback]}` — so the
+   * prop is a brand new array on every render of the parent, whatever it holds. Resetting
+   * on that identity threw away resolved art and re-ran the whole load for a card whose
+   * picture had not changed, which is a placeholder flash per parent update. */
+  let signature = imageSignature(images)
+  $: reset(images)
   $: filteredImages = images.filter(Boolean)
   $: loadNextImage(index, filteredImages)
+  function reset (images) {
+    const next = imageSignature(images)
+    if (next !== null && next === signature) return
+    signature = next
+    index = 0
+    resolvedImages = []
+    failed = false
+  }
   async function loadNextImage(index, filteredImages) {
     // nothing to try is a plain miss: without this the element asked the host for a
     // literal "0_404.jpg", a file that has never existed, on every render with no art
@@ -101,7 +115,7 @@
     loading='eager'
     decoding='async'
     referrerpolicy='no-referrer'
-    src={(!hidden && !failed) ? ((loading || !near) ? PLACEHOLDER : resolvedImages[index] || PLACEHOLDER) : ''}
+    src={(!hidden && !failed) ? ((!near || (loading && !resolvedImages[index])) ? PLACEHOLDER : resolvedImages[index] || PLACEHOLDER) : ''}
 />
 <style>
   /* the first time an image arrives it fades up from the colored placeholder instead of

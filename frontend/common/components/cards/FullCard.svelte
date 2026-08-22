@@ -46,7 +46,7 @@
 </script>
 
 <div class='d-flex px-md-20 px-sm-10 px-5 py-10 position-relative justify-content-center full-card-ct' use:click={viewMedia}>
-  <div class='card load-in m-0 p-0 pointer full-card rounded' class:airing={airingInfo?.episode.match(/out for/i)} style:--color={media.coverImage?.color || 'var(--tertiary-color)'}>
+  <div class='card load-in m-0 p-0 pointer full-card rounded lift' class:airing={airingInfo?.episode.match(/out for/i)} style:--color={media.coverImage?.color || 'var(--tertiary-color)'} style:--lift-color={media.coverImage?.color || 'var(--tertiary-color)'}>
     <div class='row h-full'>
       <div use:trackWidth class='img-col d-inline-block position-relative col-3 col-md-4'>
         <span class='airing-badge rounded-10 font-weight-semi-bold text-light bg-success' class:d-none={!airingInfo?.episode?.match(/out for/i)}>AIRING</span>
@@ -173,10 +173,18 @@
     height: 27rem !important;
     box-shadow: hsla(var(--dark-color-very-light-hsl), 0.3) 0 7px 15px, hsla(var(--dark-color-very-light-hsl), 0.05) 0 4px 4px;
     contain-intrinsic-height: 27rem;
-    transition: transform 0.2s ease;
+    /* the `scale` property, not a transform: same rise, without claiming an element's
+       transform — and it deepens the .lift shadow with it. See css.css */
+    transition: scale var(--motion) var(--ease-settle);
   }
-  .card:hover{
-    transform: scale(1.03);
+  @media (hover: hover) and (pointer: fine) {
+    .card:hover {
+      scale: 1.03;
+    }
+  }
+  .card:active {
+    scale: 1;
+    transition: scale var(--motion-press) var(--ease-press);
   }
   .card-grid {
     display: grid;

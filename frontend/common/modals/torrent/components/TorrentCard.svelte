@@ -386,7 +386,7 @@
   }
 </script>
 
-<div class='card bg-dark p-15 d-flex mx-0 mb-10 mt-0 position-relative rounded-3' class:pointer={type !== 'error'} class:scale={type !== 'error'} class:not-reactive={!$reactive || type === 'error'} class:glow={countdown > -1} class:error-card={type === 'error'} role='button' tabindex='0' use:click={() => type !== 'error' && play(result)} on:contextmenu|preventDefault={() => type !== 'error' && copyToClipboard(result.link, 'magnet URL')} title={type === 'error' ? `${result.source?.name || 'Unknown Source'}: ${result.title}` : result.parseObject?.file_name}>
+<div class='card bg-dark p-15 d-flex mx-0 mb-10 mt-0 position-relative rounded-3' class:pointer={type !== 'error'} class:scale={type !== 'error'} class:lift={type !== 'error'} class:lift-soft={type !== 'error'} class:not-reactive={!$reactive || type === 'error'} class:glow={countdown > -1} class:error-card={type === 'error'} role='button' tabindex='0' use:click={() => type !== 'error' && play(result)} on:contextmenu|preventDefault={() => type !== 'error' && copyToClipboard(result.link, 'magnet URL')} title={type === 'error' ? `${result.source?.name || 'Unknown Source'}: ${result.title}` : result.parseObject?.file_name}>
   <div class='position-absolute top-0 left-0 w-full h-full'>
     <div class='position-absolute w-full h-full overflow-hidden rounded-3 error-overlay z-5 pointer-events-none' class:d-none={type !== 'error'}/>
     <div class='position-absolute w-full h-full overflow-hidden rounded-3' class:image-border={type === 'default'} >
@@ -494,10 +494,18 @@
 
 <style>
   .scale {
-    transition: transform 0.2s ease;
+    /* the `scale` property rather than a transform, so nothing that positions itself is
+       claimed, and the .lift shadow rises with it. See css.css */
+    transition: scale var(--motion) var(--ease-settle);
   }
-  .scale:hover {
-    transform: scale(1.015);
+  @media (hover: hover) and (pointer: fine) {
+    .scale:hover {
+      scale: 1.015;
+    }
+  }
+  .scale:active {
+    scale: 1;
+    transition: scale var(--motion-press) var(--ease-press);
   }
   .border-best {
     border: .1rem solid var(--tertiary-color);
