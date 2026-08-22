@@ -77,23 +77,33 @@
     }
   }
 
+  // one growth decision per frame, not one per scroll event: a fling fires dozens of
+  // scroll events a frame, and each one re-ran the row's whole {#each}
+  let scrollScheduled = false
   function handleScroll() {
-    if (scrollContainer && ((scrollContainer.scrollWidth - scrollContainer.clientWidth) - scrollContainer.scrollLeft < 100)) {
-      visibleLength = Math.min((visibleLength || previewLength) + overflowLength, loadableLength)
-    }
+    if (scrollScheduled) return
+    scrollScheduled = true
+    requestAnimationFrame(() => {
+      scrollScheduled = false
+      if (scrollContainer && ((scrollContainer.scrollWidth - scrollContainer.clientWidth) - scrollContainer.scrollLeft < 100)) {
+        visibleLength = Math.min((visibleLength || previewLength) + overflowLength, loadableLength)
+      }
+    })
   }
 
   let timeout
   const trackSectionWidth = resizeObserver((node) => {
     clearTimeout(timeout)
     timeout = setTimeout(() => {
-      const cardItem = node.querySelectorAll('.small-card-ct, .full-card-ct, .episode-card')
-      if (cardItem) previewLength = (Math.floor(node.offsetWidth / cardItem.offsetWidth) || defaultLength) + overflowLength
+      // querySelector, not querySelectorAll: a NodeList has no offsetWidth, so this
+      // computed NaN and every row silently fell back to the default length
+      const cardItem = node.querySelector('.small-card-ct, .full-card-ct, .episode-card')
+      if (cardItem?.offsetWidth) previewLength = Math.floor(node.offsetWidth / cardItem.offsetWidth) + overflowLength
     }, 15)
   })
 
   onMount(() => {
-    scrollContainer.addEventListener('scroll', handleScroll)
+    scrollContainer.addEventListener('scroll', handleScroll, { passive: true })
   })
   onDestroy(() => {
     scrollContainer.removeEventListener('scroll', handleScroll)
@@ -109,7 +119,7 @@
   <div class='pb-10 w-full d-flex flex-row justify-content-start gallery {!opts.isRSS ? `pl-15 pl-sm-10 pl-md-0` : ``}' class:pt-10={!opts.isRSS && $settings.cards === `full`} use:dragScroll use:trackSectionWidth bind:this={scrollContainer}>
     <Card card={($preview || fakecards)[0]} variables={{...opts.variables, section: true}} />
     {#if sectionVisible}
-      {#each ($preview || fakecards).slice(1, visibleLength || previewLength) as card}
+      {#each ($preview || fakecards).slice(1, visibleLength || previewLength) as card (card)}
         <Card {card} variables={{...opts.variables, section: true}} />
       {/each}
     {/if}

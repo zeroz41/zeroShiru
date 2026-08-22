@@ -105,7 +105,19 @@ export function createDeferred() {
 export const baseFontSize = (() => {
   const store = writable(typeof getComputedStyle !== 'undefined' ? parseFloat(getComputedStyle(document.documentElement).fontSize) : 16)
   if (typeof ResizeObserver !== 'undefined') {
-    const observer = new ResizeObserver(() => store.value = parseFloat(getComputedStyle(document.documentElement).fontSize))
+    // measured on the next frame, never inside the observation: getComputedStyle here
+    // re-entered layout while resize notifications were still being delivered — the
+    // last "ResizeObserver loop completed with undelivered notifications" generator,
+    // firing on every window resize
+    let frame = null
+    const observer = new ResizeObserver(() => {
+      if (frame) return
+      frame = requestAnimationFrame(() => {
+        frame = null
+        const size = parseFloat(getComputedStyle(document.documentElement).fontSize)
+        if (size && size !== store.value) store.value = size
+      })
+    })
     observer.observe(document.documentElement)
   }
   return store

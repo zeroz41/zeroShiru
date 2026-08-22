@@ -143,11 +143,14 @@
   .noselect-transition {
     transition: opacity var(--motion) var(--ease-settle);
   }
+  /* shadow painted once, breathed by opacity — see glow_breathe in css.css */
   :global(.donate) {
-    animation: pink_glow 1s ease-in-out infinite alternate;
+    filter: drop-shadow(0 0 0.8rem var(--quattuordenary-color));
+    animation: glow_breathe 1s ease-in-out infinite alternate;
   }
   :global(.notify) {
-    animation: purple_glow 1s ease-in-out infinite alternate, bell_shake 10s infinite;
+    filter: drop-shadow(0 0 1.2rem var(--notify-color));
+    animation: glow_breathe 1s ease-in-out infinite alternate, bell_shake 10s infinite;
   }
   :global(.fill-1) {
     color: var(--fill-button-color);

@@ -59,15 +59,33 @@ function keepWarm (url) {
 }
 
 /**
+ * The one identity an image URL has, whatever form a caller held it in. What loaded is
+ * remembered from the element's absolute `currentSrc`, but the lazy gate asks with the
+ * raw candidate string — and for local fallback art (`./no_image_cover.jpg`) those never
+ * matched, so local placeholders re-played the gate and the fade on every remount.
+ * @param {string} [url]
+ * @returns {string | null}
+ */
+function identity (url) {
+  if (!url || typeof url !== 'string' || url.startsWith('data:')) return null
+  try {
+    return new URL(url, typeof document !== 'undefined' ? document.baseURI : undefined).href
+  } catch {
+    return url // no base to resolve against: the raw string is the best identity there is
+  }
+}
+
+/**
  * Records that an image finished loading on screen.
  * @param {string} [url] - The src that loaded; data: placeholders are nobody's memory.
  */
 export function rememberShown (url) {
-  if (!url || typeof url !== 'string' || url.startsWith('data:')) return
-  if (shown.has(url)) shown.delete(url) // re-adding keeps it fresh under eviction
+  const key = identity(url)
+  if (!key) return
+  if (shown.has(key)) shown.delete(key) // re-adding keeps it fresh under eviction
   if (shown.size >= IMAGE_MEMORY_LIMIT) shown.delete(shown.values().next().value)
-  shown.add(url)
-  keepWarm(url)
+  shown.add(key)
+  keepWarm(key)
 }
 
 /**
@@ -76,7 +94,8 @@ export function rememberShown (url) {
  * @param {string} [url]
  */
 export function wasShown (url) {
-  return typeof url === 'string' && shown.has(url)
+  const key = identity(url)
+  return Boolean(key && shown.has(key))
 }
 
 /**

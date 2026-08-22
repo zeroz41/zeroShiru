@@ -105,3 +105,21 @@ test('a candidate that is a promise or a function describes nothing, and starts 
 test('a missing candidate holds its place, so a gap is not the same as no gap', () => {
   assert.notEqual(imageSignature([null, 'https://cdn/cover.jpg']), imageSignature(['https://cdn/cover.jpg']))
 })
+
+test('a relative candidate and the absolute src it loaded as are one memory', () => {
+  // rememberShown receives the element's absolute currentSrc; the lazy gate asks with
+  // the raw candidate string. For local fallback art those strings never matched, so
+  // the placeholder image re-played the gate and the fade on every single remount.
+  const hadDocument = globalThis.document
+  globalThis.document = { baseURI: 'https://app.test/index.html' }
+  try {
+    rememberShown('https://app.test/no_image_cover.jpg')
+    assert.equal(wasShown('./no_image_cover.jpg'), true, 'the candidate resolves to what loaded')
+    assert.equal(wasShown('/no_image_cover.jpg'), true)
+    assert.equal(wasShown('./other.jpg'), false)
+  } finally {
+    if (hadDocument === undefined) delete globalThis.document
+    else globalThis.document = hadDocument
+    forgetShown()
+  }
+})

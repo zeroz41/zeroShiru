@@ -969,22 +969,17 @@ img[src=''], img[src=' '] {
   transition: color .2s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
+/* Glows breathe by OPACITY over a shadow painted once, never by animating the filter
+   itself: an animated drop-shadow is a full CPU filter pass per frame, and these run
+   forever on the sidebar and on every favourited card. Dimming the element dims its
+   painted glow with it, which reads the same and costs a compositor fade. */
 .favourite {
-  animation: favourite_glow 1s ease-in-out infinite alternate;
-  will-change: drop-shadow;
+  filter: drop-shadow(0 0 1.2rem var(--tertiary-color));
+  animation: glow_breathe 1s ease-in-out infinite alternate;
 }
-@keyframes favourite_glow {
-  from { filter: drop-shadow(0 0 1.5rem var(--tertiary-color)) }
-  to { filter: drop-shadow(0 0 0.4rem var(--tertiary-color)) }
-}
-
-@keyframes pink_glow {
-  from { filter: drop-shadow(0 0 1rem var(--quattuordenary-color)); }
-  to { filter: drop-shadow(0 0 0.5rem var(--quattuordenary-color)); }
-}
-@keyframes purple_glow {
-  from { filter: drop-shadow(0 0 2rem var(--notify-color)); }
-  to { filter: drop-shadow(0 0 0.2rem var(--notify-color)); }
+@keyframes glow_breathe {
+  from { opacity: 1 }
+  to { opacity: .68 }
 }
 @keyframes bell_shake {
   0%, 7.5% { transform: rotate(0deg); }

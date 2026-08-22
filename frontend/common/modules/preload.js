@@ -84,12 +84,27 @@ function releasePool (root, margin, pool) {
  * @param {Element} node
  * @returns {Element | null}
  */
+/** Whether an element scrolls, remembered per element: a home page mounts hundreds of
+ * images and every one of them walks the same ancestor chain, and getComputedStyle per
+ * ancestor per mount was a forced style pass apiece. An element's overflow essentially
+ * never changes while it is mounted; a page switch mounts new elements and starts fresh. */
+const scrollerVerdicts = new WeakMap()
+
+function isScroller (element) {
+  let verdict = scrollerVerdicts.get(element)
+  if (verdict === undefined) {
+    const style = getComputedStyle(element)
+    verdict = /auto|scroll|overlay/.test(`${style?.overflowY} ${style?.overflowX}`)
+    scrollerVerdicts.set(element, verdict)
+  }
+  return verdict
+}
+
 export function scrollRoot (node) {
   if (typeof getComputedStyle !== 'function') return null
   let outermost = null
   for (let element = node?.parentElement; element; element = element.parentElement) {
-    const style = getComputedStyle(element)
-    if (/auto|scroll|overlay/.test(`${style?.overflowY} ${style?.overflowX}`)) outermost = element
+    if (isScroller(element)) outermost = element
   }
   return outermost
 }
