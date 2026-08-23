@@ -94,7 +94,7 @@ class RSSMediaManager {
     // resultMap is set after that, and the 30s poller keeps going to the network,
     // so a new episode still shows up within a poll of being published.
     if (!ignoreChanged && !this.resultMap[url]) {
-      const cachedFeed = await cache.cachedEntry(caches.QUERY_RSS, `${btoa(url)}`, false)
+      const cachedFeed = await cache.cachedEntry(caches.QUERY_RSS, `${btoa(unescape(encodeURIComponent(url)))}`, false)
       if (cachedFeed) {
         content = DOMPARSER(cachedFeed, 'text/xml')
         fromCache = true
@@ -104,7 +104,7 @@ class RSSMediaManager {
       try {
         content = await getRSSContent(url)
       } catch (e) {
-        const cachedEntry = await cache.cachedEntry(caches.QUERY_RSS, `${btoa(url)}`, true)
+        const cachedEntry = await cache.cachedEntry(caches.QUERY_RSS, `${btoa(unescape(encodeURIComponent(url)))}`, true)
         if (cachedEntry) {
           debug(`Failed to request RSS feed for ${url}, this is likely due to an outage... falling back to cached data.`)
           content = DOMPARSER(cachedEntry, 'text/xml')
@@ -114,19 +114,24 @@ class RSSMediaManager {
     }
     if (!content) return false
 
-    const pubDate = +(new Date(content.querySelector('pubDate').textContent)) * page * perPage
-    const pullDate = +(new Date(content.querySelector('pubDate').textContent))
+    // a feed without a channel pubDate — or an HTML error page parsed as XML — must
+    // read as unusable, not throw
+    const published = content.querySelector('pubDate')?.textContent
+    if (!published) return false
+    const pubDate = +(new Date(published)) * page * perPage
+    const pullDate = +(new Date(published))
     if (!ignoreChanged && this.resultMap[url]?.date === pubDate) return false
 
     // re-writing a copy that came from the store would only push its expiry out
-    if (!fromCache) cache.cacheEntry(caches.QUERY_RSS, `${btoa(url)}`, { mappings: true }, new XMLSerializer().serializeToString(content), Date.now() + getRandomInt(10, 15) * 60 * 1000)
+    if (!fromCache) cache.cacheEntry(caches.QUERY_RSS, `${btoa(unescape(encodeURIComponent(url)))}`, { mappings: true }, new XMLSerializer().serializeToString(content), Date.now() + getRandomInt(10, 15) * 60 * 1000)
     return { content, pubDate, pullDate }
   }
 
   async _getMediaForRSS (page, perPage, url, ignoreChanged = false) {
     debug(`Getting media for RSS feed ${url} page ${page} perPage ${perPage}`)
     const changed = await this.getContentChanged(page, perPage, url, ignoreChanged)
-    if (!changed) return this.resultMap[url].result
+    // "unchanged" with nothing remembered yet happens on a first read of a broken feed
+    if (!changed) return this.resultMap[url]?.result ?? []
     debug(`Feed ${url} has changed, updating`)
 
     const index = (page - 1) * perPage
@@ -135,7 +140,7 @@ class RSSMediaManager {
     hasNextPage.value = items.length === perPage
     const result = this.structureResolveResults(items)
 
-    const encodedUrl = btoa(url)
+    const encodedUrl = btoa(unescape(encodeURIComponent(url)))
     await this.findNewReleasesAndNotify(result, cache.getEntry(caches.NOTIFICATIONS, 'lastRSS')?.[encodedUrl]?.date)
     cache.setEntry(caches.NOTIFICATIONS, 'lastRSS', (current) => ({...current, [encodedUrl]: { date: changed.pullDate }}))
 

@@ -6,7 +6,7 @@ import { checkForZero } from '@/components/MediaHandler.svelte'
 import { status } from '@/modules/networking.js'
 import { extensionManager } from '@/modules/extensions/manager.js'
 import { SUPPORTS } from '@/modules/support.js'
-import { TORRENT } from '@/modules/bridge.js'
+import { TORRENT, COMMON } from '@/modules/bridge.js'
 import AnimeResolver from '@/modules/anime/animeresolver.js'
 import { releaseHoldsEpisode } from '@/modules/playback/coverage.js'
 import { cache, caches } from '@/modules/cache.js'
@@ -21,15 +21,22 @@ const debug = Debug('ui:extensions')
 const exclusions = []
 const isDev = location.hostname === 'localhost'
 
-const video = document.createElement('video')
-if (!isDev) {
+// On hosts with a real media stack (GStreamer, AVFoundation, Media Foundation) codec
+// support is decided by the pipeline at play time, and the webview's canPlayType
+// answers describe the webview, not the pipeline. This probe was calibrated against
+// Electron's Chromium; under WebKitGTK it answered "no" for HEVC and for dual audio
+// and silently hid every such release on Linux, while the system played them fine.
+// It only runs where the webview's answers are the only answers there are (the TVs).
+const nativeStack = Boolean(COMMON.getPlatformInfo()?.capabilities?.native_media_stack)
+if (!isDev && !nativeStack) {
+  const video = document.createElement('video')
   if (!video.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"')) exclusions.push('HEVC', 'x265', 'H.265', '[EMBER]')
   if (!video.canPlayType('audio/mp4; codecs="ac-3"')) exclusions.push('AC3', 'AC-3')
   if (!video.canPlayType('audio/mp4; codecs="dtsc"')) exclusions.push('DTS')
   if (!video.canPlayType('audio/mp4; codecs="truehd"')) exclusions.push('TrueHD')
   if (!('audioTracks' in HTMLVideoElement.prototype)) exclusions.push('DUAL')
+  video.remove()
 }
-video.remove()
 
 /**
  * @param {{media: import('@/modules/providers/anilist/al.d.ts').Media, episode?: number, batch: boolean, movie: boolean, resolution: string}} opts

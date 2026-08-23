@@ -345,12 +345,16 @@ class AnilistClient {
   }
 
   async findNewNotifications() {
+    // hoisted out of the guard: the write at the bottom reads both, and for years it
+    // threw a ReferenceError instead — swallowed by both callers — so `lastAni` never
+    // advanced and the same notifications were re-announced every five minutes
+    let newNotifications = []
+    let lastNotified = cache.getEntry(caches.NOTIFICATIONS, 'lastAni')
     if (settings.value.aniNotify !== 'none') {
       debug('Checking for new AniList notifications')
       const res = await this.getNotifications()
       const notifications = res?.data?.Page?.notifications
-      const lastNotified = cache.getEntry(caches.NOTIFICATIONS, 'lastAni')
-      const newNotifications = (lastNotified > 0) && notifications ? notifications.filter(({createdAt}) => createdAt > lastNotified) : []
+      newNotifications = (lastNotified > 0) && notifications ? notifications.filter(({createdAt}) => createdAt > lastNotified) : []
       debug(`Found ${newNotifications?.length} new notifications`)
       for (const { media, episode, type, createdAt } of newNotifications) {
         if ((settings.value.aniNotify !== 'limited' || type !== 'AIRING') && media.type === 'ANIME' && media.format !== 'MUSIC' && (!settings.value.preferDubs || (media?.status === 'FINISHED' && !['CURRENT', 'REPEATING']?.includes(media?.mediaListEntry?.status)) || !(await malDubs.isDubMedia(media)) || await isSubbedProgress(await cache.requestMedia(media?.id)))) {
@@ -375,7 +379,7 @@ class AnilistClient {
         }
       }
     }
-    if ((newNotifications?.length > 0) || (lastNotified <= 1)) cache.setEntry(caches.NOTIFICATIONS, 'lastAni', Date.now() / 1_000)
+    if ((newNotifications?.length > 0) || !(lastNotified > 1)) cache.setEntry(caches.NOTIFICATIONS, 'lastAni', Date.now() / 1_000)
   }
 
   /** @returns {Promise<import('./al.d.ts').PagedQuery<{ notifications: { id: number, type: string, createdAt: number, episode: number, media: import('./al.d.ts').Media}[] }>>} */
@@ -699,7 +703,7 @@ class AnilistClient {
     const ids = Object.values(searchResults)
     const search = await this.searchIDS({ id: ids, perPage: 50, sort: 'OMIT' })
     const mappedResults = Object.entries(searchResults)?.map(([filename, id]) => [filename, search?.data?.Page?.media?.find(media => media.id === id)])
-    return mappedResults ? cache.cacheEntry(caches.QUERY_COMPOUND, JSON.stringify(flattenedTitles), { mappings: true, ...(malClient.userID ? { fillLists: malClient.userLists.value } : {}) }, mappedResults, Date.now() + getRandomInt(60, 90) * 60 * 1_000) : cache.cachedEntry(caches.COMPOUND, JSON.stringify(flattenedTitles), true)
+    return mappedResults ? cache.cacheEntry(caches.QUERY_COMPOUND, JSON.stringify(flattenedTitles), { mappings: true, ...(malClient.userID ? { fillLists: malClient.userLists.value } : {}) }, mappedResults, Date.now() + getRandomInt(60, 90) * 60 * 1_000) : cache.cachedEntry(caches.QUERY_COMPOUND, JSON.stringify(flattenedTitles), true)
   }
 
   search(variables = {}) {
@@ -801,7 +805,10 @@ class AnilistClient {
     let fetchedIDS = []
     let currentPage = 1
     let failedRes
-    while (true) { // cycle until all paged ids are resolved.
+    // bounded: a userlist of ids fits in a few pages, and an API that keeps claiming
+    // hasNextPage must not be able to keep this loop making requests forever
+    const MAX_PAGES = 40
+    while (currentPage <= MAX_PAGES) { // cycle until all paged ids are resolved.
       const res = await this.searchIDS({ ...variables, page: currentPage, perPage: 50, ...( variables?.id && variables?.id?.length !== 0 ? { id: [...new Set(variables.id)] } : { idMal: [...new Set(variables.idMal)] }) })
       if (!res?.data && res?.errors) { failedRes = res }
       if (res?.data?.Page.media) fetchedIDS = fetchedIDS.concat(res?.data?.Page.media)

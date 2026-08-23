@@ -24,7 +24,11 @@ class Episodes {
 
     constructor() {
         this.limiter.on('failed', async (error, jobInfo) => {
-            let info = (await error.json()) || error
+            // the rejection is a Response only when the server answered; a network
+            // failure is a plain Error, and calling .json() on it threw from inside
+            // the limiter's own error handler
+            let info = error
+            try { if (typeof error?.json === 'function') info = (await error.json()) || error } catch {}
             if (await isOffline(info)) throw new Error('Failed making episode request, network is offline... not retrying.')
             if (info.status === 500) return 1
             // bounded: an episode list that waits on Jikan forever never appears at all
@@ -33,7 +37,9 @@ class Episodes {
                 return
             }
 
-            const time = ((error.headers.get('retry-after') || 2) + 1) * 1000
+            // Number(), because a header is a string and "5" + 1 is "51" — this waited
+            // fifty-one seconds where the service asked for six
+            const time = ((Number(error?.headers?.get?.('retry-after')) || 2) + 1) * 1000
             if (!this.rateLimitPromise) this.rateLimitPromise = sleep(time).then(() => { this.rateLimitPromise = null })
             return time
         })

@@ -15,12 +15,16 @@ const lastSearched = cache.getEntry(caches.HISTORY, 'lastSearched')
 export const hasNextPage = writable(true)
 export const key = writable({})
 export const search = writable(lastSearched || { genre: [], genre_not: [], tag: [], tag_not: [], format: [], format_not: [], status: [], status_not: [] })
+// debounced: the search box binds straight into this store, so every keystroke used to
+// write the whole search object into the history cache. Remembering where the user ended
+// up is the feature; remembering every character on the way there is just churn
+const rememberSearch = debounce(searched => cache.setEntry(caches.HISTORY, 'lastSearched', searched), 800)
 search.subscribe(value => {
   if (!value.clearNext) {
     const searched = { ...value }
     delete searched.load
     delete searched.preview
-    cache.setEntry(caches.HISTORY, 'lastSearched', searched)
+    rememberSearch(searched)
   }
 })
 
@@ -412,4 +416,4 @@ export async function updateRSS() {
     }
   }
 }
-window.addEventListener('fileEdit', async () => updateRSS)
+window.addEventListener('fileEdit', () => updateRSS())

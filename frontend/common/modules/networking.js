@@ -72,7 +72,16 @@ window.fetch = async (...args) => {
     }
   })()
   if (!isExternal) return fetch(url, options)
-  if (status.value === 'offline') return { message: 'failed to fetch: client is offline' }
+  // a real Response, because this impersonates fetch: the old plain object made every
+  // caller learn that res.ok can be undefined and res.json can be missing, and each
+  // one grew its own try/catch contortion around that lie
+  if (status.value === 'offline') {
+    return new Response(JSON.stringify({ message: 'failed to fetch: client is offline' }), {
+      status: 503,
+      statusText: 'client is offline',
+      headers: { 'content-type': 'application/json' }
+    })
+  }
 
   try {
     // keep the caller's own signal working, timeouts and teardown aborts depend on it
@@ -230,6 +239,14 @@ function newOutageChecker({ key, ping, detect, offlineEvent, onlineEvent, retryR
             let stop = false
             async function checkLoop() {
               if (stop) return
+              // another checker took the status over (the network dropped during an
+              // AniList outage, say): recovery is its job now, and polling on against a
+              // status this loop can never satisfy used to run forever
+              if (status.value !== offlineEvent) {
+                stop = true
+                monitor = null
+                return
+              }
               const answer = await ping(status.value === offlineEvent ? 500 : 2_000)
               const result = isConnected(answer, status.value === offlineEvent)
               if (result && status.value === offlineEvent) {
@@ -275,7 +292,12 @@ function newOutageChecker({ key, ping, detect, offlineEvent, onlineEvent, retryR
   return async function check(error) {
     if (status.value === offlineEvent) return true
     if (!promise) {
-      promise = new Promise(resolve => { resolvePromise = resolve })
+      promise = new Promise(resolve => {
+        resolvePromise = resolve
+        // bounded: the two throttle windows can race so that neither path answers, and
+        // an unanswered check() left every await of printError() hanging forever
+        setTimeout(() => resolve(status.value === offlineEvent), 6_000).unref?.()
+      })
       promise.finally(() => {
         promise = null
         resolvePromise = null

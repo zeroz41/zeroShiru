@@ -171,7 +171,7 @@ export default class Helper {
       // check if media can even be watched, ex: it was resolved incorrectly
       // some anime/OVA's can have a single episode, or some movies can have multiple episodes
       const zeroEpisode = await hasZeroEpisode(cachedMedia)
-      const singleEpisode = ((!cachedMedia.episodes && (!isValidNumber(filemedia.episode) || Number(filemedia.episode) === 1)) | (cachedMedia.format === 'MOVIE' && cachedMedia.episodes === 1)) && 1 // movie check
+      const singleEpisode = ((!cachedMedia.episodes && (!isValidNumber(filemedia.episode) || Number(filemedia.episode) === 1)) || (cachedMedia.format === 'MOVIE' && cachedMedia.episodes === 1)) && 1 // movie check
       const videoEpisode = (Number(filemedia.episode) || singleEpisode) + (zeroEpisode ? 1 : 0)
       const mediaEpisode = getMediaMaxEp(cachedMedia) || singleEpisode
 

@@ -151,7 +151,7 @@ function constructChapters (results, duration) {
   const recap = chapters.find(({ text }) => text === 'RECAP')
   if (recap) recap.text = 'Recap'
 
-  chapters.sort((a, b) => a - b)
+  chapters.sort((a, b) => a.start - b.start)
   if ((chapters[0].start | 0) !== 0) {
     chapters.unshift({ start: 0, end: chapters[0].start, text: chapters[0].text === 'OP' ? 'Intro' : 'Episode' })
   }
@@ -191,11 +191,12 @@ export async function getChaptersAniSkip (file, duration) {
   if (!jsonAccurate?.ok) return []
 
   const resRough = await fetch(`https://api.aniskip.com/v2/skip-times/${file.media.media.idMal}/${file.media.episode}/?episodeLength=0&types=op&types=ed&types=recap`)
+  if (!resRough?.ok) return []
   const jsonRough = await resRough.json()
 
   const map = {}
   if (jsonAccurate?.statusCode === 500 || jsonRough?.statusCode === 500) return []
-  for (const result of [...jsonAccurate.results, ...jsonRough.results]) {
+  for (const result of [...(jsonAccurate.results || []), ...(jsonRough.results || [])]) {
     map[result.skipType] ||= result
   }
 
@@ -838,6 +839,9 @@ export async function getEpisodeMetadataForMedia (media) {
     return (await getAniMappings(media?.id) || {})?.episodes
   })()
   episodeMetadataMap.set(`${media?.id}`, promiseData)
+  // a failure is forgotten, not memoized: one transient ani.zip error used to poison
+  // this media's episode metadata for the rest of the session, unhandled-rejection and all
+  promiseData.catch(() => episodeMetadataMap.delete(`${media?.id}`))
   return promiseData
 }
 

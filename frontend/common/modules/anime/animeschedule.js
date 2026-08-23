@@ -149,7 +149,9 @@ class AnimeSchedule {
 
     async findNewNotifications() {
         for (const type of ['Dub', 'Sub', 'Hentai']) {
-            if (type === 'Hentai' && settings.value.adult !== 'hentai') return
+            // continue, never return: giving up on one type must not silence the rest —
+            // a quiet Dub feed used to stop Sub and Hentai announcements ever being checked
+            if (type === 'Hentai' && settings.value.adult !== 'hentai') continue
             const key = `${type.toLowerCase()}Announce`
             const notifyKey = `announced${type}s`
             const airingListKey = `${type === 'Hentai' ? 'sub' : type.toLowerCase()}AiringLists`
@@ -157,7 +159,7 @@ class AnimeSchedule {
             debug(`Checking for new ${type} Schedule notifications`)
             const newNotifications = (await this[airingListKey].value)?.filter(entry => (entry?.unaired && ((type !== 'Hentai' && !(entry?.media?.media?.genres || entry?.genres)?.includes('Hentai')) || (type === 'Hentai' && (entry?.media?.media?.genres || entry?.genres)?.includes('Hentai'))) && !cache.getEntry(caches.NOTIFICATIONS, notifyKey).includes(entry?.media?.media?.id || entry?.id))).map(entry => entry?.media?.media || entry)
             debug(`Found ${newNotifications?.length} new ${type} notifications`)
-            if (!newNotifications?.length) return
+            if (!newNotifications?.length) continue
             await anilistClient.searchAllIDS({ id: newNotifications.map(media => media.id).filter(Boolean) })
             for (const media of newNotifications) {
                 const cachedMedia = await cache.requestMedia(media?.id)
@@ -264,8 +266,10 @@ class AnimeSchedule {
             }
             return { changed: false }
         })().catch((error) => {
-            this.manifestCache.promise = { changed: true, force: true }
             debug(`Failed to request last updated manifest, this is likely due to an outage and no cached data was found... allowing attempts to fetch direct from source.`, error)
+            // returned, not just stashed: whoever awaited this call reads the answer off
+            // this promise, and an undefined here became a TypeError in every caller
+            return { changed: true, force: true }
         })
         this.manifestCache = { promise, expiry: now + 60_000 }
         return promise
@@ -379,7 +383,9 @@ class AnimeSchedule {
 
         const results = this.structureResolveResults(items, type)
         if (type === 'Dub' || type === 'Sub' || type === 'Hentai') {
-            if (type === 'Hentai' && settings.value.adult !== 'hentai') return
+            // an empty list, never undefined: fifty card placeholders were already built
+            // from this promise, and each of them indexed into the nothing that came back
+            if (type === 'Hentai' && settings.value.adult !== 'hentai') return []
             const lastNotified = cache.getEntry(caches.NOTIFICATIONS, `last${type}`)
             const newReleases = combinedItems?.data?.Page?.media?.filter(media => (Math.floor(new Date(media.episode.airedAt).getTime() / 1000) >= lastNotified) || (Math.floor(new Date(media.episode.addedAt).getTime() / 1000) >= lastNotified))
             debug(`Found ${newReleases?.length} new ${type} releases, notifying...`)
