@@ -21,6 +21,7 @@ native = [
 ]
 
 [dependencies]
+tracing = { workspace = true }
 # rust-tls: keeps openssl out of the tree, which Android cross-builds cannot link
 librqbit = { version = "9", optional = true, default-features = false, features = ["rust-tls", "http-api-client"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "process", "fs", "time", "sync"], optional = true }

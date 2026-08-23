@@ -3,7 +3,7 @@ import { persisted } from 'svelte-persisted-store'
 import { writable } from 'simple-store-svelte'
 import { defaults } from '@/modules/util.js'
 import { toast } from 'svelte-sonner'
-import { COMMON, ANDROID } from '@/modules/bridge.js'
+import { ANDROID } from '@/modules/bridge.js'
 import { handleProtocol, onProviderToken } from '@/modules/protocol.js'
 import Debug from 'debug'
 const debug = Debug('ui:settings')

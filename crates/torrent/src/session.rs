@@ -254,6 +254,17 @@ impl TorrentSession {
     }
 
     fn notify(&self, level: &str, message: impl Into<String>) {
+        // into the log as well as onto the screen: a toast the user dismissed used to be
+        // the only record a torrent operation failed at all
+        let message = message.into();
+        match level {
+            "error" => tracing::warn!(target: "torrent", "{message}"),
+            _ => tracing::info!(target: "torrent", "{message}"),
+        }
+        return self.notify_inner(level, message);
+    }
+
+    fn notify_inner(&self, level: &str, message: String) {
         self.emit(SessionEvent::Notify { level: level.into(), message: message.into() });
     }
 
@@ -333,6 +344,7 @@ impl TorrentSession {
         };
         match self.track(&hash, Role::Current).await {
             Ok(tracked) => {
+                tracing::info!(target: "torrent", %hash, name = %tracked.name, "streaming");
                 self.emit(SessionEvent::Loaded(Some(LoadedTorrent {
                     info_hash: hash.clone(),
                     name: tracked.name.clone(),
@@ -364,6 +376,7 @@ impl TorrentSession {
                 if let Err(error) = self.track(&hash, Role::Staging).await {
                     return self.notify("error", format!("Failed to stage torrent: {error}"));
                 }
+                tracing::info!(target: "torrent", %hash, "staged for pre-download");
                 self.emit_snapshot().await;
                 self.save_registry().await;
             }
@@ -375,6 +388,7 @@ impl TorrentSession {
     /// dropped (files kept only with persist on).
     pub async fn unload(self: &Arc<Self>) {
         if let Some(hash) = self.current_hash().await {
+            tracing::info!(target: "torrent", %hash, "unloading playback");
             self.demote_hash(&hash).await;
         }
         self.state.lock().await.playing = None;
@@ -385,6 +399,7 @@ impl TorrentSession {
 
     /// Forget a torrent completely, data included.
     pub async fn untrack(self: &Arc<Self>, hash: String) {
+        tracing::info!(target: "torrent", %hash, "forgetting torrent and its data");
         self.delete(&hash, true).await;
         {
             let mut state = self.state.lock().await;
@@ -399,6 +414,7 @@ impl TorrentSession {
 
     /// Stop seeding but keep the files and the record.
     pub async fn complete(self: &Arc<Self>, hash: String) {
+        tracing::info!(target: "torrent", %hash, "seeding stopped, files kept");
         self.delete(&hash, false).await;
         {
             let mut state = self.state.lock().await;
