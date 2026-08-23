@@ -148,6 +148,7 @@ pub async fn respond(app: &tauri::AppHandle, request: tauri::http::Request<Vec<u
     // disk reads and writes run off the async workers: a grid page asks for hundreds
     // of covers at once, and blocking file IO on the executor stalled everything else
     // the runtime was doing, playback commands included
+    let mut waited = false;
     loop {
         let looked_up = {
             let dir = dir.clone();
@@ -160,9 +161,9 @@ pub async fn respond(app: &tauri::AppHandle, request: tauri::http::Request<Vec<u
         if recently_failed(&url) {
             return plain_response(502, "image fetch failed recently");
         }
-        // one fetch per URL: the first asker owns it, everyone else waits for the file.
-        // The claim is decided under the lock but awaited outside it, so the guard never
-        // crosses an await
+        // one fetch per URL: the first asker owns it, everyone else waits once and then
+        // re-reads. The claim is decided under the lock but awaited outside it, so the
+        // guard never crosses an await.
         let claimed = {
             let mut in_flight = pending().lock().unwrap();
             match in_flight.get(&url) {
@@ -174,29 +175,56 @@ pub async fn respond(app: &tauri::AppHandle, request: tauri::http::Request<Vec<u
                 }
             }
         };
-        let sender = match claimed {
+        match claimed {
             Err(mut receiver) => {
                 let _ = receiver.changed().await; // resolves when the owner finishes, however it went
-                continue; // the file is there now, or the failure is remembered
+                if waited {
+                    // second lap and the file is still not there: the owner died without
+                    // storing anything. Take the fetch over rather than orbiting a claim
+                    // nobody holds — an abandoned entry once turned this loop into a
+                    // 100%-CPU spin, one disk read per iteration, forever
+                    pending().lock().unwrap().remove(&url);
+                }
+                waited = true;
+                continue;
             }
-            Ok(sender) => sender,
-        };
-        let outcome = fetch(&url).await;
-        let response = match outcome {
-            Ok((bytes, content_type)) => {
-                let stored = (dir.clone(), url.clone(), bytes.clone(), content_type.clone());
-                let _ = tauri::async_runtime::spawn_blocking(move || store(&stored.0, &stored.1, &stored.2, &stored.3)).await;
-                image_response(bytes, &content_type)
+            Ok(sender) => {
+                // however the fetch ends — success, refusal, this future being dropped —
+                // the claim comes out of the map, or waiters would orbit it forever
+                let _claim = PendingClaim { url: &url };
+                let outcome = fetch(&url).await;
+                return match outcome {
+                    Ok((bytes, content_type)) => {
+                        let stored = (dir.clone(), url.clone(), bytes.clone(), content_type.clone());
+                        let _ = tauri::async_runtime::spawn_blocking(move || store(&stored.0, &stored.1, &stored.2, &stored.3)).await;
+                        drop(_claim);
+                        drop(sender); // waking the waiters only after the file is down
+                        image_response(bytes, &content_type)
+                    }
+                    Err(error) => {
+                        tracing::debug!(target: "media-cache", url = %url, error = %error, "image fetch failed");
+                        // only an answered refusal is worth remembering; an unreachable
+                        // network describes this machine's moment, not the URL
+                        if matches!(error, FetchError::Refused(_)) {
+                            failures().lock().unwrap().insert(url.clone(), Instant::now());
+                        }
+                        plain_response(502, "image fetch failed")
+                    }
+                };
             }
-            Err(error) => {
-                tracing::debug!(target: "media-cache", url = %url, error = %error, "image fetch failed");
-                failures().lock().unwrap().insert(url.clone(), Instant::now());
-                plain_response(502, "image fetch failed")
-            }
-        };
-        pending().lock().unwrap().remove(&url);
-        drop(sender); // waking the waiters only after the entry is gone and the file is down
-        return response;
+        }
+    }
+}
+
+/// Takes a URL's fetch claim back out of the pending map when its owner ends,
+/// however it ends — including the scheme-handler future being dropped mid-fetch.
+struct PendingClaim<'a> {
+    url: &'a str,
+}
+
+impl Drop for PendingClaim<'_> {
+    fn drop(&mut self) {
+        pending().lock().unwrap().remove(self.url);
     }
 }
 
@@ -208,20 +236,40 @@ async fn fetch_only(url: &str) -> tauri::http::Response<Vec<u8>> {
     }
 }
 
-async fn fetch(url: &str) -> Result<(Vec<u8>, String), String> {
-    let response = crate::net::client()
+/// How a fetch failed: an answer from the server, or no answer at all. Only answers
+/// are worth remembering — a transport error usually describes THIS machine's network
+/// at that moment, and remembering it poisoned every cover touched while offline for
+/// ten minutes after the connection came back.
+enum FetchError {
+    /// The server answered and said no (or the answer was oversized/refused).
+    Refused(String),
+    /// The request never completed: DNS, TLS, timeout, the app being offline.
+    Unreachable(String),
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FetchError::Refused(message) | FetchError::Unreachable(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+async fn fetch(url: &str) -> Result<(Vec<u8>, String), FetchError> {
+    let mut response = crate::net::client()
         .get(url)
         .timeout(FETCH_TIMEOUT)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| FetchError::Unreachable(error.to_string()))?;
     // the redirect chain ends somewhere the caller never named; judge where it landed
-    shiru_networking::guard::check_url(response.url().as_str()).map_err(|blocked| blocked.to_string())?;
+    shiru_networking::guard::check_url(response.url().as_str())
+        .map_err(|blocked| FetchError::Refused(blocked.to_string()))?;
     if !response.status().is_success() {
-        return Err(format!("status {}", response.status()));
+        return Err(FetchError::Refused(format!("status {}", response.status())));
     }
     if response.content_length().is_some_and(|length| length > MAX_IMAGE_BYTES) {
-        return Err("larger than the image cap".into());
+        return Err(FetchError::Refused("larger than the image cap".into()));
     }
     let content_type = response
         .headers()
@@ -229,11 +277,23 @@ async fn fetch(url: &str) -> Result<(Vec<u8>, String), String> {
         .and_then(|value| value.to_str().ok())
         .unwrap_or("image/jpeg")
         .to_string();
-    let bytes = response.bytes().await.map_err(|error| error.to_string())?;
-    if bytes.len() as u64 > MAX_IMAGE_BYTES {
-        return Err("larger than the image cap".into());
+    // read with the cap enforced as the body arrives: a chunked response declares no
+    // length, and buffering all of it before judging it lets a hostile URL spend
+    // unbounded memory on "an image"
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if bytes.len() as u64 + chunk.len() as u64 > MAX_IMAGE_BYTES {
+                    return Err(FetchError::Refused("larger than the image cap".into()));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(error) => return Err(FetchError::Unreachable(error.to_string())),
+        }
     }
-    Ok((bytes.to_vec(), content_type))
+    Ok((bytes, content_type))
 }
 
 fn image_response(bytes: Vec<u8>, content_type: &str) -> tauri::http::Response<Vec<u8>> {
@@ -356,11 +416,17 @@ pub fn stats(dir: Option<&Path>) -> MediaCacheStats {
     }
 }
 
-/// Runs the cap once, off the boot path. Once per launch is enough: between
-/// launches the cache can only grow by what one session's browsing pulls in.
+/// How often the cap is re-applied while the app runs. Once per launch was not a
+/// cap at all: a long browsing session grows the directory freely between launches.
+const JANITOR_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Applies the cap now and keeps applying it on a slow clock, off the boot path.
 pub fn spawn_janitor(app: &tauri::AppHandle) {
     if let Some(dir) = media_dir(app) {
-        std::thread::spawn(move || trim(&dir, CAP_BYTES, TRIM_TARGET_BYTES));
+        std::thread::spawn(move || loop {
+            trim(&dir, CAP_BYTES, TRIM_TARGET_BYTES);
+            std::thread::sleep(JANITOR_INTERVAL);
+        });
     }
 }
 

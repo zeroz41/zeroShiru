@@ -152,7 +152,7 @@
     <X size='1.7rem' strokeWidth='3' />
   </button>
   <div bind:this={container} class='overflow-y-auto position-relative'>
-    <SmartImage class='w-full cover-img anime-details position-absolute' images={[
+    <SmartImage class='w-full cover-img anime-details position-absolute' identity={staticMedia?.id} images={[
       staticMedia.bannerImage,
       ...(staticMedia.trailer?.id ? [
         `https://i.ytimg.com/vi/${staticMedia.trailer.id}/maxresdefault.jpg`,

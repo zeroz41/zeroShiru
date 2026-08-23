@@ -512,7 +512,7 @@
       <button type='button' class='btn btn-square bg-dark-very-light mt-20 ml-auto d-flex align-items-center justify-content-center rounded-2 flex-shrink-0' use:click={close}><X size='1.7rem' strokeWidth='3'/></button>
       <div class='position-absolute top-0 left-0 w-full h-full z--1'>
         <div class='position-absolute w-full h-full overflow-hidden' >
-          <SmartImage class='img-cover w-full h-full' images={[
+          <SmartImage class='img-cover w-full h-full' identity={search.media?.id} images={[
             search.media.bannerImage,
             ...(search.media.trailer?.id ? [
               `https://i.ytimg.com/vi/${search.media.trailer.id}/maxresdefault.jpg`,

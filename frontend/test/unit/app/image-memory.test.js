@@ -95,11 +95,17 @@ test('two renders of the same candidate list describe the same picture', () => {
   assert.notEqual(imageSignature(first), imageSignature(first.slice(1)), 'a shorter list is a different list')
 })
 
-test('a candidate that is a promise or a function describes nothing, and starts over', () => {
-  assert.equal(imageSignature(['https://cdn/cover.jpg', () => 'later.jpg']), null)
-  assert.equal(imageSignature([Promise.resolve('later.jpg')]), null)
-  assert.equal(imageSignature([]), '')
-  assert.equal(imageSignature(undefined), '')
+test('dynamic candidates contribute a marker, and the caller-supplied identity separates shows', () => {
+  // a function candidate is a fresh closure per render — its own identity says nothing.
+  // What tells two lists apart is the identity of what the art is OF, plus the strings.
+  const forShow = id => imageSignature([() => 'later.jpg', 'https://cdn/banner.jpg'], id)
+  assert.equal(forShow(21), forShow(21), 'the same show re-rendering is the same picture')
+  assert.notEqual(forShow(21), forShow(170), 'a recycled card for another show must reset')
+  assert.notEqual(
+    imageSignature([() => 'later.jpg'], 21),
+    imageSignature(['later.jpg'], 21),
+    'a dynamic candidate is not the string it might resolve to'
+  )
 })
 
 test('a missing candidate holds its place, so a gap is not the same as no gap', () => {

@@ -106,19 +106,37 @@ export function wasShown (url) {
  * that as new art meant throwing away the resolved URL and starting the load again: a
  * placeholder flash for a picture that was already on screen and had not changed.
  *
+ * A function or promise candidate is a fresh closure every render, so its own identity
+ * says nothing; it contributes a constant marker instead, and the caller passes
+ * `identity` (the media id, typically) so two different shows whose string candidates
+ * happen to match — or that have none — can never share a signature. The heavy modals
+ * all carry function candidates, and treating those lists as indescribable meant they
+ * re-ran the whole load per parent render, which was the exact flash this exists to stop.
+ *
  * @param {any[]} [list]
- * @returns {string | null} Null when the list cannot be described — a candidate that is a
- *   function or a promise produces something new each time it is asked, and there starting
- *   over is the only answer that cannot be wrong.
+ * @param {string|number|null} [identity] - What the art is OF, when candidates are dynamic.
+ * @returns {string}
  */
-export function imageSignature (list) {
-  const parts = []
+export function imageSignature (list, identity = null) {
+  const parts = [String(identity ?? '')]
   for (const image of list ?? []) {
     if (!image) { parts.push(''); continue }
-    if (typeof image !== 'string') return null
-    parts.push(image)
+    parts.push(typeof image === 'string' ? image : '\u0001dynamic')
   }
   return parts.join('\u0000')
+}
+
+/**
+ * Whether an image is actually HELD warm — an in-engine client keeping its bytes
+ * alive — as opposed to merely remembered as shown. Only warm images may skip the
+ * viewport gate: the shown set is ten times larger than the warm one, and letting a
+ * whole remembered grid bypass the observer stampeded the host with disk reads for
+ * art that was in no way free anymore.
+ * @param {string} [url]
+ */
+export function isWarm (url) {
+  const key = identity(url)
+  return Boolean(key && warm.has(key))
 }
 
 /** How many images are currently held warm. Test seam, and a number worth having in a

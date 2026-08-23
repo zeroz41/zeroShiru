@@ -1,5 +1,6 @@
 <script context='module'>
   import TorrentButton from '@/components/TorrentButton.svelte'
+  import { COMMON } from '@/modules/bridge.js'
   import SmartImage from '@/components/visual/SmartImage.svelte'
   import { click } from '@/modules/lib/click.js'
   import { fastPrettyBytes, since, matchPhrase, createListener } from '@/modules/util.js'
@@ -390,7 +391,7 @@
   <div class='position-absolute top-0 left-0 w-full h-full'>
     <div class='position-absolute w-full h-full overflow-hidden rounded-3 error-overlay z-5 pointer-events-none' class:d-none={type !== 'error'}/>
     <div class='position-absolute w-full h-full overflow-hidden rounded-3' class:image-border={type === 'default'} >
-      <SmartImage class='img-cover w-full h-full {isSpoiler ? `blur-6` : ``}' images={[
+      <SmartImage class='img-cover w-full h-full {isSpoiler ? `blur-6` : ``}' identity={`${media?.id}:${episode}`} images={[
         () => getEpisodeMetadataForMedia(media).then(metadata => metadata?.[episode]?.image),
           media.bannerImage,
           ...(media.trailer?.id ? [
@@ -432,7 +433,7 @@
       {/if}
       <div class='d-flex z-1' class:ml-auto={type === 'error' || result.type !== 'batch'} >
         {#if result.source?.icon}
-          <img class='wh-25' src={(!result.source.icon.startsWith('http') ? 'data:image/png;base64,' : '') + result.source.icon} alt={result.source.name} title={result.source.name}>
+          <img class='wh-25' src={COMMON.mediaSrc((!result.source.icon.startsWith('http') ? 'data:image/png;base64,' : '') + result.source.icon)} alt={result.source.name} title={result.source.name}>
         {:else if result.source?.managed}
           <HardDrive size='2.5rem'/>
         {:else}

@@ -1,5 +1,6 @@
 <script>
   import { click } from '@/modules/lib/click.js'
+  import { COMMON } from '@/modules/bridge.js'
   import SettingCard from '@/routes/settings/components/SettingCard.svelte'
   import ConfirmButton from '@/components/inputs/ConfirmButton.svelte'
   import { stringToHex, capitalize, debounce } from '@/modules/util.js'
@@ -225,7 +226,7 @@
               {/if}
               <div class='d-flex'>
                 {#if extension?.icon}
-                  <img class='w-43 h-43' src={(!extension?.icon.startsWith('http') && !extension?.icon.startsWith('data:image') ? 'data:image/png;base64,' : '') + extension?.icon} alt={extensionName} title={extensionName}>
+                  <img class='w-43 h-43' src={COMMON.mediaSrc((!extension?.icon.startsWith('http') && !extension?.icon.startsWith('data:image') ? 'data:image/png;base64,' : '') + extension?.icon)} alt={extensionName} title={extensionName}>
                 {:else}
                   <FileQuestion size='4.3rem' />
                 {/if}
