@@ -77,6 +77,13 @@
   .nav-link > span:not(.nav-link-text) {
     color: var(--highlight-color);
   }
+  /* the page you are ON is the one place the accent fills in: an active pill in the
+     theme's own color, unmistakable at a glance from across the room */
+  .nav-link:not(.drawer) > span:not(.nav-link-text):not(.inactive) {
+    background: hsla(var(--tertiary-color-hsl), 0.18);
+    color: var(--tertiary-color-very-light);
+    box-shadow: inset 0 0 0 0.1rem hsla(var(--tertiary-color-hsl), 0.25);
+  }
   /* a soft wash, not a solid white chip: the old hover swapped every nav icon to
      white-on-dark-inverted, the single most 2019-looking interaction in the app.
      The icon stays bright; the surface answers. */

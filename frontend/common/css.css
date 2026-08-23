@@ -990,6 +990,16 @@ img[src=''], img[src=' '] {
   content-visibility: auto;
 }
 
+/* --- ambient depth --------------------------------------------------------------
+   The page is not a flat slab any more: a faint accent bloom at the top corner and a
+   vertical settle from dim to base. Painted once; nothing animates it. The accent
+   follows the theme's tertiary hue, so custom themes tint the whole room. */
+.page-wrapper {
+  background:
+    radial-gradient(110rem 55rem at 88% -12%, hsla(var(--tertiary-color-hsl), 0.09), transparent 62%),
+    linear-gradient(180deg, hsl(var(--dark-color-dim-hsl)) 0%, hsl(var(--dark-color-hsl)) 34rem) !important;
+}
+
 .nav-hidden > .content-wrapper {
   left: 0 !important;
   width: 100% !important;
@@ -1338,6 +1348,15 @@ a[href],
    covers nothing, and it takes the corner radius of whatever it is put on. */
 .lift {
   position: relative;
+  /* posters read as cards, not screenshots: the soft corner is the single cheapest
+     "this app was made recently" signal there is. Inherited by the shadow layer and
+     forced onto the artwork inside, whatever utility classes it arrived with. */
+  border-radius: 0.9rem;
+  overflow: hidden;
+}
+.lift > img,
+.lift .cover-img {
+  border-radius: 0.9rem !important;
 }
 .lift::after {
   content: '';

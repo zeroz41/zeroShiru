@@ -65,7 +65,7 @@
 <div class='gradient-left z--1 h-full position-absolute top-0 w-800' />
 <img src='./icon_filled.png' class='position-absolute z--1 m-10 p-0 {SUPPORTS.isAndroid || COMMON.getPlatformInfo().platform === `darwin` ? `right-0 mr-20 ${!SUPPORTS.isAndroid ? `d-md-none d-sm-h-block` : ``}` : `left-0 ml-20 d-md-none d-sm-h-block`}' style='width: 4rem; height: 4rem' alt='ico' />
 <div class='pl-20 pb-20 justify-content-end d-flex flex-column h-full banner mw-full grab' use:drag={swipeMedia}>
-  <div class='text-white font-weight-bold font-scale-40'>
+  <div class='text-white font-weight-very-bold hero-title'>
     <span class='cursor-default title overflow-hidden d-inline-block pr-5'>{anilistClient.title(currentStatic)}</span>
   </div>
   <div class='details text-white text-capitalize pt-10 pb-10 d-flex w-600 mw-full cursor-default'>
@@ -116,11 +116,11 @@
     {/each}
   </div>
   <div class='d-flex flex-row pb-10 w-600 mw-full cursor-default'>
-    <button class='btn bg-dark-light px-20 shadow-none border-0 d-flex align-items-center justify-content-center' title='Watch' use:click={() => playMedia(currentStatic)}>
-      <Play class='mr-10' size='1.7rem' />
+    <button class='btn hero-cta px-25 shadow-none border-0 d-flex align-items-center justify-content-center' title='Watch' use:click={() => playMedia(currentStatic)}>
+      <Play class='mr-10' size='1.7rem' fill='currentColor' />
       <span>{current.mediaListEntry?.progress ? current.mediaListEntry?.status === 'COMPLETED' ? 'Rewatch Now' : 'Continue Now' : 'Watch Now'}</span>
     </button>
-    <button class='btn bg-dark-light ml-10 px-20 shadow-none border-0 d-flex align-items-center justify-content-center' title='View Details' use:click={() => modal.open(modal.ANIME_DETAILS, current)}>
+    <button class='btn hero-alt ml-10 px-25 shadow-none d-flex align-items-center justify-content-center' title='View Details' use:click={() => modal.open(modal.ANIME_DETAILS, current)}>
       <span>View Details</span>
     </button>
     {#if Helper.isAuthorized()}
@@ -140,7 +140,7 @@
       {@const disabled = active || null}
       <div class='pt-10 pb-10 badge-wrapper' aria-hidden='true' {disabled} class:pointer={!active} class:cursor-default={active} use:click={() => setCurrent(media)}>
         <div class='rounded bg-dark-light mr-10 progress-badge overflow-hidden progressive' {disabled} class:active style='height: 3px;' style:width={active ? '5rem' : '2.7rem'}>
-          <div class='progress-content h-full' class:bg-white={active} />
+          <div class='progress-content h-full' class:progress-accent={active} />
         </div>
       </div>
     {/each}
@@ -150,6 +150,41 @@
 {/if}
 
 <style>
+  /* The hero speaks first: cinema-sized title, one accent action. All of it static
+     paint — the only animation is the press/hover scale the whole app already uses. */
+  .hero-title {
+    font-size: clamp(3.2rem, 4.5vw, 6.4rem);
+    line-height: 1.06;
+    letter-spacing: -0.02em;
+    text-shadow: 0 0.2rem 2.4rem hsla(0, 0%, 0%, 0.55);
+  }
+  .hero-cta {
+    background: var(--tertiary-color) !important;
+    color: var(--highlight-color) !important;
+    border-radius: 5rem;
+    font-weight: 700;
+    /* painted once and carried by the pill; never transitioned */
+    box-shadow: 0 0.4rem 1.8rem hsla(var(--tertiary-color-hsl), 0.45);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .hero-cta:hover {
+      background: var(--tertiary-color-light) !important;
+      scale: 1.03;
+    }
+    .hero-alt:hover {
+      background: hsla(var(--white-color-hsl), 0.16) !important;
+    }
+  }
+  .hero-alt {
+    background: hsla(var(--white-color-hsl), 0.09) !important;
+    color: var(--highlight-color) !important;
+    border: 0.1rem solid hsla(var(--white-color-hsl), 0.18) !important;
+    border-radius: 5rem;
+  }
+  .progress-accent {
+    background: var(--tertiary-color);
+  }
+
   .gradient-bottom {
     background: var(--banner-gradient-bottom);
   }

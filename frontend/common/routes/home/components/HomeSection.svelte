@@ -111,7 +111,7 @@
 </script>
 
 <span class='d-flex px-20 align-items-end text-decoration-none' class:mv-10={lastEpisode} use:deferredLoad>
-  <div class='font-scale-24 font-weight-semi-bold glow text-muted pointer' aria-hidden='true' use:click={_click}>{opts.title}</div>
+  <div class='section-title font-scale-24 font-weight-bold glow pointer' aria-hidden='true' use:click={_click}>{opts.title}</div>
   <div class='ml-auto pr-5 pl-5 font-size-12 glow text-muted pointer btn d-none align-items-center justify-content-center' class:d-flex={!SUPPORTS.isAndroid} aria-hidden='true' use:click={() => scrollCarousel('left')}><ChevronLeft strokeWidth='3' size='2rem' /></div>
   <div class='pr-5 pl-5 ml-10 font-size-12 glow text-muted pointer btn d-none align-items-center justify-content-center' class:d-flex={!SUPPORTS.isAndroid} aria-hidden='true' use:click={() => scrollCarousel('right')}><ChevronRight strokeWidth='3' size='2rem' /></div>
 </span>
@@ -130,6 +130,27 @@
 </div>
 
 <style>
+  /* rail titles own their row now: full-strength text seated on an accent tab,
+     instead of the muted gray that made every section read as secondary */
+  .section-title {
+    color: var(--highlight-color);
+    display: flex;
+    align-items: center;
+    transition: color var(--motion) var(--ease-settle);
+  }
+  .section-title::before {
+    content: '';
+    width: 0.45rem;
+    height: 1.05em;
+    margin-right: 1rem;
+    border-radius: 5rem;
+    background: linear-gradient(180deg, var(--tertiary-color-light), var(--tertiary-color));
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .section-title:hover {
+      color: var(--tertiary-color-very-light);
+    }
+  }
   .btn {
     border-radius: 2rem;
   }
