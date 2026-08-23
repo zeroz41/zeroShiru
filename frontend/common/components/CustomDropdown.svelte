@@ -1,5 +1,6 @@
 <script>
     import { writable } from 'simple-store-svelte'
+    import { fadeIn, fadeOut } from '@/modules/util.js'
     import { click } from '@/modules/lib/click.js'
     import { createListener } from '@/modules/util.js'
 
@@ -139,7 +140,7 @@
     />
     {#if $dropdown}
         {@const searchInput = searchTextInput ? searchTextInput.toLowerCase() : null}
-        <div class='custom-dropdown-menu position-absolute mh-300 overflow-y-auto w-full bg-dark custom-menu-{id}'>
+        <div class='custom-dropdown-menu position-absolute mh-300 overflow-y-auto w-full bg-dark custom-menu-{id}' in:fadeIn={{ duration: 150 }} out:fadeOut={{ duration: 120 }}>
             {#each headerSections?.length ? headerSections : [{ header: null, start: 0, end: getOptions()?.length || 1 }] as { header, start, end }}
                 {@const options = getOptions().slice(start, end).filter((val) => !searchInput || includes(getOptionDisplay(val)?.toLowerCase(), searchInput.startsWith('!') ? searchInput.slice(1) : searchInput)).sort((a, b) => ((includes(value, a) ? -1 : 1) - (includes(value, b) ? -1 : 1)) || ((includes(altValue, a) ? 0 : 1) - (includes(altValue, b) ? 0 : 1))).slice(0, ((headerSections?.length ? end : displaySize) - displayedOptions))}
                 {#if options.length > 0}
@@ -185,9 +186,10 @@
         border-radius: 0 !important;
     }
     .custom-dropdown-menu {
-        border-radius: 1rem;
-        border: 0.1rem solid var(--border-color-sp);
-        box-shadow: 0 0.25rem 0.75rem hsla(var(--black-color-hsl), 0.1);
+        border-radius: var(--radius-panel);
+        border: 0.1rem solid hsla(var(--white-color-hsl), 0.09);
+        /* seated on a dark page: a black shadow at 0.1 alpha was invisible here */
+        box-shadow: 0 0.8rem 2rem hsla(var(--black-color-hsl), 0.5);
         z-index: 15;
     }
     @media (hover: hover) and (pointer: fine) {
@@ -201,7 +203,8 @@
         color: var(--black-color);
     }
     .custom-dropdown-item-alt-selected {
-        background-color: var(--danger-color-very-dim);
+        /* --danger-color-very-dim was never defined, so exclusions rendered unmarked */
+        background-color: hsla(var(--red-color-very-dim-hsl), 0.85);
         color: var(--highlight-color);
     }
 </style>

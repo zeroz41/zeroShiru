@@ -47,7 +47,7 @@
   .controls-container {
     -webkit-app-region: no-drag;
     backdrop-filter: blur(8px);
-    background: rgba(24, 24, 24, 0.2);
+    background: hsla(var(--dark-color-dim-hsl), 0.25);
   }
   .ml-sb {
     margin-left: var(--sidebar-width);

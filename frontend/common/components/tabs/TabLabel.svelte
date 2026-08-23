@@ -28,23 +28,20 @@
     color: var(--highlight-color);
     transition: background var(--motion) var(--ease-settle), color var(--motion) var(--ease-settle);
   }
+  /* the same soft wash the nav uses — the solid white hover chip retired with it */
   .tab-label:active > span {
-    background: var(--highlight-color);
-    color: var(--dark-color);
+    background: hsla(var(--white-color-hsl), 0.16);
+    color: var(--highlight-color);
   }
   @media (hover: hover) and (pointer: fine) {
     .tab-label:hover > span {
-      background: var(--highlight-color);
-      color: var(--dark-color);
+      background: hsla(var(--white-color-hsl), 0.1);
+      color: var(--highlight-color);
     }
   }
   .tab-label:focus-visible > span {
-    background: var(--highlight-color);
-    color: var(--dark-color);
-  }
-  .tab-label:focus-visible {
-    outline: none !important;
-    box-shadow: none !important;
+    background: hsla(var(--white-color-hsl), 0.1);
+    color: var(--highlight-color);
   }
   .tab-label {
     font-size: 1.4rem;

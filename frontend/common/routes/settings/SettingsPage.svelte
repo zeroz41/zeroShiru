@@ -131,37 +131,39 @@
         </div>
       </div>
     </div>
-    <div class='mt-75 mt-lg-0 w-full overflow-y-auto overflow-y-md-hidden pr-notch-safe-area' class:status-transition={statusTransition} class:pt-28px={!SUPPORTS.isAndroid && !$status.match(/offline/i)} class:scroll-container={!SUPPORTS.isAndroid && !$status.match(/offline/i)} class:pt-safe-area={SUPPORTS.isAndroid && !$status.match(/offline/i)}>
+    <!-- mw-0: a flex item's min-width:auto let the settings column refuse to shrink next to
+         the 30rem tab rail, pushing every card's right edge off the window -->
+    <div class='mt-75 mt-lg-0 w-full mw-0 overflow-y-auto overflow-y-md-hidden pr-notch-safe-area' class:status-transition={statusTransition} class:pt-28px={!SUPPORTS.isAndroid && !$status.match(/offline/i)} class:scroll-container={!SUPPORTS.isAndroid && !$status.match(/offline/i)} class:pt-safe-area={SUPPORTS.isAndroid && !$status.match(/offline/i)}>
       <Tab>
-        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5'>
+        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5 tab-enter'>
           <div class='page pb-100'>
             <PlayerTab bind:settings={$settings} />
           </div>
         </div>
       </Tab>
       <Tab>
-        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5'>
+        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5 tab-enter'>
           <div class='page pb-100'>
             <ClientTab bind:settings={$settings} {requestFileAccess} />
           </div>
         </div>
       </Tab>
       <Tab>
-        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5'>
+        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5 tab-enter'>
           <div class='page pb-100'>
             <InterfaceTab bind:settings={$settings} />
           </div>
         </div>
       </Tab>
       <Tab>
-        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5'>
+        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5 tab-enter'>
           <div class='page pb-100'>
             <ExtensionTab bind:settings={$settings} />
           </div>
         </div>
       </Tab>
       <Tab>
-        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5'>
+        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5 tab-enter'>
           <div class='page pb-100'>
             <DebridTab bind:settings={$settings} />
           </div>
@@ -169,14 +171,14 @@
       </Tab>
       <Tab/> <!-- Skip Profile Tab -->
       <Tab>
-        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5'>
+        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5 tab-enter'>
           <div class='page pb-100'>
             <AppTab {version} {debugStore} bind:settings={$settings} />
           </div>
         </div>
       </Tab>
       <Tab>
-        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5'>
+        <div class='root h-full w-full overflow-y-md-auto p-20 pt-5 tab-enter'>
           <div class='page pb-100'>
             <ChangelogTab {version} />
           </div>

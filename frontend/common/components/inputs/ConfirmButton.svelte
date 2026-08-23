@@ -100,13 +100,14 @@
     gap: 0.5rem;
   }
   .animate {
-    transition: opacity 0.25s ease-out, transform 0.25s ease-out, filter 0.25s ease-out, scale 0.2s ease;
+    /* opacity and transform only: transitioning a blur() re-filtered the whole
+       control per frame on every confirm/cancel swap */
+    transition: opacity 0.25s ease-out, transform 0.25s ease-out, scale 0.2s ease;
   }
   .animate.hidden {
     position: absolute;
     transform: translateX(-8px);
     pointer-events: none;
-    filter: blur(4px);
     opacity: 0;
     height: 0;
     width: 0;

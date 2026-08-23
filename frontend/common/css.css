@@ -67,6 +67,26 @@
     0 .6rem 1.4rem hsla(0, 0%, 0%, .6),
     0 0 2rem -.6rem var(--lift-color, transparent);
 
+  /* --- surface geometry ----------------------------------------------------------
+     One radius scale instead of the thirteen ad-hoc values that grew here. The base
+     nudged up from quartermoon's 0.4rem: at this app's root font size that was ~3px,
+     which is where the hard-edged 2019 look came from. */
+  --base-border-radius: 0.6rem;
+  --radius-panel: 1rem;
+
+  /* --- scrollbars ----------------------------------------------------------------
+     Thumb-only and slim. Quartermoon's defaults drew a 1.4rem bar with a visible
+     track border line down every scrolling surface in the app. */
+  --webkit-scrollbar-width-height: 0.8rem;
+  --webkit-scrollbar-track-border-width: 0;
+  --webkit-scrollbar-thumb-border-width: 0.15rem;
+  --webkit-scrollbar-thumb-border-radius: 5rem;
+  --webkit-scrollbar-corner-border-width: 0;
+  --dm-webkit-scrollbar-thumb-bg-color: hsla(var(--white-color-hsl), 0.16);
+  --dm-webkit-scrollbar-thumb-bg-color-hover: hsla(var(--white-color-hsl), 0.32);
+  --dm-webkit-scrollbar-track-border-color: transparent;
+  --dm-webkit-scrollbar-corner-border-color: transparent;
+
   --accent-color: #e5204c;
   --highlight-color: #FFFFFF !important;
   --current-color: #3DB4F2 !important;
@@ -166,8 +186,12 @@
   --dm-link-text-color-hover: var(--dm-text-color) !important;
   --skeleton-swipe-background: var(--dark-color-light);
   --sidebar-gradient: linear-gradient(90deg, var(--dark-color) 15.62%, hsla(var(--dark-color-hsl), 0.92) 36.46%, hsla(var(--dark-color-hsl), 0.62) 70.83%, hsla(var(--black-color-hsl), 0) 100%);
-  --banner-gradient-bottom: linear-gradient(0deg, var(--dark-color) 0%, hsla(var(--dark-color-hsl), 0) 15%, hsla(var(--dark-color-hsl), 0) 100%);
-  --banner-gradient-left: linear-gradient(90deg, var(--dark-color) 0%, rgba(23, 25, 29, 0.5) 75%, rgba(25, 28, 32, 0) 100%);
+  /* The home banner's scrims. Theme-derived throughout — the left fade used to carry
+     two hardcoded rgba() stops of the old default dark, which landed visibly wrong on
+     the AMOLED theme — and the bottom ramp runs a third of the height in three stops,
+     so the artwork settles into the page instead of hitting a hard shelf at 15%. */
+  --banner-gradient-bottom: linear-gradient(0deg, var(--dark-color) 0%, hsla(var(--dark-color-hsl), 0.75) 12%, hsla(var(--dark-color-hsl), 0.25) 24%, hsla(var(--dark-color-hsl), 0) 36%, hsla(var(--dark-color-hsl), 0) 100%);
+  --banner-gradient-left: linear-gradient(90deg, var(--dark-color) 0%, hsla(var(--dark-color-hsl), 0.82) 42%, hsla(var(--dark-color-hsl), 0.45) 72%, hsla(var(--dark-color-hsl), 0) 100%);
   --torrent-card-gradient: linear-gradient(90deg, hsla(var(--dark-color-hsl), 0.98) 25%, hsla(var(--dark-color-light-hsl), 0.85) 100%);
   --torrent-banner-gradient: linear-gradient(0, var(--dark-color-dim) 15%, hsla(var(--dark-color-very-dim-hsl), 0.64) 85%), linear-gradient(to left, var(--dark-color-dim) 0, transparent 1%);
   --notification-card-gradient: linear-gradient(90deg, hsla(var(--dark-color-light-hsl), 0.98) 32%, hsla(var(--dark-color-hsl), 0.85) 100%);
@@ -472,8 +496,9 @@ a[href]:active, button:not([disabled], .not-reactive):active:not([data-sonner-to
 
 [data-sonner-toaster][data-theme='dark'] {
   top: 5rem !important;
-  --normal-bg: var(--dark-color) !important;
-  --normal-border: none !important;
+  --border-radius: var(--radius-panel) !important;
+  --normal-bg: hsl(var(--dark-color-light-hsl)) !important;
+  --normal-border: 0.1rem solid hsla(var(--white-color-hsl), 0.09) !important;
   --normal-text: var(--dm-base-text-color) !important;
 
   /* --success-bg: var(--success-color) !important; */
@@ -485,10 +510,13 @@ a[href]:active, button:not([disabled], .not-reactive):active:not([data-sonner-to
   /* --error-text: hsl(358, 100%, 81%); */
 }
 
+[data-sonner-toast] {
+  box-shadow: 0 0.8rem 2rem hsla(0, 0%, 0%, 0.55) !important;
+}
+
 [data-sonner-toast] > button {
   position: absolute !important;
-  margin-left: 94% !important;
-  right: 0 !important;
+  right: 0.6rem !important;
   margin-top: 1.4rem !important;
   border-radius: .4rem !important;
   border-color: transparent !important;
@@ -910,9 +938,12 @@ img[src=''], img[src=' '] {
 }
 
 *:focus-visible {
-  outline: none;
-  border-radius: .5rem;
-  box-shadow: inset 0 0 0 .4rem var(--tertiary-color) !important;
+  /* an outline, not an inset shadow: the ring follows the element's own corners
+     (the old rule forced every focused circle square) and sits outside the control
+     instead of eating a seventh of a small button */
+  outline: 0.25rem solid var(--tertiary-color);
+  outline-offset: 0.2rem;
+  box-shadow: none !important;
 }
 
 @media (hover: none), (pointer: coarse) {
@@ -989,6 +1020,15 @@ img[src=''], img[src=' '] {
   6% { transform: rotate(10deg); }
 }
 
+.tab-enter {
+  /* the settings tab bodies remount on switch; a short fade replaces the hard cut */
+  animation: page-fade 0.15s ease-out;
+}
+@keyframes page-fade {
+  from { opacity: 0.4; }
+  to { opacity: 1; }
+}
+
 .load-in {
   /* no `will-change` here: this is on every card on the page, and a standing hint gives
      every one of them its own compositing layer for the sake of 400ms it plays once. A
@@ -1024,7 +1064,9 @@ img[src=''], img[src=' '] {
   left: 0;
   width: 100%;
   height: 100%;
-  background: linear-gradient(to right, transparent 0%, hsla(var(--dark-color-hsl), 0.5) 50%, transparent 100%);
+  /* the highlight must be LIGHTER than the surface it sweeps: the old one swept 50%
+     of 10%-lightness over a 14%-lightness base — an animation running invisibly */
+  background: linear-gradient(to right, transparent 0%, hsla(var(--white-color-hsl), 0.06) 50%, transparent 100%);
   animation: skeleton-swipe 1s infinite;
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   will-change: transform;

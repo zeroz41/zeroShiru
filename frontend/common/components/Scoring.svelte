@@ -253,12 +253,12 @@
   }
   @media (hover: hover) and (pointer: fine) {
     .btn-delete:hover {
-      color: white !important;
-      background: darkred !important;
+      color: var(--highlight-color) !important;
+      background: hsla(var(--red-color-very-dim-hsl), 0.9) !important;
     }
     .btn-save:hover {
-      color: white !important;
-      background: darkgreen !important;
+      color: var(--highlight-color) !important;
+      background: var(--completed-color-dim) !important;
     }
   }
   .total-episodes {

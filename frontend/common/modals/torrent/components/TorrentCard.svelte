@@ -525,19 +525,13 @@
     cursor: not-allowed;
   }
 
+  /* shadow painted once, breathed by opacity — an animated drop-shadow is a CPU
+     filter pass per frame, and this ran for the whole autoplay countdown */
   .glow {
     border: .1rem solid;
-    animation: glowPulse 1s ease-in-out infinite alternate;
-    will-change: drop-shadow;
-    transition: border-color 0.5s, drop-shadow 0.5s, transform 0.2s ease;
-  }
-  @keyframes glowPulse {
-    from {
-      filter: drop-shadow(0 0 .5rem currentColor);
-    }
-    to {
-      filter: drop-shadow(0 0 .1rem currentColor);
-    }
+    filter: drop-shadow(0 0 .4rem currentColor);
+    animation: glow_breathe 1s ease-in-out infinite alternate;
+    transition: border-color 0.5s, transform 0.2s ease;
   }
 
   /* Behavior for narrow screens (mobile) */

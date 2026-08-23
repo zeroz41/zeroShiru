@@ -29,6 +29,9 @@
   let initialResize = true
   /** @type {import('simple-store-svelte').Writable<Array>} List of loaded card data items */
   const items = writable([])
+  /** Skeletons for the moment between a search changing and its placeholders arriving —
+   * the grid used to render literally nothing under the filter bar while a query loaded. */
+  const fakecards = Array.from({ length: 12 }, () => ({ data: new Promise(() => {}) }))
   /** @type {number} Distance from bottom (px) at which the next page load is triggered.
    * Viewport-relative: a fixed 500px is most of a phone screen and a sliver of a television,
    * so on a large screen the next page only ever started once the user was already there. */
@@ -151,7 +154,7 @@
   <SearchBar bind:search={$search} clearNow={$clearNow} on:input={update} />
   <div bind:this={keyContainer} class='w-full d-grid d-md-flex flex-wrap flex-row px-20 px-md-40 justify-content-center align-content-start pt-10'>
     {#key $key}
-      {#each $items as card}
+      {#each ($items?.length ? $items : fakecards) as card}
         <Card {card} variables={{...$search}} />
       {/each}
       {#if $items?.length}

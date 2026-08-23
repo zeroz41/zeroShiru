@@ -77,10 +77,13 @@
   .nav-link > span:not(.nav-link-text) {
     color: var(--highlight-color);
   }
+  /* a soft wash, not a solid white chip: the old hover swapped every nav icon to
+     white-on-dark-inverted, the single most 2019-looking interaction in the app.
+     The icon stays bright; the surface answers. */
   .nav-link:not(.drawer):active > span:not(.nav-link-text),
   .nav-link.drawer:active{
-    background: var(--highlight-color);
-    color: var(--dark-color);
+    background: hsla(var(--white-color-hsl), 0.16);
+    color: var(--highlight-color);
   }
   .nav-link-text {
     color: var(--gray-color-very-dim);
@@ -91,24 +94,16 @@
   @media (hover: hover) and (pointer: fine) {
     .nav-link:hover:not(.drawer) > span:not(.nav-link-text),
     .nav-link.drawer:hover {
-      background: var(--highlight-color);
-      color: var(--dark-color);
-    }
-    .nav-link.drawer:hover > span {
-      color: var(--dark-color);
+      background: hsla(var(--white-color-hsl), 0.1);
+      color: var(--highlight-color);
     }
   }
+  /* keyboard focus keeps the global ring (it was suppressed here, leaving hover and
+     focus indistinguishable) plus the same wash the pointer gets */
   .nav-link:focus-visible:not(.drawer) > span:not(.nav-link-text),
   .nav-link.drawer:focus-visible {
-    background: var(--highlight-color);
-    color: var(--dark-color);
-  }
-  .nav-link.drawer:focus-visible > span {
-    color: var(--dark-color);
-  }
-  .nav-link:focus-visible:not(.nav-link-text) {
-    outline: none !important;
-    box-shadow: none !important;
+    background: hsla(var(--white-color-hsl), 0.1);
+    color: var(--highlight-color);
   }
   .inactive {
     color: var(--gray-color-very-dim) !important;

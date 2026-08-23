@@ -25,16 +25,36 @@
   </Miniplayer>
 </div>
 
-{#if $page === page.SETTINGS}
-  <SettingsPage bind:statusTransition/>
-{:else if $page === page.HOME}
-  <HomePage />
-{:else if $page === page.SEARCH}
-  <SearchPage search={search} key={key}/>
-{:else if $page === page.SCHEDULE}
-  <SchedulePage />
-{:else if $page === page.WATCH_TOGETHER}
-  <WatchTogetherPage />
-{:else if $page === page.TORRENT_MANAGER}
-  <TorrentPage />
-{/if}
+{#key $page}
+  <!-- display:contents leaves layout exactly as it was; the entry fade lands on the
+       page's own root box. Opacity only — a hard cut between pages was the last
+       unanimated interaction in the app's chrome. -->
+  <div class='page-host'>
+    {#if $page === page.SETTINGS}
+      <SettingsPage bind:statusTransition/>
+    {:else if $page === page.HOME}
+      <HomePage />
+    {:else if $page === page.SEARCH}
+      <SearchPage search={search} key={key}/>
+    {:else if $page === page.SCHEDULE}
+      <SchedulePage />
+    {:else if $page === page.WATCH_TOGETHER}
+      <WatchTogetherPage />
+    {:else if $page === page.TORRENT_MANAGER}
+      <TorrentPage />
+    {/if}
+  </div>
+{/key}
+
+<style>
+  .page-host {
+    display: contents;
+  }
+  .page-host > :global(*) {
+    animation: page-fade 0.18s ease-out;
+  }
+  @keyframes page-fade {
+    from { opacity: 0.4; }
+    to { opacity: 1; }
+  }
+</style>

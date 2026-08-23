@@ -1,6 +1,16 @@
 <script>
+  // Empty and broken are different stories: "no results" is a calm fact with a next
+  // step, while "Ooops!" is an alarm. This card told both the same way for years.
+  import { SearchX, CircleAlert } from 'lucide-svelte'
   export let promise
   export let containerClass = ''
+
+  /** Whether a result's errors amount to "nothing here" rather than "something broke". */
+  function isEmptiness (res) {
+    if (!res?.errors) return true
+    const described = JSON.stringify(res.errors) || ''
+    return /found no results|will be released on|hasn't released yet/i.test(described)
+  }
 </script>
 
 {#await promise then res}
@@ -8,8 +18,15 @@
     {@const errors = res?.errors}
     <div class='error-card p-20 d-flex align-items-center justify-content-center w-full h-387 {containerClass}'>
       <div class='{$$restProps.class}'>
+        <div class='d-flex justify-content-center mb-10 state-glyph' class:calm={isEmptiness(res)}>
+          {#if isEmptiness(res)}
+            <SearchX size='6rem' strokeWidth='1.4' />
+          {:else}
+            <CircleAlert size='6rem' strokeWidth='1.4' />
+          {/if}
+        </div>
         <h1 class='mb-5 text-white font-weight-bold text-center'>
-          Ooops!
+          {isEmptiness(res) ? 'Nothing here' : 'Something went wrong'}
         </h1>
         {#if errors}
           <div class='font-size-22 text-center text-muted'>
@@ -51,12 +68,12 @@
 {:catch error}
   <div class='error-card p-20 d-flex align-items-center justify-content-center w-full h-387 {containerClass}'>
     <div class='{$$restProps.class}'>
-      <h1 class='mb-5 text-white font-weight-bold text-center'>
-        Ooops!
-      </h1>
-      <div class='font-size-20 text-center text-muted'>
-        Looks like something went wrong!
+      <div class='d-flex justify-content-center mb-10 state-glyph'>
+        <CircleAlert size='6rem' strokeWidth='1.4' />
       </div>
+      <h1 class='mb-5 text-white font-weight-bold text-center'>
+        Something went wrong
+      </h1>
       <div class='font-size-20 text-center text-muted'>
         {error.message}
       </div>
@@ -67,5 +84,11 @@
 <style>
   .h-387 {
     height: 38.7rem;
+  }
+  .state-glyph {
+    color: hsla(var(--white-color-hsl), 0.35);
+  }
+  .state-glyph.calm {
+    color: hsla(var(--white-color-hsl), 0.25);
   }
 </style>
