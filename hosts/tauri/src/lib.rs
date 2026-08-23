@@ -3,6 +3,7 @@
 
 mod commands;
 mod debrid;
+mod diagnostics;
 #[cfg(desktop)]
 mod desktop;
 mod discord;
@@ -87,6 +88,8 @@ pub fn run() {
             net::http_request,
             debrid::debrid_validate,
             debrid::debrid_list_availability,
+            diagnostics::get_diagnostics,
+            diagnostics::set_log_filter,
             debrid::debrid_watch_availability,
             debrid::debrid_cancel_availability,
             debrid::debrid_remember,

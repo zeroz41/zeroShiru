@@ -64,6 +64,14 @@ test('search plays, w2g invites, schedule navigates', () => {
   ])
 })
 
+test('shiru://page opens any page by name, validation being navigation\'s job', () => {
+  const pages = []
+  onRequestPage(name => pages.push(name))
+  handleProtocol('shiru://page/settings')
+  handleProtocol('shiru://page/torrent_manager')
+  assert.deepEqual(pages, ['settings', 'torrent_manager'])
+})
+
 test('unknown keys, junk, and empty input dispatch nothing', () => {
   handleProtocol('shiru://nonsense/whatever')
   handleProtocol('https://example.com/not-a-deep-link')

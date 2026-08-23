@@ -40,6 +40,8 @@
   window.common = {
     getAppVersion: () => invoke('get_app_version'),
     getPlatformInfo: () => platformInfo,
+    // everything the host knows about itself, for the copy-to-clipboard debug report
+    getDeviceInfo: async () => ({ platformInfo, diagnostics: await invoke('get_diagnostics').catch(() => null) }),
     mediaSrc: (url) => typeof url === 'string' && /^https?:\/\//.test(url) ? mediaBase + encodeURIComponent(url) : url,
     isWindowVisible: async () => true,
     openURI: (uri) => invoke('open_uri', { uri }).catch(() => {}),
@@ -123,6 +125,11 @@
 
   window.shiru = {
     routePlayback: (request) => invoke('route_playback', { request }),
+    // live introspection: one cheap snapshot of host health, and the log-loudness knob
+    diagnostics: {
+      snapshot: () => invoke('get_diagnostics'),
+      setLogFilter: (filter) => invoke('set_log_filter', { filter })
+    },
     debrid: {
       // inlined at build time by the host, so the settings menu reads the registry synchronously
       services: __SHIRU_DEBRID_SERVICES__,

@@ -74,6 +74,23 @@ pub struct RequestOpts {
     pub timeout_ms: Option<u64>,
 }
 
+/// A diagnostic view of one debrid client, answering "why is this slow / broken"
+/// without a debugger attached. Plain data; hosts serialize it for their IPC.
+#[derive(Debug, Clone, Copy)]
+pub struct ClientHealth {
+    /// The service recently spent a full budget answering nothing, and has not spoken since.
+    pub quiet: bool,
+    /// Round trips in a row that never came back.
+    pub unanswered_timeouts: u64,
+    /// Rolling round-trip estimate, 0 until the first answer. Budgets stretch against it.
+    pub latency_ms: u64,
+    /// Availability answers held in memory.
+    pub remembered_answers: usize,
+    /// Removals the account is still owed (see OrphanOnDrop).
+    pub orphaned_removals: usize,
+    pub limiter: crate::limiter::LimiterHealth,
+}
+
 /// A provider's response conventions: how envelopes unwrap and how errors map.
 pub trait Dialect: Send + Sync {
     /// Unpacks a successful response body. Providers whose APIs report failures
@@ -297,8 +314,11 @@ impl DebridClient {
             .map_err(|error| match error {
                 shiru_networking::TransportError::Timeout(ms) => {
                     // an unanswered round trip is the evidence the quiet state runs on
-                    self.quiet_timeouts.fetch_add(1, Ordering::Relaxed);
+                    let strikes = self.quiet_timeouts.fetch_add(1, Ordering::Relaxed) + 1;
                     self.quiet_at.store(self.platform.now_ms(), Ordering::Relaxed);
+                    if strikes == 1 {
+                        tracing::warn!(target: "debrid", service = self.config.id, budget_ms = timeout_ms, "service went quiet: a full budget passed with no answer; later requests will only probe");
+                    }
                     DebridError::Timeout { message: format!("request timed out after {ms}ms") }
                 }
                 shiru_networking::TransportError::Network(message) => DebridError::Network { message },
@@ -307,7 +327,9 @@ impl DebridClient {
         // only round trips that came back, so a timeout cannot inflate it
         self.observe_latency(self.platform.now_ms().saturating_sub(sent));
         // any answer at all — even an error status — is the service talking again
-        self.quiet_timeouts.store(0, Ordering::Relaxed);
+        if self.quiet_timeouts.swap(0, Ordering::Relaxed) > 0 {
+            tracing::info!(target: "debrid", service = self.config.id, "service is answering again");
+        }
         self.finish(dialect, response)
     }
 
@@ -431,6 +453,19 @@ impl DebridClient {
     pub fn quiet(&self) -> bool {
         self.quiet_timeouts.load(Ordering::Relaxed) > 0
             && self.platform.now_ms().saturating_sub(self.quiet_at.load(Ordering::Relaxed)) < QUIET_COOLDOWN_MS
+    }
+
+    /// Everything worth knowing about this client's health in one read, for the
+    /// diagnostics surface. Cheap: atomics and two short lock holds.
+    pub fn health(&self) -> ClientHealth {
+        ClientHealth {
+            quiet: self.quiet(),
+            unanswered_timeouts: self.quiet_timeouts.load(Ordering::Relaxed),
+            latency_ms: self.latency.load(Ordering::Relaxed),
+            remembered_answers: self.availability.lock().unwrap().len(),
+            orphaned_removals: self.orphaned(),
+            limiter: self.limiter.snapshot(self.platform.as_ref()),
+        }
     }
 
     /// Records a removal the account is owed without sending it, for cleanup paths that

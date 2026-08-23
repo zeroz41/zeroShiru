@@ -73,6 +73,52 @@ impl DebridState {
     }
 }
 
+/// One warm provider's health, as the diagnostics surface reports it.
+#[derive(Serialize)]
+pub struct ServiceHealth {
+    pub service: String,
+    /// The service recently spent a full budget answering nothing.
+    pub quiet: bool,
+    pub unanswered_timeouts: u64,
+    /// Rolling round-trip estimate the budgets stretch against.
+    pub latency_ms: u64,
+    pub remembered_answers: usize,
+    /// Removals the account is still owed by dropped calls.
+    pub orphaned_removals: usize,
+    /// A magnet-adding sweep owns the account right now.
+    pub sweeping: bool,
+    pub requests_in_flight: usize,
+    pub requests_waiting: usize,
+    /// A 429's pause, however much of it is left.
+    pub paused_for_ms: u64,
+}
+
+impl DebridState {
+    /// Every warm provider's health, most recently used first. Cheap reads only.
+    pub fn health(&self) -> Vec<ServiceHealth> {
+        self.active
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(service, _, managed)| {
+                let health = managed.client().health();
+                ServiceHealth {
+                    service: service.clone(),
+                    quiet: health.quiet,
+                    unanswered_timeouts: health.unanswered_timeouts,
+                    latency_ms: health.latency_ms,
+                    remembered_answers: health.remembered_answers,
+                    orphaned_removals: health.orphaned_removals,
+                    sweeping: managed.sweeping(),
+                    requests_in_flight: health.limiter.in_flight,
+                    requests_waiting: health.limiter.waiting,
+                    paused_for_ms: health.limiter.paused_for_ms,
+                }
+            })
+            .collect()
+    }
+}
+
 /// Errors cross IPC as their user-facing message plus a kind the frontend can
 /// branch on. `not-cached`/`unavailable` prove something about the release;
 /// `rejected` says the release is wrong rather than the service.

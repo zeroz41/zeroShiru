@@ -203,6 +203,26 @@ impl Limiter {
     pub fn paused(&self, platform: &dyn Platform) -> bool {
         platform.now_ms() < self.state.lock().unwrap().paused_until
     }
+
+    /// The pipe as it stands, for diagnostics: requests in flight, callers waiting
+    /// behind them, and how much of a service-requested pause is left.
+    pub fn snapshot(&self, platform: &dyn Platform) -> LimiterHealth {
+        let state = self.state.lock().unwrap();
+        LimiterHealth {
+            in_flight: state.in_flight,
+            waiting: state.waiting.len(),
+            paused_for_ms: state.paused_until.saturating_sub(platform.now_ms()),
+        }
+    }
+}
+
+/// A diagnostic view of the limiter. Plain data, so hosts can serialize it however
+/// their IPC wants.
+#[derive(Debug, Clone, Copy)]
+pub struct LimiterHealth {
+    pub in_flight: usize,
+    pub waiting: usize,
+    pub paused_for_ms: u64,
 }
 
 #[cfg(test)]

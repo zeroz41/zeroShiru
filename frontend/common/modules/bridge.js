@@ -52,7 +52,7 @@ const commonDefaults = {
    * @type {(url: any) => any}
    */
   mediaSrc: (url) => url,
-  getDeviceInfo: noopAsyncVoid,
+  getDeviceInfo: async () => ({}),
   exportLog: noopAsyncVoid,
   resetLog: noopAsyncVoid,
   /**
@@ -159,3 +159,13 @@ export const COMMON = { ...commonDefaults, ...window.common }
 export const ANDROID = { ...androidDefaults, ...window.android }
 export const DESKTOP = { ...desktopDefaults, ...window.desktop }
 export const DEBRID = { ...debridDefaults, ...window.shiru?.debrid }
+
+/** Live host introspection: a health snapshot on demand, and the log-loudness knob.
+ * Hosts without it answer null, and the diagnostics panel says so instead of lying. */
+const diagnosticsDefaults = {
+  /** @returns {Promise<any|null>} One snapshot of host health, or null where unsupported. */
+  snapshot: async () => null,
+  /** @param {string} filter - tracing directives, empty for the default. */
+  setLogFilter: async (filter) => {}
+}
+export const DIAGNOSTICS = { ...diagnosticsDefaults, ...window.shiru?.diagnostics }

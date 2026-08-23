@@ -52,6 +52,9 @@ const protocolMap = {
   search: id => dispatch('requestPlay', { id }),
   w2g: link => dispatch('lobbyInvite', link),
   schedule: () => dispatch('requestPage', 'schedule'),
+  // any page by name — navigation validates it. This is how headless verification and
+  // bug reproduction drive the app from a second instance without touching the UI
+  page: name => dispatch('requestPage', name),
   show: () => DESKTOP.showAndFocus()
 }
 

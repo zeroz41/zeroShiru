@@ -317,6 +317,45 @@ fn trim(dir: &Path, cap: u64, target: u64) {
     }
 }
 
+/// The art cache as a subject, for the diagnostics surface.
+#[derive(serde::Serialize)]
+pub struct MediaCacheStats {
+    /// Files held (images; .ct sidecars excluded).
+    pub entries: usize,
+    pub size_bytes: u64,
+    pub cap_bytes: u64,
+    /// Fetches in flight right now.
+    pub in_flight: usize,
+    /// URLs refused because they failed within the last FAILURE_TTL.
+    pub recent_failures: usize,
+}
+
+/// Walks the cache directory and counts. Blocking IO — call it off the executor.
+pub fn stats(dir: Option<&Path>) -> MediaCacheStats {
+    let mut entries = 0;
+    let mut size_bytes = 0;
+    if let Some(listing) = dir.and_then(|dir| std::fs::read_dir(dir).ok()) {
+        for entry in listing.flatten() {
+            let Ok(meta) = entry.metadata() else { continue };
+            size_bytes += meta.len();
+            if entry.path().extension().is_none_or(|ext| ext != "ct") {
+                entries += 1;
+            }
+        }
+    }
+    // expired failures are pruned as counted, so the number means what it says
+    let mut failed = failures().lock().unwrap();
+    let now = Instant::now();
+    failed.retain(|_, at| now.duration_since(*at) < FAILURE_TTL);
+    MediaCacheStats {
+        entries,
+        size_bytes,
+        cap_bytes: CAP_BYTES,
+        in_flight: pending().lock().unwrap().len(),
+        recent_failures: failed.len(),
+    }
+}
+
 /// Runs the cap once, off the boot path. Once per launch is enough: between
 /// launches the cache can only grow by what one session's browsing pulls in.
 pub fn spawn_janitor(app: &tauri::AppHandle) {

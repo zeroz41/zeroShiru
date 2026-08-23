@@ -1,16 +1,27 @@
-//! File logging for the desktop host, and the two things the settings screen does
-//! with it: hand the user a copy, and start it over.
+//! File logging for the desktop host, and what the settings screen and the
+//! diagnostics surface do with it: hand the user a copy, start it over, change how
+//! loud it is while the app runs, and say how big it has grown.
 //!
 //! Everything under the app — the torrent engine included — emits `tracing`, so one
 //! subscriber captures the logs that are actually worth reading when playback
-//! misbehaves. The file is plain text, appended to, and never rotated by size: it
-//! is a debugging aid the user exports on request, not an audit trail.
+//! misbehaves. The file is plain text. It rotates once at startup when the previous
+//! run left it past `ROTATE_BYTES` (the old log survives as `main.log.1`), because an
+//! append-only log that nothing ever trims eventually costs more than it answers.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
+/// The default filter: readable, with librqbit's per-peer chatter off and renderer
+/// lines let through (the page itself decides whether to send debug lines).
+const DEFAULT_FILTER: &str = "info,librqbit=warn,renderer=debug";
+
+/// Past this size at startup, the previous run's log is rotated aside.
+const ROTATE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Where the log lives, once `init` has decided.
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -19,6 +30,15 @@ static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 /// file the writer holds rather than leaving it writing to an unlinked inode.
 static LOG_FILE: OnceLock<Mutex<File>> = OnceLock::new();
 
+/// The live filter, swappable while the app runs — the whole point of the
+/// diagnostics surface being able to say "get louder" without a restart.
+static FILTER_HANDLE: OnceLock<
+    tracing_subscriber::reload::Handle<tracing_subscriber::EnvFilter, tracing_subscriber::Registry>,
+> = OnceLock::new();
+
+/// When logging came up, which is as close to app start as anything measures.
+static STARTED: OnceLock<std::time::Instant> = OnceLock::new();
+
 /// Opens (or creates) the log next to the app's other data and starts capturing.
 /// Failing to set up logging must never stop the app from starting.
 pub fn init(dir: &Path) {
@@ -26,25 +46,69 @@ pub fn init(dir: &Path) {
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
+    // a previous run's oversized log moves aside rather than growing forever; the
+    // most recent old lines stay readable in main.log.1
+    if std::fs::metadata(&path).is_ok_and(|meta| meta.len() > ROTATE_BYTES) {
+        let _ = std::fs::rename(&path, dir.join("main.log.1"));
+    }
     let Ok(file) = OpenOptions::new().create(true).append(true).open(&path) else {
         return;
     };
     let _ = LOG_PATH.set(path);
     let _ = LOG_FILE.set(Mutex::new(file));
+    let _ = STARTED.set(std::time::Instant::now());
 
-    // RUST_LOG wins where it is set; otherwise keep the file readable rather than
-    // drowning it in librqbit's per-peer chatter
-    // `renderer=debug` is deliberate: the page only forwards debug lines when the
-    // user has turned debug logging on, so the decision belongs there rather than
-    // in a filter they cannot see
+    // RUST_LOG wins where it is set; otherwise the default keeps the file readable
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,librqbit=warn,renderer=debug"));
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(LogWriter)
-        .with_ansi(false)
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_FILTER));
+    let (filter, handle) = tracing_subscriber::reload::Layer::new(filter);
+    let _ = FILTER_HANDLE.set(handle);
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(LogWriter)
+                .with_ansi(false),
+        )
         .try_init();
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "zeroShiru starting");
+}
+
+/// Swaps the live filter. An empty string goes back to the default. A string that
+/// does not parse is refused with the parser's own words, and changes nothing.
+pub fn set_filter(directives: &str) -> Result<(), String> {
+    let handle = FILTER_HANDLE.get().ok_or("logging is not running")?;
+    let wanted = if directives.trim().is_empty() { DEFAULT_FILTER } else { directives.trim() };
+    let filter: tracing_subscriber::EnvFilter =
+        wanted.parse().map_err(|error| format!("not a valid filter: {error}"))?;
+    handle.reload(filter).map_err(|error| error.to_string())?;
+    tracing::info!(filter = wanted, "log filter changed");
+    Ok(())
+}
+
+/// How long the app has been up, in milliseconds.
+pub fn uptime_ms() -> u64 {
+    STARTED.get().map(|at| at.elapsed().as_millis() as u64).unwrap_or(0)
+}
+
+/// The log as a subject: where it is, how big it is, and how much of the renderer's
+/// line allowance this run has spent.
+#[derive(serde::Serialize)]
+pub struct LogStats {
+    pub path: Option<String>,
+    pub size_bytes: u64,
+    pub renderer_lines: usize,
+    pub renderer_line_cap: usize,
+}
+
+pub fn stats() -> LogStats {
+    let path = LOG_PATH.get();
+    LogStats {
+        path: path.map(|p| p.display().to_string()),
+        size_bytes: path.and_then(|p| std::fs::metadata(p).ok()).map(|meta| meta.len()).unwrap_or(0),
+        renderer_lines: RENDERER_LINES.load(Ordering::Relaxed).min(MAX_RENDERER_LINES),
+        renderer_line_cap: MAX_RENDERER_LINES,
+    }
 }
 
 /// The path the log is being written to, if logging started.
@@ -68,6 +132,9 @@ pub fn reset() -> Result<(), String> {
         file.set_len(0).map_err(|error| error.to_string())?;
         file.flush().map_err(|error| error.to_string())?;
     }
+    // a fresh log deserves a fresh renderer allowance: the cap exists to stop a
+    // logging loop filling the disk, and resetting is the user asking to start over
+    RENDERER_LINES.store(0, Ordering::Relaxed);
     // outside the lock: the writer takes the same one, and a std Mutex is not
     // reentrant, so logging in here with the guard alive deadlocks the app
     tracing::info!("log reset");

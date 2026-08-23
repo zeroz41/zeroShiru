@@ -60,6 +60,9 @@
   import { updateState } from '@/modals/UpdateModal.svelte'
   import { platformMap } from '@/routes/settings/SettingsPage.svelte'
   import SettingCard from '@/routes/settings/components/SettingCard.svelte'
+  import DiagnosticsPanel from '@/routes/settings/components/DiagnosticsPanel.svelte'
+  import { DIAGNOSTICS } from '@/modules/bridge.js'
+  import { LOG_PRESETS } from '@/modules/lib/introspection.js'
   import { resetNotifications } from '@/modules/notification/manager.js'
   import ChangelogTab from '@/routes/settings/tabs/ChangelogTab.svelte'
   import ConfirmButton from '@/components/inputs/ConfirmButton.svelte'
@@ -95,6 +98,11 @@
   })
 
   onDestroy(() => unsubscribeDebug())
+
+  let hostLogFilter = ''
+  function applyHostLogFilter() {
+    DIAGNOSTICS.setLogFilter(hostLogFilter).catch(() => toast.error('Logging', { description: 'The host refused that log filter.' }))
+  }
 
   function writeAppInfo() {
     COMMON.getDeviceInfo().then(info => {
@@ -188,7 +196,15 @@
 </SettingCard>
 
 <h4 class='mb-10 font-weight-bold'>Debug Settings</h4>
-<SettingCard title='Logging Levels' description='Enable logging of specific parts of the app.{!SUPPORTS.isAndroid ? ` These logs are saved to ${COMMON.getPlatformInfo().platform === `win32` ? `%appdata%` : `~/config`}/zeroShiru/logs/main.log.` : ``}'>
+<DiagnosticsPanel />
+<SettingCard title='Host Log Verbosity' description='How much the app itself writes to the log file, changed live without a restart. The log location is shown in Live Diagnostics above.'>
+  <select class='form-control bg-dark mw-150 w-150 text-truncate' bind:value={hostLogFilter} on:change={applyHostLogFilter}>
+    {#each LOG_PRESETS as preset}
+      <option value={preset.filter}>{preset.label}</option>
+    {/each}
+  </select>
+</SettingCard>
+<SettingCard title='Interface Logging' description='Forward specific parts of the interface&apos;s own chatter into the same log file.'>
   <select class='form-control bg-dark mw-150 w-150 text-truncate' bind:value={$debugStore}>
     <option value='' selected>None</option>
     <option value='*'>All</option>
@@ -218,9 +234,6 @@
   </div>
 </SettingCard>
 {#if !SUPPORTS.isAndroid}
-  <SettingCard title='Open Torrent Devtools' description="Open devtools for the detached torrent process, this allows to inspect code execution and memory. DO NOT PASTE ANY CODE IN THERE, YOU'RE LIKELY BEING SCAMMED IF SOMEONE TELLS YOU TO!">
-    <button type='button' use:click={() => DESKTOP.openTorrentDevTools()} class='btn btn-primary d-flex align-items-center justify-content-center'><span class='text-truncate'>Open Devtools</span></button>
-  </SettingCard>
   <SettingCard title='Open UI Devtools' description="Open devtools for the UI process, this allows to inspect media playback information, rendering performance and more. DO NOT PASTE ANY CODE IN THERE, YOU'RE LIKELY BEING SCAMMED IF SOMEONE TELLS YOU TO!">
     <button type='button' use:click={() => DESKTOP.openDevTools()} class='btn btn-primary d-flex align-items-center justify-content-center'><span class='text-truncate'>Open Devtools</span></button>
   </SettingCard>
