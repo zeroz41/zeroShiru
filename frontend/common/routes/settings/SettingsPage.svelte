@@ -131,9 +131,10 @@
         </div>
       </div>
     </div>
-    <!-- mw-0: a flex item's min-width:auto let the settings column refuse to shrink next to
-         the 30rem tab rail, pushing every card's right edge off the window -->
-    <div class='mt-75 mt-lg-0 w-full mw-0 overflow-y-auto overflow-y-md-hidden pr-notch-safe-area' class:status-transition={statusTransition} class:pt-28px={!SUPPORTS.isAndroid && !$status.match(/offline/i)} class:scroll-container={!SUPPORTS.isAndroid && !$status.match(/offline/i)} class:pt-safe-area={SUPPORTS.isAndroid && !$status.match(/offline/i)}>
+    <!-- flex-grow with no width, not w-full: WebKitGTK does not shrink a width:100%
+         flex item next to the 30rem tab rail (Chromium does), so every card's right
+         edge ran off the window on the desktop build -->
+    <div class='mt-75 mt-lg-0 flex-grow-1 mw-0 overflow-y-auto overflow-y-md-hidden pr-notch-safe-area' class:status-transition={statusTransition} class:pt-28px={!SUPPORTS.isAndroid && !$status.match(/offline/i)} class:scroll-container={!SUPPORTS.isAndroid && !$status.match(/offline/i)} class:pt-safe-area={SUPPORTS.isAndroid && !$status.match(/offline/i)}>
       <Tab>
         <div class='root h-full w-full overflow-y-md-auto p-20 pt-5 tab-enter'>
           <div class='page pb-100'>
