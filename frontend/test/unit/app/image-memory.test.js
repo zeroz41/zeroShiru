@@ -4,15 +4,9 @@
 // placeholder-first on every navigation, cache or no cache.
 import { test, beforeEach } from 'bun:test'
 import assert from 'node:assert/strict'
-import { rememberShown, wasShown, forgetShown, imageSignature, warmCount, IMAGE_MEMORY_LIMIT, IMAGE_WARM_LIMIT } from '@/modules/lib/image-memory.js'
+import { rememberShown, wasShown, forgetShown, imageSignature, IMAGE_MEMORY_LIMIT } from '@/modules/lib/image-memory.js'
 
 /** A stand-in for the engine's image element, so the holding can be counted at all. */
-class FakeImage {
-  static made = []
-  set src (value) { this._src = value; FakeImage.made.push(value) }
-  get src () { return this._src }
-}
-
 beforeEach(forgetShown)
 
 test('an image that has been shown is known, and one that has not is not', () => {
@@ -50,39 +44,11 @@ test('showing an image again keeps it fresh under eviction', () => {
 })
 
 
-test('shown images are held, so a later mount of the same art is a cache hit', () => {
-  // holding a live element is what keeps the engine's in-memory copy from being evicted;
-  // without it every remount went back to the host over the custom scheme and decoded again
-  globalThis.Image = FakeImage
-  FakeImage.made = []
-  try {
-    rememberShown('shiru-media://localhost/cover-1.jpg')
-    rememberShown('shiru-media://localhost/cover-1.jpg')
-    assert.deepEqual(FakeImage.made, ['shiru-media://localhost/cover-1.jpg'], 'held once, however often it is shown')
-    assert.equal(warmCount(), 1)
-  } finally {
-    delete globalThis.Image
-    forgetShown()
-  }
-})
-
-test('holding images is bounded — it is memory, not a leak', () => {
-  globalThis.Image = FakeImage
-  FakeImage.made = []
-  try {
-    for (let index = 0; index < IMAGE_WARM_LIMIT + 20; index++) rememberShown(`https://cdn/cover-${index}.jpg`)
-    assert.equal(warmCount(), IMAGE_WARM_LIMIT)
-  } finally {
-    delete globalThis.Image
-    forgetShown()
-  }
-})
-
 test('a session with no Image constructor still remembers what it showed', () => {
-  // the TV core and the tests have no DOM; remembering must not depend on holding
+  // the TV core and the tests have no DOM; remembering is bookkeeping, not holding
   rememberShown('https://cdn/headless.jpg')
   assert.equal(wasShown('https://cdn/headless.jpg'), true)
-  assert.equal(warmCount(), 0)
+  forgetShown()
 })
 
 test('two renders of the same candidate list describe the same picture', () => {

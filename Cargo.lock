@@ -4874,6 +4874,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "webkit2gtk",
 ]
 
 [[package]]

@@ -36,6 +36,8 @@ sha2 = "0.10"
 percent-encoding = "2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# the same version wry pins: used only to hear about the web process dying
+webkit2gtk = "2.0"
 # stderr is the only place WebKit says it cannot draw, see src/graphics.rs
 libc = "0.2"
 # the same gtk tao uses, to undo the client-side titlebar it forces on Wayland

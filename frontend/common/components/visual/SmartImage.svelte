@@ -1,7 +1,8 @@
 <script>
   import { nearViewport } from '@/modules/preload.js'
   import { COMMON } from '@/modules/bridge.js'
-  import { rememberShown, wasShown, isWarm, imageSignature } from '@/modules/lib/image-memory.js'
+  import { rememberShown, wasShown, imageSignature } from '@/modules/lib/image-memory.js'
+  import { pin, isHeld } from '@/modules/lib/image-store.js'
 
   export let images = []
   /** What the art is OF (a media id), for lists with function candidates — a fresh
@@ -20,6 +21,9 @@
   let near = eager
   let index = 0
   let resolvedImages = []
+  /** The real source behind each resolved entry: what loads may be a blob: URL, and a
+   * blob means nothing to the shown-memory — identity belongs to the source. */
+  let sourceImages = []
   let failed = false
   let loading = false
   /** First time on screen: fade it in so its arrival is an entrance rather than a pop.
@@ -54,6 +58,7 @@
     candidates = usable(images)
     index = 0
     resolvedImages = []
+    sourceImages = []
     failed = false
   }
   async function loadNextImage(index, candidates) {
@@ -83,19 +88,24 @@
     if (typeof image === 'string' && image.includes('/cover/') && image.endsWith('/default.jpg')) image = 'no_image_cover.jpg'
     // hosts with a native media cache serve remote art from disk; local fallbacks
     // and data: URIs pass through untouched
-    resolvedImages[index] = COMMON.mediaSrc(image)
-    // an image this session is HOLDING warm is genuinely free: the lazy gate and the
-    // fade would only re-play a loading story. Art that was merely shown once skips the
-    // fade but still waits for the viewport — the shown set is ten times larger than
-    // the warm one, and letting all of it bypass the observer stampeded the host
-    if (isWarm(resolvedImages[index])) {
+    const source = COMMON.mediaSrc(image)
+    sourceImages[index] = source
+    // bytes the store already holds are free to show right now: no gate, no fade.
+    // Everything else loads from its URL first and is pinned AFTER it proves itself
+    // (see handleLoad) — pinning before the first paint would put a fetch ahead of it
+    if (isHeld(source)) {
+      resolvedImages[index] = await pin(source)
+      if (walk !== generation) return
       near = true
       ready = true
       reveal = false
-    } else if (wasShown(resolvedImages[index])) {
-      reveal = false
-    } else if (!eager) {
-      reveal = true
+    } else {
+      resolvedImages[index] = source
+      if (wasShown(source)) {
+        reveal = false
+      } else if (!eager) {
+        reveal = true
+      }
     }
     loading = false
   }
@@ -107,15 +117,30 @@
   }
   function handleError() {
     if (loading) return
+    // a pinned blob that was evicted and re-rendered dies here; the source URL is
+    // still good, so fall back to it rather than skipping the candidate
+    if (resolvedImages[index]?.startsWith('blob:') && sourceImages[index]) {
+      resolvedImages[index] = sourceImages[index]
+      return
+    }
     advance(index)
   }
-  function handleLoad(event) {
+  async function handleLoad(event) {
     validate(event)
     if (failed || hidden) return
     const src = event.target?.currentSrc || event.target?.src || ''
     if (src.startsWith('data:')) return // the placeholder pixel is not an arrival
     ready = true
-    rememberShown(src)
+    // remembered by SOURCE identity — what actually loaded may be a blob: URL that
+    // means nothing next session — and pinned now that the URL proved it serves an
+    // image, so scrolling away and back re-paints from memory instead of reloading
+    const source = sourceImages[index] || src
+    rememberShown(source)
+    if (!src.startsWith('blob:')) {
+      const walk = generation
+      const object = await pin(source)
+      if (walk === generation && object !== source) resolvedImages[index] = object
+    }
   }
   function validate(event) {
     const image = event.target

@@ -303,6 +303,10 @@ fn image_response(bytes: Vec<u8>, content_type: &str) -> tauri::http::Response<V
         // the URL names the content, so within a session the webview may hold it in
         // memory and never come back here
         .header("cache-control", "public, max-age=31536000, immutable")
+        // the page fetch()es art to pin its bytes in renderer memory (lib/image-store.js),
+        // and this scheme is a different origin from tauri://localhost — without CORS the
+        // response body is opaque and nothing can be pinned
+        .header("access-control-allow-origin", "*")
         .body(bytes)
         .expect("static header set")
 }
@@ -311,6 +315,7 @@ fn plain_response(status: u16, message: &str) -> tauri::http::Response<Vec<u8>> 
     tauri::http::Response::builder()
         .status(status)
         .header("content-type", "text/plain")
+        .header("access-control-allow-origin", "*")
         .body(message.as_bytes().to_vec())
         .expect("static header set")
 }

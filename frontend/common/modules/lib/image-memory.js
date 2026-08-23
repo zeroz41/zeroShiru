@@ -12,51 +12,19 @@
 // "would showing it immediately be free?", which restarting makes false again (the decoded
 // image is gone, the first paint would block on a disk read).
 
+// The holding of actual bytes moved to lib/image-store.js (blob URLs, byte-bounded):
+// detached-<img> "warm holds" were disproven live — the engine evicted their resources
+// under its own pressure heuristics anyway, while their decoded frames CAUSED pressure.
+// This module keeps only the cheap part: which URLs have been on screen, so the lazy
+// gate and the entrance fade are not re-played for art the user has already watched arrive.
+
 /** How many shown images are remembered before the oldest are forgotten. At ~100 bytes a
  * URL this is under a megabyte, sized for a long browsing session, bounded so a marathon
  * one cannot grow it forever. */
 export const IMAGE_MEMORY_LIMIT = 4000
 
-/** How many of those are also HELD — see [keepWarm]. Encoded cover art runs 40-120KB, so
- * this is tens of megabytes at worst, for the art of the last few screens the user was on. */
-export const IMAGE_WARM_LIMIT = 400
-
 /** @type {Set<string>} Insertion-ordered, so eviction drops the longest-ago image. */
 const shown = new Set()
-
-/** @type {Map<string, HTMLImageElement>} The held decoders, same ordering, same eviction. */
-const warm = new Map()
-
-/**
- * Holds a reference to an image that has been shown, so the engine keeps its resource.
- *
- * Remembering that a URL was shown stops the placeholder flash, but it does not make the
- * second mount free: the covers come from the host over a custom URI scheme, which
- * WebKitGTK does not put in its HTTP cache, so every remount was another trip to the host
- * and another JPEG decode. That is the "images load in again even though I saw them twenty
- * seconds ago" complaint — the bytes were local, the work was not.
- *
- * A live image element, even one that is in no document, keeps its entry in the engine's
- * in-memory resource cache alive: it is a client of that resource, and clients are what
- * stop it being evicted. So one detached element per shown URL turns every later mount of
- * the same art into a memory-cache hit, with no request and usually no decode.
- *
- * @param {string} url
- */
-function keepWarm (url) {
-  if (typeof Image !== 'function') return // not a browser: tests, and the TV core's shims
-  if (warm.has(url)) {
-    const held = warm.get(url)
-    warm.delete(url)
-    warm.set(url, held) // re-inserting keeps it fresh under eviction, same as `shown`
-    return
-  }
-  while (warm.size >= IMAGE_WARM_LIMIT) warm.delete(warm.keys().next().value)
-  const keeper = new Image()
-  keeper.decoding = 'async'
-  keeper.src = url
-  warm.set(url, keeper)
-}
 
 /**
  * The one identity an image URL has, whatever form a caller held it in. What loaded is
@@ -85,7 +53,6 @@ export function rememberShown (url) {
   if (shown.has(key)) shown.delete(key) // re-adding keeps it fresh under eviction
   if (shown.size >= IMAGE_MEMORY_LIMIT) shown.delete(shown.values().next().value)
   shown.add(key)
-  keepWarm(key)
 }
 
 /**
@@ -126,27 +93,7 @@ export function imageSignature (list, identity = null) {
   return parts.join('\u0000')
 }
 
-/**
- * Whether an image is actually HELD warm — an in-engine client keeping its bytes
- * alive — as opposed to merely remembered as shown. Only warm images may skip the
- * viewport gate: the shown set is ten times larger than the warm one, and letting a
- * whole remembered grid bypass the observer stampeded the host with disk reads for
- * art that was in no way free anymore.
- * @param {string} [url]
- */
-export function isWarm (url) {
-  const key = identity(url)
-  return Boolean(key && warm.has(key))
-}
-
-/** How many images are currently held warm. Test seam, and a number worth having in a
- * diagnostic: it is the only bounded memory this module owns. */
-export function warmCount () {
-  return warm.size
-}
-
 /** Test seam: a session's memory, forgotten. */
 export function forgetShown () {
   shown.clear()
-  warm.clear()
 }

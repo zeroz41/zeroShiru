@@ -160,6 +160,34 @@ pub fn run() {
                 window_builder.data_directory(app.path().app_data_dir()?)
             };
             let window = window_builder.build()?;
+            // The one failure that cannot say anything for itself: the WebKit web
+            // process dying. Everything the user sees lives in that process, so when
+            // the GPU path drops it — observed on WebKitGTK + NVIDIA after the window
+            // was tabbed away during playback and shown again — the app went black,
+            // took input from nobody, and left NOTHING in the log, because a dead page
+            // cannot log. The host is still alive though, and it can both say what
+            // happened (the reason distinguishes a crash from the kernel's memory
+            // pressure) and reload the page, which makes WebKit build a fresh process.
+            #[cfg(target_os = "linux")]
+            {
+                let _ = window.with_webview(|webview| {
+                    use std::sync::atomic::{AtomicU32, Ordering};
+                    use webkit2gtk::WebViewExt;
+                    static REVIVALS: AtomicU32 = AtomicU32::new(0);
+                    /// A page that dies as soon as it is revived is not coming back;
+                    /// reloading it forever would just glow the CPU.
+                    const MAX_REVIVALS: u32 = 5;
+                    webview.inner().connect_web_process_terminated(|view, reason| {
+                        let attempt = REVIVALS.fetch_add(1, Ordering::Relaxed) + 1;
+                        tracing::error!(target: "graphics", ?reason, attempt, "the web process died; reloading the page");
+                        if attempt <= MAX_REVIVALS {
+                            view.reload();
+                        } else {
+                            tracing::error!(target: "graphics", "the web process keeps dying; giving up on revival — restart the app");
+                        }
+                    });
+                });
+            }
             media_cache::spawn_janitor(app.handle());
             #[cfg(target_os = "linux")]
             window::use_native_decorations(&window);
