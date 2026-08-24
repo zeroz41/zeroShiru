@@ -1,15 +1,8 @@
 # OS
 .DS_Store
 
-# Dependencies. The packages live in .deps; node_modules is a symlink into it,
-# because the resolvers insist on that name — see scripts/deps-dir.sh
-.deps/
-node_modules
-**/node_modules/
-package-lock.json
 
 # Build output
-dist/
 target/
 **/build/
 **/gen/android/app/build/
@@ -26,3 +19,11 @@ target/
 # IDE
 .idea
 *.iml
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins*
+app/build/
+app/.metadata
+docs/architecture/*.html
+docs/architecture/*.pdf

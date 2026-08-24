@@ -1,1 +1,0 @@
-{"default":{"identifier":"default","description":"The main window's capabilities. Semantic commands only — no shell, no arbitrary filesystem (migration report section 43).","local":true,"windows":["main"],"permissions":["core:default","dialog:default","notification:default","deep-link:default"]}}

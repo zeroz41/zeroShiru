@@ -3,25 +3,38 @@
 A personal anime library manager for watching and tracking your collection in
 real time. Lightweight, powerful, and paws-itively fast. No waiting required!
 
-Svelte frontend, shared Rust core (torrenting, debrid, media parsing, source
-resolution), hosted by Tauri 2 on desktop and Android. Samsung Tizen and LG
-webOS hosts reuse the same frontend with the core compiled to WebAssembly.
+Pure Dart/Flutter application — Impeller renders the UI, libmpv renders video
+into a Flutter external texture. No web runtime, no Rust, no Node. See
+[docs/architecture/flutter-rewrite-architecture.md](docs/architecture/flutter-rewrite-architecture.md)
+for the full design.
 
 - Streams from debrid services (AllDebrid, Premiumize, Real-Debrid, TorBox) or
   directly over BitTorrent
 - Tracks watch progress with AniList / MyAnimeList
-- Embedded player with ASS subtitles, chapters, fonts, and external-player
-  handoff
+- Embedded libmpv player with ASS subtitles, chapters, fonts, and
+  external-player handoff
 - Watch Together sessions
+
+The previous Svelte/Tauri/Rust implementation lives on the `redo` and
+`zeroz-dev` branches as the behavioral reference.
 
 ## Build & run
 
-See [BUILDING.md](BUILDING.md). Short version:
+```bash
+cd app
+flutter pub get
+flutter run -d linux
+```
+
+Requires Flutter 3.47+ and, on Linux, the desktop toolchain
+(`clang`, `cmake`, `ninja`, `gtk3`) plus `libmpv`.
+
+Tests:
 
 ```bash
-cd frontend
-bun install
-bun run tauri:dev
+cd app
+flutter analyze
+flutter test
 ```
 
 ## License

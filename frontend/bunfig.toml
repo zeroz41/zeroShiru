@@ -1,6 +1,0 @@
-[install]
-# the flat layout the workspace was migrated on; isolated is a future cleanup
-linker = "hoisted"
-
-[test]
-preload = ["./test/bun-register.js"]
