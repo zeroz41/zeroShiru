@@ -51,9 +51,9 @@ class ResolvedDebrid {
   final PlayerFile? target;
 }
 
-/// One implementation per provider. API keys are passed per call and are never
-/// stored by implementations; a key configured for one service must never
-/// reach another service's API.
+/// One implementation per provider. API keys are passed per call and kept only
+/// in memory by account-scoped clients; they are never persisted here, and a
+/// key configured for one service must never reach another service's API.
 abstract interface class DebridClient {
   DebridService get service;
 
