@@ -4,11 +4,12 @@
   import { showsSpinner, BUFFER_RECHECK_MS } from '@/modules/playback/buffering.js'
   import { createStartupTimer } from '@/modules/playback/first-frame.js'
   import { mediaErrorReport, stillFailing, CONFIRM_MS } from '@/modules/playback/errors.js'
-  import { watchesForStall, loadProgressMark, advanceStall, reloadPlan, STALL_PATIENCE_MS, STALL_RELOADS, START_RELOADS } from '@/modules/playback/stall.js'
+  import { watchesForStall, loadProgressMark, advanceStall, reloadPlan, reportPlan, STALL_PATIENCE_MS, STALL_RELOADS, START_RELOADS, POST_METADATA_PATIENCE_MS } from '@/modules/playback/stall.js'
   import { probeStream, bustedUrl } from '@/modules/playback/probe.js'
   import { idleState, showsLoadingArt, loadingArt } from '@/modules/playback/loading-screen.js'
   import { helpersMayStart } from '@/modules/playback/quiet-start.js'
-  import { subtitleRestoreTarget } from '@/modules/playback/subtitle-restore.js'
+  import { requiresNativePlayback } from '@/modules/playback/transport.js'
+  import { trackChoice, trackLabel } from '@/modules/playback/subtitle-select.js'
   import SmartImage from '@/components/visual/SmartImage.svelte'
   import { savesProgress } from '@/modules/playback/resume.js'
   import { episodePrompt, EPISODE_PROMPT_DEADLINE } from '@/modules/playback/prompts.js'
@@ -23,11 +24,11 @@
   import AnimeResolver from '@/modules/anime/animeresolver.js'
   import { durationMap, getMediaMaxEp } from '@/modules/anime/anime.js'
   import { writable } from 'simple-store-svelte'
-  import { createEventDispatcher, tick } from 'svelte'
+  import { createEventDispatcher, onDestroy, tick } from 'svelte'
   import Subtitles from '@/modules/subtitles.js'
   import DebridMetadata from '@/modules/debrid/metadata.js'
-  import { debridTransport, debridPlayback, replayDebridPlayback } from '@/modules/debrid/debrid.js'
-  import { toTS, fastPrettyBytes, capitalize, matchPhrase, videoRx, isValidNumber, debounce } from '@/modules/util.js'
+  import { debridTransport, debridPlayback, debridStatus, replayDebridPlayback } from '@/modules/debrid/debrid.js'
+  import { toTS, fastPrettyBytes, capitalize, videoRx, isValidNumber, debounce } from '@/modules/util.js'
   import { toast } from 'svelte-sonner'
   import { getChaptersAniSkip } from '@/modules/anime/anime.js'
   import { mediaCache } from '@/modules/cache.js'
@@ -42,7 +43,7 @@
   import Keybinds, { loadWithDefaults, condition } from 'svelte-keybinds'
   import { SUPPORTS } from '@/modules/support.js'
   import 'rvfc-polyfill'
-  import { DESKTOP, ANDROID, TORRENT } from '@/modules/bridge.js'
+  import { COMMON, DESKTOP, ANDROID, TORRENT } from '@/modules/bridge.js'
   import { unload } from '@/modules/torrent.js'
   import { Settings, Gauge, Timer, X, Minus, ArrowDown, ArrowUp, Captions, CaptionsOff, CircleHelp, Contrast, FastForward, Keyboard, EllipsisVertical, SquareArrowOutUpRight, List, Eye, FilePlus2, ListMusic, ListVideo, Maximize, Minimize, Pause, PictureInPicture, PictureInPicture2, Play, Proportions, RefreshCcw, Rewind, RotateCcw, RotateCw, ScreenShare, SkipBack, SkipForward, Users, Volume1, Volume2, VolumeX, SlidersVertical, SquarePen, Milestone, ClockArrowDown, ClockArrowUp, Cloud } from 'lucide-svelte'
   import Debug from 'debug'
@@ -128,9 +129,12 @@
   let gainNode = null
   let playbackRate = 1
   let externalPlayerReady = false
+  const hostPlatform = COMMON.getPlatformInfo().platform
+  $: canLaunchExternal = SUPPORTS.isAndroid || !!$settings.playerPath || hostPlatform === 'linux'
+  $: nativePlaybackRequired = requiresNativePlayback(current, hostPlatform)
   $: $settings.volume = (String(volume || 0))
   $: launchedExternal = false
-  $: externalPlayback = ($settings.enableExternal || launchedExternal) && (SUPPORTS.isAndroid || $settings.playerPath)
+  $: externalPlayback = ($settings.enableExternal || launchedExternal) && canLaunchExternal
   // a rebuild empties the element — NaN duration, position zero — and the seekbar reads both
   // through two-way bindings. See modules/playback/audio.js
   $: held = heldPlayback(rebuild, { currentTime, duration })
@@ -160,12 +164,12 @@
   }
 
   function checkAudio () {
-    volumeBoosted = cache.getEntry(caches.HISTORY, 'lastBoosted')?.[`${media?.media?.id || media?.title || media?.parseObject?.title || media?.parseObject?.file_name}`]?.boosted || false
+    volumeBoosted = cache.getEntry(caches.HISTORY, 'lastBoosted')?.[showMemoryKey()]?.boosted || false
     if (volumeBoosted) {
       setupAudio()
       // a remembered boost with no usable amount used to restore as a gain of zero,
       // which is silence the volume slider sits upstream of and cannot undo
-      gain = safeGain(cache.getEntry(caches.HISTORY, 'lastBoosted')?.[`${media?.media?.id || media?.title || media?.parseObject?.title || media?.parseObject?.file_name}`]?.gain)
+      gain = safeGain(cache.getEntry(caches.HISTORY, 'lastBoosted')?.[showMemoryKey()]?.gain)
       gainNode.gain.value = gain
     } else {
       if (gainNode?.gain) gainNode.gain.value = volume
@@ -193,24 +197,21 @@
     subs.renderer.resize()
     if (delayChanged) subs.renderer._timeupdate({ type: 'seeking' })
   }, 200) // stupid fix (resize) because video metadata doesn't update for multiple frames
-  /** Whether the remembered subtitle choice has already been applied to this file.
-   * selectCaptions announces itself through handleHeaders, which calls back in here —
-   * without this the pair recursed until the stack overflowed, taking the subtitle
-   * stream down with it. See modules/playback/subtitle-restore.js */
-  let subtitleRestored = false
-  function checkSubtitle() {
-    const lastSubtitle = cache.getEntry(caches.HISTORY, 'lastSubtitle')?.[`${media?.media?.id || media?.title || media?.parseObject?.title || media?.parseObject?.file_name}`]
-    const target = subtitleRestoreTarget({
-      headers: subHeaders,
-      remembered: lastSubtitle,
-      restored: subtitleRestored,
-      matches: (remembered, label, tolerance) => matchPhrase(remembered, label, tolerance, true)
-    })
-    if (target == null) return
-    // claimed BEFORE selecting, because selecting calls straight back in here
-    subtitleRestored = true
-    subs.selectCaptions(target)
+  /** One key per show for per-show memories (subtitle track, volume boost). */
+  const showMemoryKey = () => `${media?.media?.id || media?.title || media?.parseObject?.title || media?.parseObject?.file_name}`
+  /** The persisted subtitle choice for this show: 'OFF', { language, name }, or a legacy
+   * label string from before choices were stored as data. Restoring it is the chooser's
+   * job inside Subtitles — the player only supplies the memory. The old design selected
+   * the track from inside the track-change callback, which recursed to a stack overflow. */
+  const rememberedSubtitle = () => cache.getEntry(caches.HISTORY, 'lastSubtitle')?.[showMemoryKey()]
+  function rememberSubtitle (choice) {
+    cache.setEntry(caches.HISTORY, 'lastSubtitle', { ...(cache.getEntry(caches.HISTORY, 'lastSubtitle') || {}), [showMemoryKey()]: choice })
+  }
+  /** The user picked a track by hand: apply it, lock out the automatics, remember it. */
+  function pickSubtitle (trackNumber) {
+    subs.selectCaptions(trackNumber, { manual: true })
     updateSubs()
+    rememberSubtitle(trackNumber === -1 ? 'OFF' : trackChoice(subs.headers?.[trackNumber]))
   }
 
   // if ('PresentationRequest' in window) {
@@ -243,11 +244,9 @@
   })
 
   function handleHeaders () {
+    // reassignment is what tells Svelte the picker's list or checkmark moved
     subHeaders = subs?.headers
-    // the metadata parser starts at canplay now (see quiet-start.js), so on debrid the
-    // track list lands AFTER the loadedmetadata pass that restores the remembered
-    // subtitle choice — re-apply it the moment the tracks actually exist
-    checkSubtitle()
+    updateSubs()
   }
 
   async function updateFiles (files) {
@@ -303,6 +302,9 @@
   $: loadDeband($settings.playerDeband, video)
 
   async function handleCurrent (file) {
+    if (playbackKey(file) !== playbackKey(current)) automaticReplayKey = null
+    clearMetadataRecovery()
+    metadataRecoveryStage = 0
     paused = true
     canPlay = false
     video?.pause?.()
@@ -310,7 +312,6 @@
     cancelRebuild()
     stall = null
     streamHelpersStarted = false
-    subtitleRestored = false
     showBuffering()
     if (file) {
       if (thumbnailData.video?.src) URL.revokeObjectURL(thumbnailData.video?.src)
@@ -340,37 +341,47 @@
       // a debrid stream is served over HTTP ranges, so every byte is reachable immediately.
       // Torrent playback starts at nothing and is filled in by the client's progress events.
       buffer = file.debrid ? 100 : 0
-      setCurrent(file)
+      const native = requiresNativePlayback(file, hostPlatform)
+      if (native) {
+        if (file.debrid) debridStatus.set('Opening this MKV in the native player…')
+        toast.info('Opening Native Player', {
+          description: 'WebKit cannot stream large MKV files reliably on Linux. Native playback is starting instead.',
+          duration: 6_000
+        })
+      }
+      setCurrent(file, native)
     }
   }
 
   async function setCurrent(file, launchExternal = false) {
-    if ((externalPlayback || launchExternal) && document.fullscreenElement) document.exitFullscreen()
-    if (!externalPlayback) {
+    const useExternal = externalPlayback || launchExternal
+    if (useExternal && document.fullscreenElement) document.exitFullscreen()
+    if (!useExternal) {
       startup.start(file.name || file.url)
       src = file.url
-      if (!launchExternal) {
-        subs = new Subtitles(video, files, current, handleHeaders)
-        // the metadata parser and the thumbnailer start at canplay, NOT here: before the
-        // first frame the pipeline is pulling megabytes across several requests, and every
-        // rival stream on the same host comes straight out of how long the start takes.
-        // See modules/playback/quiet-start.js for the measurement
-        await tick() // the attribute is written on the next flush; loading before it reloads the old one
-        video.load()
-        await loadAnimeProgress()
-      } else {
-        await tick()
-        video.load()
-      }
-    } else externalPlaying = false
+      subs = new Subtitles(video, files, current, handleHeaders, { getRemembered: rememberedSubtitle })
+      // the metadata parser and the thumbnailer start at canplay, NOT here: before the
+      // first frame the pipeline is pulling megabytes across several requests, and every
+      // rival stream on the same host comes straight out of how long the start takes.
+      // See modules/playback/quiet-start.js for the measurement
+      await tick() // the attribute is written on the next flush; loading before it reloads the old one
+      video.load()
+      await loadAnimeProgress()
+    } else {
+      externalPlaying = false
+      src = null
+      await tick()
+      video?.load?.()
+    }
     emit('current', current) // #handleCurrent in MediaHandler
-    if (externalPlayback) {
+    if (useExternal) {
       TORRENT.onExternalReady(() => {
         hideBuffering()
+        if (isDebrid) debridStatus.set(null)
         externalPlayerReady = true
         setTimeout(() => {
           if (externalPlayerReady && !externalPlaying) autoPlay()
-        }, 1_500)
+        }, 0)
       })
     }
     paused = true
@@ -379,6 +390,7 @@
       targetTime = 0
     }
     launchedExternal = launchExternal
+    await tick()
     TORRENT.setPlayback(file, settings.value.enableExternal || launchExternal)
   }
 
@@ -424,8 +436,7 @@
     if (current && subs?.headers) {
       const tracks = subs.headers.filter(header => header)
       const index = tracks.indexOf(subs.headers[subs.current]) + 1
-      subs.selectCaptions(index >= tracks.length ? -1 : subs.headers.indexOf(tracks[index]))
-      updateSubs()
+      pickSubtitle(index >= tracks.length ? -1 : subs.headers.indexOf(tracks[index]))
     }
   }
 
@@ -548,7 +559,7 @@
           checkCompletionByTime(watchTime, watchDuration)
           currentTime = watchTime > watchDuration ? watchDuration : watchTime
           targetTime = watchTime > watchDuration ? watchDuration : watchTime
-          launchedExternal = false
+          if (!nativePlaybackRequired) launchedExternal = false
         })
       }
       externalPlaying = true
@@ -610,7 +621,7 @@
       gainNode.gain.value = value
     }
     gain = value
-    cache.setEntry(caches.HISTORY, 'lastBoosted', { ...(cache.getEntry(caches.HISTORY, 'lastBoosted') || {}), [media?.media?.id || media?.title || media?.parseObject?.title || media?.parseObject?.file_name]: { boosted: volumeBoosted, gain } })
+    cache.setEntry(caches.HISTORY, 'lastBoosted', { ...(cache.getEntry(caches.HISTORY, 'lastBoosted') || {}), [showMemoryKey()]: { boosted: volumeBoosted, gain } })
   }
   function toggleGain () {
     setupAudio()
@@ -624,7 +635,7 @@
       clearTimeout(boostResetTimer)
     }
     volumeBoosted = !volumeBoosted
-    cache.setEntry(caches.HISTORY, 'lastBoosted', { ...(cache.getEntry(caches.HISTORY, 'lastBoosted') || {}), [media?.media?.id || media?.title || media?.parseObject?.title || media?.parseObject?.file_name]: { boosted: volumeBoosted, gain } })
+    cache.setEntry(caches.HISTORY, 'lastBoosted', { ...(cache.getEntry(caches.HISTORY, 'lastBoosted') || {}), [showMemoryKey()]: { boosted: volumeBoosted, gain } })
     return true
   }
   function toggleMute () {
@@ -1289,6 +1300,82 @@
   let spinnerTime = null
   /** The spinner's watchdog: an element that has not changed in a while. See playback/stall.js */
   let stall = null
+  /** One automatic top-level reroute per release/file. Kept across the same file being
+   * handed back by that reroute, so a permanently bad stream cannot loop forever. */
+  let automaticReplayKey = null
+  /** The post-metadata guard catches a different failure from the frozen-fingerprint
+   * watchdog: bytes can creep forever without producing a decoded frame. */
+  let metadataRecoveryTimer = null
+  let metadataRecoveryStage = 0
+
+  const playbackKey = file => `${file?.infoHash || file?.torrent_name || ''}:${file?.path || file?.name || file?.url || ''}`
+
+  function clearMetadataRecovery () {
+    if (metadataRecoveryTimer) clearTimeout(metadataRecoveryTimer)
+    metadataRecoveryTimer = null
+  }
+
+  function frameArrived () {
+    clearMetadataRecovery()
+    metadataRecoveryStage = 2
+    if (isDebrid) debridStatus.set(null)
+  }
+
+  /** Metadata is not a frame. Give the cluster/decoder phase a fixed budget even when
+   * buffered bytes keep inching forward and therefore keep resetting the stall mark. */
+  function metadataArrived () {
+    startup.metadata()
+    clearMetadataRecovery()
+    if (!isDebrid || externalPlayback || (video?.readyState ?? 0) >= 2 || metadataRecoveryStage >= 2) return
+    metadataRecoveryTimer = setTimeout(recoverPostMetadataStart, POST_METADATA_PATIENCE_MS)
+  }
+
+  async function recoverPostMetadataStart () {
+    metadataRecoveryTimer = null
+    if (!isDebrid || externalPlayback || (video?.readyState ?? 0) >= 2) return
+    if (metadataRecoveryStage === 0) {
+      metadataRecoveryStage = 1
+      stall = null
+      debridStatus.set('Reopening the stream after a slow start…')
+      console.warn(`[stall] metadata arrived but no frame followed in ${POST_METADATA_PATIENCE_MS / 1_000}s; reopening the debrid stream once under a new URL`)
+      return rebuildPipeline({ reason: 'metadata arrived but no frame followed', bustCache: true })
+    }
+    metadataRecoveryStage = 2
+    console.warn(`[stall] the reopened debrid stream reached metadata but still produced no frame; routing the play again`)
+    reportStalledStream('The stream reached its header twice but never produced a video frame.')
+  }
+
+  /** Automatic recovery is deliberately one-shot per file. */
+  function replayStalledStream (description) {
+    const key = playbackKey(current)
+    if (reportPlan({ debrid: isDebrid, replayed: automaticReplayKey === key }) !== 'replay') return false
+    automaticReplayKey = key
+    if (!replayDebridPlayback()) {
+      automaticReplayKey = null
+      return false
+    }
+    stall = null
+    toast.warning('Recovering Stream', { description: `${description} Routing playback again automatically.`, duration: 8_000 })
+    return true
+  }
+
+  function reportStalledStream (description = 'The stream stopped making progress.') {
+    if (replayStalledStream(description)) return
+    toast.error('Stream Not Responding', {
+      description: isDebrid
+        ? `${description} Automatic recovery was already tried. Dismiss this toast to route the play again.`
+        : `${description} Dismiss this toast to try again.`,
+      duration: Infinity,
+      onDismiss: () => {
+        stall = null
+        if (isDebrid && replayDebridPlayback()) return
+        rebuildPipeline({ reason: 'the user asked again', bustCache: isDebrid })
+      }
+    })
+  }
+
+  onDestroy(clearMetadataRecovery)
+
   function hideBuffering () {
     canPlay = !!src
     stall = null // it came back; whatever it was, it is not stuck now
@@ -1362,18 +1449,10 @@
       console.warn(`[stall] nothing about the stream has changed in ${Math.round(STALL_PATIENCE_MS / 1_000)}s at readyState=${readyState}; ${starting ? 'asking the link' : 'recovering'} (attempt ${state.reloads}/${maxReloads})`)
       return recoverStalledStream(state.reloads, { starting, lastAttempt: state.reloads >= maxReloads })
     }
-    console.warn(`[stall] the stream is still not answering after ${state.reloads} re-opens; telling the user (file: ${current?.name || 'unknown'}, networkState=${video?.networkState}, ${videos?.length || 0} files in release)`)
-    toast.error('Stream Not Responding', {
-      description: isDebrid
-        ? 'The link answers over HTTP but the player cannot start it. Dismiss this toast to route the play again from the top.'
-        : 'The stream stopped sending data and re-opening it did not help. Dismiss this toast to try again.',
-      duration: Infinity,
-      onDismiss: () => {
-        stall = null
-        if (isDebrid && replayDebridPlayback()) return
-        rebuildPipeline({ reason: 'the user asked again', bustCache: isDebrid })
-      }
-    })
+    console.warn(`[stall] the stream is still not answering after ${state.reloads} recovery attempts (file: ${current?.name || 'unknown'}, networkState=${video?.networkState}, ${videos?.length || 0} files in release)`)
+    reportStalledStream(isDebrid
+      ? 'The link answers over HTTP but the player still cannot start it.'
+      : 'The stream stopped sending data and re-opening it did not help.')
   }
 
   /**
@@ -1403,6 +1482,12 @@
       console.warn('[stall] the link is dead and cannot be re-opened; routing the play again from the top')
       if (replayDebridPlayback()) return
       // nothing remembers the play; re-opening is all that is left
+    }
+    if (isDebrid && (video?.readyState ?? 0) >= 1 && (video?.readyState ?? 0) < 2) {
+      // Any changed-URL reopen in the header-without-frame phase is the single restart
+      // that the fixed post-metadata budget allows; do not schedule another in parallel.
+      metadataRecoveryStage = Math.max(metadataRecoveryStage, 1)
+      clearMetadataRecovery()
     }
     return rebuildPipeline({ reason: `stalled stream, attempt ${attempt}`, bustCache: isDebrid })
   }
@@ -2023,27 +2108,28 @@
     on:pause={updatew2g}
     on:play={updatew2g}
     on:seeked={updatew2g}
-    on:seeked={hideBuffering}
+    on:seeked={() => { if ((video?.readyState ?? 0) >= 2) hideBuffering() }}
     on:seeked={() => { frozen = false }}
     on:timeupdate={() => createThumbnail()}
     on:timeupdate={checkCompletion}
     on:timeupdate={checkSkippableChapters}
     on:waiting={() => showBuffering()}
     on:loadeddata={hideBuffering}
+    on:loadeddata={frameArrived}
     on:pause={() => { immersed = false }}
     on:canplay={hideBuffering}
+    on:canplay={frameArrived}
     on:loadeddata={startStreamHelpers}
     on:playing={startStreamHelpers}
     on:playing={hideBuffering}
+    on:playing={frameArrived}
     on:playing={() => { frozen = false }}
     on:playing={() => startup.playing()}
-    on:loadedmetadata={hideBuffering}
-    on:loadedmetadata={() => startup.metadata()}
+    on:loadedmetadata={metadataArrived}
     on:ended={tryPlayNext}
     on:loadedmetadata={perFile('chapters', findChapters)}
     on:loadedmetadata={perFile('autoplay', () => autoPlay())}
     on:loadedmetadata={perFile('audio', checkAudio)}
-    on:loadedmetadata={perFile('subtitles', checkSubtitle)}
     on:loadedmetadata={perFile('resume', loadAnimeProgress)}
     on:leavepictureinpicture={() => { pip = false }}
   ><track kind='captions' src='' srclang='en' label='English'/></video>
@@ -2208,6 +2294,9 @@
       </div>
       <span aria-hidden='true' class='icon ctrl align-items-center w-150 mw-full ml-auto' class:hidden={externalPlayback} class:mb-50={!miniplayer} on:click={forward}><FastForward size='3rem' /></span>
       <div class='position-absolute bufferingDisplay' class:bufferingPos={SUPPORTS.isAndroid && !miniplayer}/>
+      {#if $debridStatus}
+        <div class='playback-status position-absolute z-20 rounded-10 px-15 py-8 bg-tp text-white font-weight-bold text-center pointer-events-none'>{$debridStatus}</div>
+      {/if}
       {#if currentSkippable}
         <button class='skip btn text-dark position-absolute bottom-0 right-0 mr-20 mb-5 font-weight-bold z-30 d-flex align-items-center justify-content-center' use:click={skip}>
           <FastForward size='1.8rem' fill='currentColor' /><span class='ml-5'>Skip {currentSkippable}</span>
@@ -2432,7 +2521,7 @@
             close: true,
             onSelect: () => { resolvePrompt = false; modal.toggle(modal.FILE_MANAGER) }
           },
-          ...((!externalPlayback || launchedExternal) && (SUPPORTS.isAndroid || $settings.playerPath) ? [{
+          ...((!externalPlayback || launchedExternal) && canLaunchExternal ? [{
             icon: SquareArrowOutUpRight,
             label: 'External Player',
             close: true,
@@ -2518,26 +2607,15 @@
               icon: CaptionsOff,
               value: subHeaders && subs?.current === -1 ? '✓' : undefined,
               valueCSS: 'text-primary font-size-18 font-weight-very-bold',
-              onSelect: () => {
-                subs.selectCaptions(-1)
-                updateSubs()
-                cache.setEntry(caches.HISTORY, 'lastSubtitle', { ...(cache.getEntry(caches.HISTORY, 'lastSubtitle') || {}), [media?.media?.id || media?.title || media?.parseObject?.title || media?.parseObject?.file_name]: 'OFF' })
-              }
+              onSelect: () => pickSubtitle(-1)
             },
             { type: 'separator' },
-            ...subHeaders.filter(Boolean).map(track => {
-              const trackName = (track.language?.toUpperCase() || (!Object.values(subs.headers).some(header => header.language === 'eng' || header.language === 'en') ? 'ENG' : track.type?.toUpperCase())) + (track.name ? ' (' + capitalize(track.name) + ')' : '')
-              return {
-                label: trackName,
-                value: track.number === subs.current ? '✓' : undefined,
-                valueCSS: 'text-primary font-size-18 font-weight-very-bold',
-                onSelect: () => {
-                  subs.selectCaptions(track.number)
-                  updateSubs()
-                  cache.setEntry(caches.HISTORY, 'lastSubtitle', { ...(cache.getEntry(caches.HISTORY, 'lastSubtitle') || {}), [media?.media?.id || media?.title || media?.parseObject?.title || media?.parseObject?.file_name]: trackName })
-                }
-              }
-            })
+            ...subHeaders.filter(Boolean).map(track => ({
+              label: trackLabel(track),
+              value: track.number === subs.current ? '✓' : undefined,
+              valueCSS: 'text-primary font-size-18 font-weight-very-bold',
+              onSelect: () => pickSubtitle(track.number)
+            }))
           ]}>
           <span class='icon text-white ctrl d-flex align-items-center h-full' title='Subtitles [C]'>
             <Captions size='2.5rem' strokeWidth={2.5} />
@@ -2629,6 +2707,13 @@
   .fitWidth video, .fitWidth :global(.deband-canvas), .fitWidth .freeze-frame {
     object-fit: cover !important;
   }
+  /* Register the thumb size so WebKit can interpolate it. An unregistered custom
+     property is a token swap, which made the seek thumb snap from 0 to 12px. */
+  @property --thumb-height {
+    syntax: '<length>';
+    inherits: true;
+    initial-value: 0px;
+  }
   .custom-range {
     color: var(--accent-color);
     --thumb-height: 0px;
@@ -2641,7 +2726,7 @@
     position: relative;
     background: hsla(var(--white-color-hsl), 0);
     overflow: hidden;
-    transition: all ease 100ms;
+    transition: --thumb-height 100ms ease, background-color 100ms ease;
     appearance: none;
   }
   .custom-range:hover {
@@ -2737,8 +2822,11 @@
     position: relative !important;
   }
   .bg-tp {
-    background: hsla(var(--black-color-hsl), 0.73);
-    backdrop-filter: blur(10px);
+    /* the app's one frosted-panel recipe (see .bg-blur) — this held the last
+       odd-one-out blur radius */
+    background: hsla(var(--black-color-hsl), .73);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
   }
   .bg-tp .close {
     position: absolute;
@@ -2809,6 +2897,12 @@
     margin-bottom: 5rem;
   }
 
+  .playback-status {
+    top: calc(50% + 4.5rem);
+    max-width: min(90%, 52rem);
+    text-shadow: 0 .1rem .6rem var(--black-color);
+  }
+
   .buffering .middle .bufferingDisplay {
     opacity: 1 !important;
     visibility: visible !important;
@@ -2842,7 +2936,7 @@
     }
   }
   .miniplayer .middle {
-    transition: background 0.2s ease;
+    transition: background-color 0.2s ease;
     position: absolute !important;
     width: 100%;
     height: 100%;
@@ -2868,7 +2962,7 @@
     filter: drop-shadow(0 0 8px var(--black-color));
   }
   .skip {
-    transition: 0.2s opacity ease 0s;
+    transition: opacity 0.2s ease, background-color var(--motion) var(--ease-settle);
     background: hsla(var(--white-color-hsl), 0.92);
   }
   .skip:hover {

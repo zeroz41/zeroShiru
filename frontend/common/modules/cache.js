@@ -384,7 +384,12 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   window.addEventListener('pagehide', () => auditPersistence())
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') auditPersistence()
+      if (document.visibilityState !== 'hidden') return
+      // hidden is not a deadline the way pagehide is — the process lives on — and the
+      // full audit deep-compares every store on the main thread, so being minimized
+      // used to cost a visible hitch. Run it when the thread is idle instead
+      const whenIdle = window.requestIdleCallback || (run => setTimeout(run, 250))
+      whenIdle(() => { if (document.visibilityState === 'hidden') auditPersistence() })
     })
   }
 }
@@ -1340,6 +1345,82 @@ class Cache {
     }
     return promiseData
   }
+
+  /** @type {Map<string, Promise<any>>} Revalidations in flight, so a rail and a modal
+   * asking the same question in the same breath cost one request. */
+  #revalidating = new Map()
+
+  /**
+   * Read-side stale-while-revalidate: THE way to ask for query data that may be cached.
+   *
+   * Before this, stale-serving lived in three places with three trigger conditions — the
+   * write-side branch in cacheEntry (which only fires when the caller hands it a promise
+   * still in flight, so half the callers never got it), a hand-rolled copy in the Kitsu
+   * and ani.zip mappings (which never told the rails a fresh copy landed), and nothing at
+   * all for episode lists, which blocked the details modal on a rate-limited API for data
+   * that was on screen yesterday. One helper, one meaning:
+   *
+   *  - a fresh row answers immediately, no request
+   *  - an expired row answers immediately AND `revalidate` runs behind it; when what
+   *    lands differs from what was served, swrRevalidated tells the rails to repaint
+   *  - no row at all means the caller waits on `revalidate` like any first fetch
+   *  - offline serves whatever exists, however old, and asks the network for nothing
+   *
+   * @param {keyof typeof caches} cache The store descriptor.
+   * @param {string} key The entry key.
+   * @param {() => Promise<any>} revalidate Performs the request and lands it via
+   *   cacheEntry; it owns its own error handling and rate limiting.
+   * @returns {Promise<any> | undefined} undefined only when offline with nothing stored.
+   */
+  swrRead(cache, key, revalidate) {
+    const offline = !!this.status?.value?.match?.(/offline/i)
+    const fresh = this.cachedEntry(cache, key, offline)
+    if (fresh) return fresh
+    if (offline) return undefined
+    const stale = this.cachedEntry(cache, key, true)
+    if (!stale) return this.#revalidate(cache, key, revalidate)
+    this.#revalidate(cache, key, revalidate).catch(() => { /* the stale copy stands */ })
+    return stale
+  }
+
+  /** One in-flight revalidation per entry, with the landing judged against what the
+   * store held when it started — the signal the home rails repaint on. */
+  #revalidate(cache, key, revalidate) {
+    const slot = `${cache.key}:${key}`
+    if (this.#revalidating.has(slot)) return this.#revalidating.get(slot)
+    const served = this[cache.key]?.value?.[key]?.data
+    const landing = (async () => {
+      try {
+        return await revalidate()
+      } finally {
+        this.#revalidating.delete(slot)
+      }
+    })()
+    this.#revalidating.set(slot, landing)
+    landing.then(() => {
+      const landed = this[cache.key]?.value?.[key]?.data
+      if (served && landed && !equal(served, landed)) {
+        debug(`SWR: fresh ${cache.key}:${key} differs from the stale copy served`)
+        swrRevalidated.update(count => count + 1)
+      }
+    }).catch(() => {})
+    return landing
+  }
+}
+
+/**
+ * One key per question, whatever order the caller assembled it in. Query keys used to be
+ * JSON.stringify(variables), which is assembly-order- and undefined-sensitive: two
+ * callers asking the same thing with the same values could miss each other's cache rows
+ * because one spread its filters in a different order. Sorted keys, undefineds dropped.
+ * @param {any} value
+ * @returns {string}
+ */
+export function canonicalKey (value) {
+  return JSON.stringify(value, (_, entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    return Object.fromEntries(Object.entries(entry).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b)))
+  })
 }
 
 

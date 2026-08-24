@@ -7,7 +7,7 @@ import { audioSelectionWrites, safeGain, storedVolume, describeTracks, needsPipe
 import { showsSpinner } from '../../../common/modules/playback/buffering.js'
 import { thumbnailHorizon, THUMBNAIL_LOOKAHEAD_SECONDS } from '../../../common/modules/playback/thumbnails.js'
 import { mediaErrorReport, stillFailing } from '../../../common/modules/playback/errors.js'
-import { watchesForStall, loadProgressMark, advanceStall, reloadPlan, STALL_PATIENCE_MS, STALL_RELOADS, START_RELOADS } from '../../../common/modules/playback/stall.js'
+import { watchesForStall, loadProgressMark, advanceStall, reloadPlan, reportPlan, STALL_PATIENCE_MS, STALL_RELOADS, START_RELOADS, POST_METADATA_PATIENCE_MS } from '../../../common/modules/playback/stall.js'
 import { savesProgress } from '../../../common/modules/playback/resume.js'
 import { episodePrompt } from '../../../common/modules/playback/prompts.js'
 import { idleState, showsLoadingArt, loadingArt } from '../../../common/modules/playback/loading-screen.js'
@@ -234,20 +234,20 @@ test('a stalled torrent is re-opened in place; its bytes come from the client, n
 // restarts the preroll from zero, which stalls again at 15s: most plays never escaped
 // the loop. The plan now asks the link and leaves a live one completely alone.
 
-test('a slow but healthy debrid preroll is NEVER yanked before the final attempt', () => {
+test('a slow but healthy debrid preroll gets one untouched grace window before a bounded restart', () => {
   for (let attempt = 1; attempt < START_RELOADS; attempt++) {
     assert.equal(reloadPlan({ attempt, debrid: true, starting: true }), 'probe', 'the only honest first move is asking the link, not touching the pipeline')
     assert.equal(reloadPlan({ attempt, debrid: true, starting: true, linkAlive: true }), 'wait', 'a live link means a slow preroll; a re-open restarts it from zero — the bug itself')
   }
-  assert.equal(reloadPlan({ attempt: START_RELOADS, debrid: true, starting: true, linkAlive: true, lastAttempt: true }), 'reopen', 'a full minute of alive-but-nothing is the pipeline stuck, worth one fresh start')
+  assert.equal(reloadPlan({ attempt: START_RELOADS, debrid: true, starting: true, linkAlive: true, lastAttempt: true }), 'reopen', '30 seconds of alive-but-nothing is the pipeline stuck, worth one fresh start')
 })
 
 test('a dead link at start exits at the FIRST check, not after three spent windows', () => {
   assert.equal(reloadPlan({ attempt: 1, debrid: true, starting: true, linkAlive: false }), 'replay', 'waiting on a dead link is a lie; route the play again where the fallback lives')
 })
 
-test('a starting load gets the longer firing budget, and it still ends in one report', () => {
-  assert.ok(START_RELOADS > STALL_RELOADS, 'the start phase is the one that cannot tell slow from dead, so it gets the patience')
+test('a starting load gets a measured 30 second recovery budget, and it still ends in one report', () => {
+  assert.equal(START_RELOADS * STALL_PATIENCE_MS, 30_000, 'one untouched 15s window, then one final recovery check')
   const mark = loadProgressMark({ readyState: 0, downloaded: 100 })
   let state = null
   let reloads = 0
@@ -262,6 +262,13 @@ test('a starting load gets the longer firing budget, and it still ends in one re
   }
   assert.equal(reloads, START_RELOADS)
   assert.equal(reports, 1, 'told once, never a toast a second')
+})
+
+test('post-metadata silence and automatic rerouting are both bounded', () => {
+  assert.equal(POST_METADATA_PATIENCE_MS, 20_000, 'a trickling header cannot postpone the first frame forever')
+  assert.equal(reportPlan({ debrid: true, replayed: false }), 'replay', 'the first terminal debrid stall heals without waiting on a toast dismissal')
+  assert.equal(reportPlan({ debrid: true, replayed: true }), 'ask', 'the same bad file cannot become an automatic replay loop')
+  assert.equal(reportPlan({ debrid: false, replayed: false }), 'ask', 'torrent recovery stays local to the torrent client')
 })
 
 test('a stalled debrid link is asked directly before a second 15s window is spent on it', () => {

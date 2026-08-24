@@ -91,14 +91,14 @@
 
 <div class='d-flex h-full align-items-center flex-column px-md-20 overflow-y-auto' class:pt-safe-area={!$status.match(/offline/i)}>
   {#if !$state}
-    <div class='alert bg-warning border-warning-dim text-warning-very-dim p-10 pl-15 mb-5 d-flex mt-10'>
-      <TriangleAlert size='1.8rem' />
+    <div class='notice d-flex align-items-center p-10 pl-15 mb-5 mt-10'>
+      <TriangleAlert size='1.8rem' class='flex-shrink-0' />
       <span class='ml-10'>Watch Together is currently in an <u>experimental</u> state and may behave unexpectedly.</span>
     </div>
     <div class='font-scale-50 font-weight-bold pt-20 mt-20 root'>Watch Together</div>
     <div class='d-flex flex-row flex-wrap justify-content-center align-items-center h-auto mb-20 pb-20 root position-relative w-full' class:h-full={!SUPPORTS.isAndroid}>
-      <div class='card d-flex flex-column align-items-center w-300 h-300 justify-content-end'>
-        <UserPlus size='6rem' class='d-flex align-items-center h-full' />
+      <div class='panel d-flex flex-column align-items-center w-300 h-300 justify-content-end'>
+        <UserPlus size='6rem' strokeWidth='1.5' class='d-flex align-items-center h-full panel-glyph' />
         <h2 class='font-weight-bold font-scale-34'>Join Lobby</h2>
         <input
           type='text'
@@ -108,12 +108,53 @@
           data-option='search'
           placeholder='Lobby Code or Link' />
       </div>
-      <div class='card d-flex flex-column align-items-center w-300 h-300 justify-content-end'>
-        <Plus size='6rem' class='d-flex align-items-center h-full' />
-        <button class='btn btn-primary btn-lg mt-10 btn-block d-flex align-items-center justify-content-center' type='button' use:click={() => joinLobby()}><span>Create Lobby</span></button>
+      <div class='panel d-flex flex-column align-items-center w-300 h-300 justify-content-end'>
+        <Plus size='6rem' strokeWidth='1.5' class='d-flex align-items-center h-full panel-glyph' />
+        <h2 class='font-weight-bold font-scale-34'>Host a Lobby</h2>
+        <button class='btn pill mt-10 btn-block d-flex align-items-center justify-content-center' type='button' use:click={() => joinLobby()}><span>Create Lobby</span></button>
       </div>
     </div>
   {:else}
     <Lobby {state} {invite} />
   {/if}
 </div>
+
+<style>
+  /* a caution, not an emergency: a warning wash instead of the solid yellow slab */
+  .notice {
+    border-radius: var(--radius-panel);
+    background: hsla(var(--warning-color-hsl), .12);
+    box-shadow: inset 0 0 0 .1rem hsla(var(--warning-color-hsl), .3);
+    color: hsl(var(--warning-color-base-hue), var(--warning-color-base-saturation), 72%);
+  }
+  .panel {
+    margin: 1rem;
+    padding: 2rem;
+    border: .1rem solid var(--surface-border);
+    border-radius: var(--radius-panel);
+    background: linear-gradient(165deg, var(--surface-panel), hsla(var(--dark-color-hsl), .72));
+    box-shadow: 0 .8rem 2rem hsla(var(--black-color-hsl), .22);
+  }
+  .panel :global(.panel-glyph) {
+    color: hsla(var(--white-color-hsl), .35);
+  }
+  .pill {
+    background: var(--tertiary-color) !important;
+    color: var(--highlight-color) !important;
+    border: 0;
+    border-radius: 5rem;
+    font-weight: 700;
+    box-shadow: 0 .4rem 1.8rem hsla(var(--tertiary-color-hsl), .45);
+    transition: scale var(--motion) var(--ease-settle);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .pill:hover {
+      background: var(--tertiary-color-light) !important;
+      scale: 1.03;
+    }
+  }
+  .pill:active {
+    scale: 1;
+    transition: scale var(--motion-press) var(--ease-press);
+  }
+</style>

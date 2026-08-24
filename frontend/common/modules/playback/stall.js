@@ -29,8 +29,21 @@ export const STALL_RELOADS = 2
  * restarting them from zero, over and over: the "90% of videos infinitely spin" bug
  * was the watchdog itself. So a starting load is given firings at 15s intervals that
  * PROBE instead of reload (measured: a concurrent probe is harmless to the stream),
- * and only the last one before the report is allowed to touch the pipeline. */
-export const START_RELOADS = 4
+ * and only the last one before the report is allowed to touch the pipeline. One untouched
+ * 15s grace window covers the measured healthy starts; at 30s an alive-but-empty pipeline
+ * is restarted once, and the next unchanged window becomes an honest error. */
+export const START_RELOADS = 2
+
+/** Once metadata exists but no decoded frame follows, one changed-URL connection gets
+ * this long before recovery. This is independent of the moving buffer fingerprint: a
+ * CDN can trickle container bytes for a minute without ever reaching a frame. */
+export const POST_METADATA_PATIENCE_MS = 20_000
+
+/** A debrid failure routes itself again once; a second failure waits for the user. Pure
+ * so the one-shot rule cannot regress into an automatic replay loop. */
+export function reportPlan ({ debrid = false, replayed = false } = {}) {
+  return debrid && !replayed ? 'replay' : 'ask'
+}
 
 /**
  * Whether the element is supposed to be making progress right now.

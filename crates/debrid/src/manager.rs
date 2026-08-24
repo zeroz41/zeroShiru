@@ -32,6 +32,14 @@ const MAX_PROBE_CONCURRENCY: usize = 3;
 const PROBE_HANDOVER_MS: u64 = 5_000;
 /// How often that wait looks again.
 const PROBE_HANDOVER_POLL_MS: u64 = 100;
+/// Once any request in a resolve proves the service quiet, the remaining chain only
+/// gets this long to recover. Each request is already reduced to a short quiet probe;
+/// letting those probes grind until the original minute-long ceiling made the recovery
+/// policy faster per request but no faster for the click the user was waiting on.
+const QUIET_RESOLVE_BUDGET_MS: u64 = 15_000;
+/// How promptly an in-flight resolve notices that one of its requests marked the account
+/// quiet. Cheap and bounded: this watcher exists only for the lifetime of a resolve.
+const RESOLVE_HEALTH_POLL_MS: u64 = 500;
 
 /// Builds a provider by its settings id. The one place the concrete types appear.
 pub fn create_provider(
@@ -105,17 +113,18 @@ impl ManagedProvider {
         opts: &crate::ResolveOptions,
     ) -> Result<crate::DebridResolved, DebridError> {
         let budget = self.client().config.timeouts.resolve;
-        let platform = self.client().platform();
         self.await_probe(magnet).await;
         let work = self.provider.resolve(magnet, opts);
+        let deadline = self.resolve_deadline(budget);
         futures::pin_mut!(work);
-        let resolved = match futures::future::select(work, Box::pin(platform.sleep(budget))).await {
+        futures::pin_mut!(deadline);
+        let resolved = match futures::future::select(work, deadline).await {
             futures::future::Either::Left((result, _)) => result,
-            futures::future::Either::Right(_) => Err(DebridError::Timeout {
+            futures::future::Either::Right((elapsed, _)) => Err(DebridError::Timeout {
                 message: format!(
                     "{} did not answer with a playable link within {}s",
                     self.provider.config().title,
-                    budget / 1_000
+                    elapsed.div_ceil(1_000)
                 ),
             }),
         }?;
@@ -124,6 +133,30 @@ impl ManagedProvider {
         // the clear, and that must not depend on a provider having remembered to check
         let files = crate::secure_files(resolved.files, self.provider.config().title)?;
         Ok(crate::DebridResolved { files, ..resolved })
+    }
+
+    /// The end-to-end resolve deadline, shortened once the account becomes quiet.
+    /// `quiet` can turn on after this future starts (the common case), so this cannot be
+    /// a duration chosen once at entry; it watches the same health flag request retries use.
+    async fn resolve_deadline(&self, full_budget: u64) -> u64 {
+        let platform = self.client().platform();
+        let started = platform.now_ms();
+        let full_deadline = started.saturating_add(full_budget);
+        let mut quiet_deadline = self
+            .client()
+            .quiet()
+            .then(|| started.saturating_add(QUIET_RESOLVE_BUDGET_MS));
+        loop {
+            let now = platform.now_ms();
+            if quiet_deadline.is_none() && self.client().quiet() {
+                quiet_deadline = Some(now.saturating_add(QUIET_RESOLVE_BUDGET_MS));
+            }
+            let deadline = quiet_deadline.unwrap_or(full_deadline).min(full_deadline);
+            if now >= deadline {
+                return now.saturating_sub(started).min(full_budget);
+            }
+            platform.sleep(RESOLVE_HEALTH_POLL_MS.min(deadline - now)).await;
+        }
     }
 
     /// Waits out a probe of this same release before resolving it.
@@ -473,6 +506,7 @@ impl Drop for InFlightClaim<'_> {
 mod tests {
     use super::*;
     use crate::testing::{ManualClock, MockTransport, Route};
+    use std::sync::atomic::AtomicUsize;
 
     const HASHES: [&str; 3] = [
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -490,6 +524,26 @@ mod tests {
             &self,
             _request: shiru_networking::HttpRequest,
         ) -> Result<shiru_networking::HttpResponse, shiru_networking::TransportError> {
+            futures::future::pending().await
+        }
+    }
+
+    /// The first request spends its budget; its retry then accepts the connection and
+    /// says nothing. This is the real mid-resolve wedge: quiet turns on after the
+    /// minute-long manager deadline was originally chosen.
+    struct GoesQuiet {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl HttpTransport for GoesQuiet {
+        async fn execute(
+            &self,
+            request: shiru_networking::HttpRequest,
+        ) -> Result<shiru_networking::HttpResponse, shiru_networking::TransportError> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(shiru_networking::TransportError::Timeout(request.timeout_ms));
+            }
             futures::future::pending().await
         }
     }
@@ -885,6 +939,25 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("TorBox"), "the message names who went quiet: {message}");
         assert!(message.contains("60s"), "and how long it was given: {message}");
+    }
+
+    #[tokio::test]
+    async fn a_resolve_that_goes_quiet_does_not_grind_for_the_whole_minute() {
+        let clock = Arc::new(ManualClock::new());
+        let transport = Arc::new(GoesQuiet { calls: AtomicUsize::new(0) });
+        let managed = ManagedProvider::new(
+            create_provider("torbox", "key".into(), transport.clone(), clock.clone()).unwrap(),
+        );
+        let started = clock.now_ms();
+        let error = managed
+            .resolve("magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", &Default::default())
+            .await
+            .expect_err("a quiet service cannot resolve a link");
+        let elapsed = clock.now_ms() - started;
+        assert!(matches!(error, DebridError::Timeout { .. }), "got {error:?}");
+        assert!(elapsed < 30_000, "quiet recovery stayed on the original minute-long budget: {elapsed}ms");
+        assert!(elapsed >= QUIET_RESOLVE_BUDGET_MS, "the recovery window was not actually granted: {elapsed}ms");
+        assert!(transport.calls.load(Ordering::SeqCst) >= 2, "the first timeout still gets its one retry");
     }
 
     #[tokio::test]

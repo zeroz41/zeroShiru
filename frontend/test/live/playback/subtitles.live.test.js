@@ -67,7 +67,7 @@ test.skipIf(Boolean(skip))('a debrid stream feeds the player the same subtitle d
   const deadline = Date.now() + STREAM_BUDGET_MS
   while (Date.now() < deadline && spy.seen.subtitles.length < 25) await new Promise(resolve => setTimeout(resolve, 500))
   // read before teardown, destroy() releases the parser this comes from
-  const durationMs = await Promise.resolve(metadata.metadata?.duration).catch(() => 0)
+  const durationMs = metadata.durationMs
   metadata.destroy()
 
   console.log(`  tracks=${spy.seen.tracks.length} subtitle events=${spy.seen.subtitles.length} fonts=${spy.seen.fonts.length} chapters=${chapters.length} external subs=${spy.seen.files.length}`)
@@ -125,8 +125,8 @@ test.skipIf(Boolean(skip))('a seek far into the file restarts the subtitle strea
   const spy = subtitleSpy()
   const metadata = new DebridMetadata(video, resolved.files, spy, { getTime: () => time })
   try {
-    if (!(await metadata.metadata.getTracks()).length) return skipped('this release has no embedded subtitles to stream')
-    const durationSeconds = (await metadata.metadata.duration) / 1_000
+    if (!(await metadata.tracksReady).length) return skipped('this release has no embedded subtitles to stream')
+    const durationSeconds = metadata.durationMs / 1_000
 
     // let the sequential stream get going, then seek to the last quarter of the episode.
     // No events are demanded yet, on a slow connection the head of the file may still

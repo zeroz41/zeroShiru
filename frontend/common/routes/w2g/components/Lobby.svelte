@@ -2,7 +2,8 @@
   import { click } from '@/modules/lib/click.js'
   import User from '@/routes/w2g/components/User.svelte'
   import Message from '@/routes/w2g/components/Message.svelte'
-  import { SendHorizontal, DoorOpen, UserPlus } from 'lucide-svelte'
+  import { SendHorizontal, DoorOpen, UserPlus, MessageSquare } from 'lucide-svelte'
+  import EmptyState from '@/components/cards/EmptyState.svelte'
   export let invite
 
   /** @type {import('simple-store-svelte').Writable<import('./w2g.js').W2GClient | null>} */
@@ -15,6 +16,7 @@
 
   $: peers = $state?.peers
   $: messages = $state?.messages
+  $: grouped = groupMessages($messages)
 
   /**
    * @param {{ message: string, user: import('@/modules/providers/anilist/al.d.ts').Viewer | {id: string }, type: 'incoming' | 'outgoing', date: Date }[]} messages
@@ -57,14 +59,17 @@
 <div class='d-flex flex-column root w-full position-relative px-md-20 h-full overflow-hidden'>
   <div class='d-flex flex-md-row flex-column-reverse w-full h-full pt-20 pb-transition'>
     <div class='d-flex flex-column justify-content-end overflow-hidden flex-grow-1 px-20 pb-md-20'>
-      {#each groupMessages($messages) as { user, messages, type, date }}
+      {#if !grouped.length}
+        <EmptyState icon={MessageSquare} title='The lobby is quiet' hint='Invite friends with the button below — playback stays in sync for everyone who joins.' class='my-auto' />
+      {/if}
+      {#each grouped as { user, messages, type, date }}
         <Message time={date} {user} {messages} {type} />
       {/each}
       <div class='d-flex my-10'>
-        <button class='btn text-danger d-flex mt-auto align-items-center justify-content-center mr-10 border-0 px-0 shadow-none' title='Leave' type='button' use:click={cleanup} style='height: 3.75rem !important; width: 3.75rem !important;'>
+        <button class='chat-btn btn text-danger d-flex mt-auto align-items-center justify-content-center mr-10 border-0 px-0 shadow-none' title='Leave' type='button' use:click={cleanup}>
           <DoorOpen size='1.8rem' strokeWidth={2.5} />
         </button>
-        <button class='btn text-success d-flex mt-auto align-items-center justify-content-center mr-20 border-0 px-0 shadow-none' title='Invite' type='button' use:click={invite} style='height: 3.75rem !important; width: 3.75rem !important;'>
+        <button class='chat-btn btn text-success d-flex mt-auto align-items-center justify-content-center mr-20 border-0 px-0 shadow-none' title='Invite' type='button' use:click={invite}>
           <UserPlus size='1.8rem' strokeWidth={2.5} />
         </button>
         <textarea
@@ -75,7 +80,7 @@
           autocomplete='off'
           maxlength='2048'
           placeholder='Message' on:keydown={checkInput} />
-        <button class='btn d-flex mt-auto align-items-center justify-content-center ml-20 border-0 px-0 shadow-none' title='Send' type='button' use:click={sendMessage} style='height: 3.75rem !important; width: 3.75rem !important;'>
+        <button class='chat-btn btn d-flex mt-auto align-items-center justify-content-center ml-20 border-0 px-0 shadow-none' title='Send' type='button' use:click={sendMessage}>
           <SendHorizontal size='1.8rem' strokeWidth={2.5} />
         </button>
       </div>
@@ -97,5 +102,19 @@
   .pb-transition {
     transition: padding .4s ease;
     will-change: padding;
+  }
+  /* wash chips instead of bare buttons with inline !important sizes */
+  .chat-btn {
+    height: 3.75rem;
+    width: 3.75rem;
+    flex-shrink: 0;
+    border-radius: 5rem;
+    background: hsla(var(--white-color-hsl), .07);
+    transition: background-color var(--motion) var(--ease-settle);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .chat-btn:hover {
+      background: hsla(var(--white-color-hsl), .16);
+    }
   }
 </style>

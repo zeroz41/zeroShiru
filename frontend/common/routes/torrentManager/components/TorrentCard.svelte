@@ -33,7 +33,8 @@
   let resolved
   $: resolvedInfo = data.infoHash
   $: resolved = getResolvedId(resolvedInfo)
-  window.addEventListener('fileEdit', () => getResolvedId(data.infoHash))
+  const onFileEdit = () => { resolved = getResolvedId(data.infoHash) }
+  window.addEventListener('fileEdit', onFileEdit)
   function getResolvedId(infoHash) {
     return getId(infoHash, { client: true }, true)
   }
@@ -56,9 +57,12 @@
   let viewOptions = false
   const { reactive, init } = createListener([`react-${infoHash}`])
   onMount(() => init(true))
-  onDestroy(() => init(false, true))
+  onDestroy(() => {
+    init(false, true)
+    window.removeEventListener('fileEdit', onFileEdit)
+  })
 </script>
-<div role='button' tabindex='0' class='details border-top py-20 text-wrap text-break-word d-flex' class:not-reactive={!$reactive || current || viewOptions} class:bg-error={completed && data.incomplete} class:current={current} class:option={!current} class:pointer={!current} class:not-allowed={current} aria-label={!current ? 'Play Torrent' : 'Currently Playing'} title={!current ? 'Play Torrent' : 'Currently Playing'} use:click={() => { if (!current) add(infoHash, search, infoHash) }} on:contextmenu|preventDefault={altClick}>
+<div role='button' tabindex='0' style:--progress={(!completed && data.progress) || 0} class='details mx-10 mb-10 py-20 text-wrap text-break-word d-flex' class:not-reactive={!$reactive || current || viewOptions} class:bg-error={completed && data.incomplete} class:current={current} class:option={!current} class:pointer={!current} class:not-allowed={current} aria-label={!current ? 'Play Torrent' : 'Currently Playing'} title={!current ? 'Play Torrent' : 'Currently Playing'} use:click={() => { if (!current) add(infoHash, search, infoHash) }} on:contextmenu|preventDefault={altClick}>
   <div class='d-flex flex-row w-full load-in mw-0'>
     <div class='p-5 ml-20 name mw-150 flex-1 w-auto d-flex flex-column'>
       {#if resolvedId && $mediaCache[resolvedId]}
@@ -152,14 +156,28 @@
   .mr-2 {
     margin-right: 0.2rem;
   }
-  .current {
-    border: .1rem solid var(--quaternary-color) !important;
-  }
   .details {
-    border: .1rem solid transparent;
+    border: .1rem solid var(--surface-border);
+    border-radius: var(--radius-panel);
+    /* the first layer is the progress wash: a faint accent fill that grows with the
+       download, painted as a background layer so no extra element fights the dropdown
+       for stacking or positioning */
+    background:
+      linear-gradient(90deg, hsla(var(--tertiary-color-hsl), .08), hsla(var(--tertiary-color-hsl), .08)) left / calc(var(--progress, 0) * 100%) 100% no-repeat,
+      linear-gradient(165deg, var(--surface-panel), hsla(var(--dark-color-hsl), .6));
+    transition: border-color var(--motion) var(--ease-settle), filter var(--motion) var(--ease-settle);
   }
-  .option:hover {
-    background-color: var(--dark-color-light);
-    border: .1rem solid var(--highlight-color) !important;
+  /* the playing row wears the accent as a seated tab and a settled border,
+     not a flat 1px outline */
+  .current {
+    border-color: hsla(var(--white-color-hsl), .16);
+    box-shadow: inset .45rem 0 0 var(--quaternary-color);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .option:hover {
+      border-color: hsla(var(--tertiary-color-hsl), .42);
+      /* keep both gradient layers unchanged; swapping either image snaps */
+      filter: brightness(1.12);
+    }
   }
 </style>

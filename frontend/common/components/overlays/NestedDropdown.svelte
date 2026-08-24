@@ -110,15 +110,19 @@
 
     window.addEventListener('pointerdown', onOutsideClick, true)
     window.addEventListener('keydown', onEscapeKey, true)
-    window.addEventListener('resize', () => requestAnimationFrame(() => requestAnimationFrame(position)), true)
+    window.addEventListener('resize', onResize, true)
   }
+
+  /** Repositions after the resize has settled (two frames). Named so close() removes
+   * the same reference open() added — the old anonymous handler leaked per open. */
+  function onResize() { requestAnimationFrame(() => requestAnimationFrame(position)) }
 
   /** Closes the panel and removes all global event listeners. */
   function close() {
     isOpen = false
     window.removeEventListener('pointerdown', onOutsideClick, true)
     window.removeEventListener('keydown', onEscapeKey, true)
-    window.removeEventListener('resize', position, true)
+    window.removeEventListener('resize', onResize, true)
   }
 
   /**

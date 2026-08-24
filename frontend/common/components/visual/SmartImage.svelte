@@ -44,7 +44,10 @@
    * answers into the art of whatever this card shows now. */
   let generation = 0
   $: reset(images, identity)
-  $: loadNextImage(index, candidates)
+  // Do not merely keep the real src behind the gate: resolving dynamic candidates and
+  // pinning their bytes are both work. Starting either for an image outside the lookahead
+  // defeats the gate and floods a rail with requests the user has not approached.
+  $: if (near) loadNextImage(index, candidates)
   function usable (images) {
     // a whitespace-only "url" survives filter(Boolean) and the HTML parser trims it to
     // empty, which requests the app's own document — one phantom request per artless card
@@ -90,22 +93,20 @@
     // and data: URIs pass through untouched
     const source = COMMON.mediaSrc(image)
     sourceImages[index] = source
-    // bytes the store already holds are free to show right now: no gate, no fade.
-    // Everything else loads from its URL first and is pinned AFTER it proves itself
-    // (see handleLoad) — pinning before the first paint would put a fetch ahead of it
-    if (isHeld(source)) {
-      resolvedImages[index] = await pin(source)
-      if (walk !== generation) return
-      near = true
+    const warm = isHeld(source) || wasShown(source)
+    // The element that is on screen must use the bytes we own. The previous path painted
+    // from the WebKit-managed custom-scheme URL, then pinned a blob only after `load` and
+    // deliberately left the visible element on the original URL. That protected a future
+    // remount but did nothing when WebKit discarded the CURRENT rail's decoded resource:
+    // scrolling back visibly blanked and repainted posters. Fetching through the host cache
+    // once and making the blob URL the first real src gives the live element a stable source.
+    resolvedImages[index] = await pin(source)
+    if (walk !== generation) return
+    if (warm) {
       ready = true
       reveal = false
-    } else {
-      resolvedImages[index] = source
-      if (wasShown(source)) {
-        reveal = false
-      } else if (!eager) {
-        reveal = true
-      }
+    } else if (!eager) {
+      reveal = true
     }
     loading = false
   }
@@ -131,16 +132,11 @@
     const src = event.target?.currentSrc || event.target?.src || ''
     if (src.startsWith('data:')) return // the placeholder pixel is not an arrival
     ready = true
-    // remembered by SOURCE identity — what actually loaded may be a blob: URL that
-    // means nothing next session — and pinned now that the URL proved it serves an
-    // image, so scrolling away and back re-paints from memory instead of reloading
+    // remembered by SOURCE identity — what actually loaded is normally a blob: URL that
+    // means nothing to the session memory. Pinning happened before this first real paint,
+    // so there is no post-load src swap and no second decode.
     const source = sourceImages[index] || src
     rememberShown(source)
-    if (!src.startsWith('blob:')) {
-      const walk = generation
-      const object = await pin(source)
-      if (walk === generation && object !== source) resolvedImages[index] = object
-    }
   }
   function validate(event) {
     const image = event.target
@@ -160,9 +156,9 @@
     title={title}
     draggable='false'
     loading='eager'
-    decoding='async'
+    decoding={reveal ? 'async' : 'sync'}
     referrerpolicy='no-referrer'
-    src={(!hidden && !failed) ? ((!near || (loading && !resolvedImages[index])) ? PLACEHOLDER : resolvedImages[index] || PLACEHOLDER) : ''}
+    src={(!hidden && !failed) ? ((!near || (loading && !resolvedImages[index])) ? PLACEHOLDER : resolvedImages[index] || PLACEHOLDER) : PLACEHOLDER}
 />
 <style>
   /* the first time an image arrives it fades up from the colored placeholder instead of

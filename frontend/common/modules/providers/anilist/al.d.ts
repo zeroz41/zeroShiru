@@ -34,6 +34,7 @@ export type Media = {
   isFavourite: boolean
   coverImage?: {
     extraLarge: string
+    large: string
     medium: string
     color: string
   }

@@ -127,14 +127,14 @@ test('a short or unmeasured container keeps the old fixed distance', () => {
 })
 
 
-test('the observer watches the scroller a node lives in, not the page', () => {
-  // the whole point: past a scrolling div's edge a node is clipped away before rootMargin is
-  // applied, so watching the viewport means work starts exactly as the user arrives
+test('a rail image watches the nearest scroller, so horizontal lookahead is real', () => {
+  // A page-rooted observer cannot see past the nested rail's clipping edge. The rail must
+  // be the root for its two-screen margin to preload art before a horizontal drag reaches it.
   withStyles(() => {
     const page = { overflow: 'scroll visible', parentElement: null }
     const row = { overflow: 'auto scroll', parentElement: page }
     const card = { parentElement: row }
-    assert.equal(scrollRoot(card), page, 'the outermost scroller is the one being scrolled down')
+    assert.equal(scrollRoot(card), row, 'the nearest horizontal rail owns image lookahead')
   })
 })
 

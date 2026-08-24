@@ -24,5 +24,13 @@
   .item {
     width: 100%;
     aspect-ratio: 152/296;
+    /* the exact chrome SmallCard's .item wears, so a card doesn't change geometry
+       the moment its data resolves */
+    box-sizing: border-box;
+    padding: .65rem;
+    border: .1rem solid var(--surface-border);
+    border-radius: 1.25rem;
+    background: linear-gradient(165deg, var(--surface-panel), hsla(var(--dark-color-hsl), .72));
+    box-shadow: 0 .8rem 2rem hsla(var(--black-color-hsl), .22);
   }
 </style>

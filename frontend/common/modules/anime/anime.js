@@ -942,14 +942,13 @@ export async function isSubbedProgress(media) {
   return (progress - (dubbedEntry?.media?.media?.zeroEpisode ? 1 : 0)) > (last?.episode - ((new Date(last?.airingAt) <= new Date()) ? 0 : 1))
 }
 
-const concurrentRequests = new Map()
 export async function getKitsuMappings(anilistID) {
   if (!anilistID) return
-  const cachedEntry = cache.cachedEntry(caches.QUERY_MAPPINGS, `kitsu-${anilistID}`, status.value === 'offline')
-  if (cachedEntry) return cachedEntry
-  else if (status.value === 'offline') return
-  if (concurrentRequests.has(`kitsu-${anilistID}`)) return concurrentRequests.get(`kitsu-${anilistID}`)
-  const requestPromise = (async () => {
+  // read-side SWR: the one helper serves a stale mapping immediately and revalidates
+  // behind it. The hand-rolled copy this replaces did the same serving but never told
+  // the rails a fresh copy landed, so a modal painted from stale thumbnails kept them
+  // until it was reopened
+  return cache.swrRead(caches.QUERY_MAPPINGS, `kitsu-${anilistID}`, async () => {
     try {
       let res = {}
       try {
@@ -990,18 +989,7 @@ export async function getKitsuMappings(anilistID) {
       }
       else throw e
     }
-  })().finally(() => {
-    concurrentRequests.delete(`kitsu-${anilistID}`)
   })
-  concurrentRequests.set(`kitsu-${anilistID}`, requestPromise)
-  // an expired mapping still names the same episodes it named an hour ago: the
-  // list paints from it now, and the refetch above lands for the next open
-  const stale = cache.cachedEntry(caches.QUERY_MAPPINGS, `kitsu-${anilistID}`, true)
-  if (stale) {
-    requestPromise.catch(() => {})
-    return stale
-  }
-  return requestPromise
 }
 
 let aniRateLimitPromise = null
@@ -1032,11 +1020,8 @@ aniLimiter.on('failed', async (error, jobInfo) => {
 
 export async function getAniMappings(anilistID) {
   if (!anilistID) return
-  const cachedEntry = cache.cachedEntry(caches.QUERY_MAPPINGS, `ani-${anilistID}`, status.value === 'offline')
-  if (cachedEntry) return cachedEntry
-  else if (status.value === 'offline') return
-  if (concurrentRequests.has(`ani-${anilistID}`)) return concurrentRequests.get(`ani-${anilistID}`)
-  const requestPromise = aniLimiter.wrap(async () => {
+  // read-side SWR, same as getKitsuMappings above
+  return cache.swrRead(caches.QUERY_MAPPINGS, `ani-${anilistID}`, aniLimiter.wrap(async () => {
     await aniRateLimitPromise
     try {
       let res = {}
@@ -1078,18 +1063,7 @@ export async function getAniMappings(anilistID) {
       }
       else throw e
     }
-  })().finally(() => {
-    concurrentRequests.delete(`ani-${anilistID}`)
-  })
-  concurrentRequests.set(`ani-${anilistID}`, requestPromise)
-  // an expired mapping still names the same episodes it named an hour ago: the
-  // list paints from it now, and the refetch above lands for the next open
-  const stale = cache.cachedEntry(caches.QUERY_MAPPINGS, `ani-${anilistID}`, true)
-  if (stale) {
-    requestPromise.catch(() => {})
-    return stale
-  }
-  return requestPromise
+  }))
 }
 
 function checkError(error, type) {

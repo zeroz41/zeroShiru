@@ -139,6 +139,7 @@
       cancelAvailability: () => invoke('debrid_cancel_availability'),
       remember: (service, apiKey, hash, state) => invoke('debrid_remember', { service, apiKey, hash, stateValue: state }),
       resolve: (service, apiKey, magnet, episode) => invoke('debrid_resolve', { service, apiKey, magnet, episode: Number.isFinite(episode) ? episode : null }),
+      forgetResolved: (service, apiKey, hash) => invoke('debrid_forget_resolved', { service, apiKey, hash }),
       onEvent: (callback) => { debridListeners.add(callback) }
     }
   }

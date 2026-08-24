@@ -12,6 +12,7 @@ import { DEBRID } from '@/modules/bridge.js'
 import { Availability, describeAvailability, normalizeAvailability, outageNotice } from '@/modules/debrid/availability.js'
 import { probeTarget, verifiedStream } from '@/modules/playback/probe.js'
 import { routeDebrid, debridKey } from '@/modules/debrid/route.js'
+import { withDeadline } from '@/modules/lib/deadline.js'
 import Debug from 'debug'
 const debug = Debug('ui:debrid')
 
@@ -30,6 +31,11 @@ function debridService (id) {
 }
 
 const REFRESH_INTERVAL = 60_000
+/** The renderer never trusts an IPC call to finish eventually. The Rust provider has its
+ * own budgets, but a wedged command/bridge is outside those and previously left the play
+ * request (and its single-flight key) pending forever. */
+export const DEBRID_PLAY_DEADLINE_MS = 30_000
+const PLAY_DEADLINE = Symbol('debrid play deadline')
 
 /** What the user is told when the routing policy blocks playback. */
 const blockedMessages = {
@@ -53,6 +59,8 @@ let serviceKey = null
 let lastRefresh = 0
 /** Identifies the latest results list; older requests may finish but cannot repaint or retry. */
 let availabilityGeneration = 0
+/** Identifies the latest playback intent; older resolves may finish but cannot own the player. */
+let playbackGeneration = 0
 /** @type {Map<string, string> | null} Answers waiting to reach the store. */
 let queued = null
 let queueTimer = null
@@ -100,6 +108,26 @@ export const debridReleaseNames = writable(new Map())
  * once it resolves, since the player opens straight away and must not look like a torrent.
  */
 export const debridPlayback = writable(false)
+
+/** User-facing progress for the gap before a file exists. A spinner without a verb looks
+ * exactly like a dead click, especially when the cover itself has not painted yet. */
+export const debridStatus = writable(null)
+
+/**
+ * A hard renderer-side edge around host work. Late host completion is harmless: playback
+ * generations already prevent it from owning files, navigation, or fallbacks.
+ * @template T
+ * @param {Promise<T>} work
+ * @param {{ ms?: number, schedule?: (callback: () => void, delay: number) => any, cancel?: (timer: any) => void }} [options]
+ * @returns {Promise<T>}
+ */
+export async function boundedDebridPlay (work, { ms = DEBRID_PLAY_DEADLINE_MS, schedule, cancel } = {}) {
+  const result = await withDeadline(Promise.resolve(work), { ms, schedule, cancel, late: () => PLAY_DEADLINE })
+  if (result === PLAY_DEADLINE) {
+    throw { kind: 'timeout', message: `${serviceTitle()} did not finish preparing this stream within ${Math.round(ms / 1_000)} seconds.` } // eslint-disable-line no-throw-literal
+  }
+  return result
+}
 
 // switching service or key takes effect immediately: drop the badges, which described a
 // different account. The core keeps its own memory per (service, key), so nothing else to do
@@ -164,8 +192,11 @@ function reason (error) {
  * @param {string} torrentID - Magnet URI, info hash, or .torrent link.
  * @param {string} [hash] - Info hash when known.
  * @param {{ episode?: number }} [search] - Playback context, for picking the right file in packs.
+ * @param {{ current?: () => boolean }} [intent] - Caller ownership check; false means a newer play won.
  */
-export async function streamDebrid (torrentID, hash, search) {
+export async function streamDebrid (torrentID, hash, search, { current = () => true } = {}) {
+  const generation = ++playbackGeneration
+  const active = () => generation === playbackGeneration && current()
   const route = routeDebrid({
     torrentID,
     hash,
@@ -174,23 +205,29 @@ export async function streamDebrid (torrentID, hash, search) {
     offline: status.value === 'offline',
     mode: settings.value.debridMode
   })
-  if (route.action === 'torrent') return handOver(false)
+  if (route.action === 'torrent') return handOver(false, active)
   const debridOnly = route.only
   if (route.action === 'block') {
-    toast.error('Debrid', { description: blockedMessages[route.reason]() })
-    return handOver(true) // nothing plays, so nothing is owned
+    if (active()) toast.error('Debrid', { description: blockedMessages[route.reason]() })
+    return handOver(true, active) // nothing plays, so nothing is owned
   }
   // remembered so a stream that dies under the player can be routed again from the top,
   // where a dead link now fails fast into this function's own fallback ladder
   lastPlay = { torrentID, hash, search }
   // claimed before the resolve, which takes seconds the player spends already open
   debridPlayback.set(true)
+  debridStatus.set(`Resolving cached release with ${serviceTitle()}…`)
   try {
-    const { files: resolved, verified } = await resolveDebridFiles(route.id, search)
+    const { files: resolved, verified } = await boundedDebridPlay(resolveDebridFiles(route.id, search, { current: active }))
+    if (!active()) return true
     // the player takes the files immediately — the probe overlaps filename parsing and
-    // episode matching, so a healthy link costs nothing here
+    // episode matching, so a healthy link costs nothing here. Holding the link back until
+    // the probe has finished sounds tidier and simply adds the probe's whole duration to
+    // every start; see the warning in playback/probe.js before trying it again.
+    debridStatus.set(`Opening and checking the ${serviceTitle()} stream…`)
     files.set(resolved)
     const verdict = await verified
+    if (!active()) return true
     if (!verdict.alive) {
       // "cached" was the service's claim about its storage; the link's host is the one
       // thing playback actually needs, and it is not answering. Undo the handover so the
@@ -200,12 +237,16 @@ export async function streamDebrid (torrentID, hash, search) {
     }
     return true
   } catch (error) {
+    // Network completions do not arrive in click order. Once a newer play exists, this
+    // result belongs only in the debug timeline: it must not replace files, toast, clear
+    // ownership, or tell the old caller to start its torrent.
+    if (!active()) return true
     // the release provably lacks the episode: the torrent client holds the same files, so
     // falling back would spend a whole pack's bandwidth to play the wrong episode anyway
     if (error?.kind === 'rejected') {
       debug(`Release does not contain the requested episode: ${reason(error)}`)
       toast.error('Wrong Release', { description: reason(error) })
-      return handOver(true)
+      return handOver(true, active)
     }
     // playback is the most authoritative answer there is, worth more than the badge
     const proven = provenAvailability(error)
@@ -215,27 +256,31 @@ export async function streamDebrid (torrentID, hash, search) {
       const { description } = describeAvailability(proven, serviceTitle())
       if (!debridOnly) {
         toast('Debrid', { description: `${description}\nStreaming via torrent instead.` })
-        return handOver(false)
+        return handOver(false, active)
       }
       toast.error('Debrid', { description: `${description}\nPick a different release or disable debrid only mode.` })
     } else {
       debug('Debrid resolve failed:', error)
       if (!debridOnly) {
         toast.warning('Debrid Error', { description: `${reason(error)}\nStreaming via torrent instead.` })
-        return handOver(false)
+        return handOver(false, active)
       }
       toast.error('Debrid Error', { description: reason(error) })
     }
-    return handOver(true) // handled, only mode never falls back to the torrent client
+    return handOver(true, active) // handled, only mode never falls back to the torrent client
   }
 }
 
 /**
  * Releases the player back to the torrent client and reports the routing outcome.
  * @param {boolean} handled - What streamDebrid returns to its caller.
+ * @param {() => boolean} [active] - Whether this play still owns global playback state.
  */
-function handOver (handled) {
-  debridPlayback.set(false)
+function handOver (handled, active = () => true) {
+  if (active()) {
+    debridPlayback.set(false)
+    debridStatus.set(null)
+  }
   return handled
 }
 
@@ -251,17 +296,35 @@ function handOver (handled) {
  * is still parsing filenames and matching episodes.
  * @param {string} torrentID - Magnet URI or info hash.
  * @param {{ episode?: number }} [search]
+ * @param {{ current?: () => boolean }} [intent] Whether this play still owns the player.
  * @returns {Promise<{ files: any[], verified: Promise<{ alive: boolean, reason?: string }> }>}
  *   `verified` never rejects; it answers whether the played file's link serves bytes.
  */
-export async function resolveDebridFiles (torrentID, search) {
+export async function resolveDebridFiles (torrentID, search, { current: ownsPlay = () => true } = {}) {
   const current = account()
   if (!current) throw new Error('No debrid service configured')
   const episode = Number(search?.episode)
-  const resolved = await DEBRID.resolve(current.id, current.apiKey, torrentID, Number.isFinite(episode) ? episode : undefined)
+  const wantedEpisode = Number.isFinite(episode) ? episode : undefined
+  let resolved
+  try {
+    resolved = await DEBRID.resolve(current.id, current.apiKey, torrentID, wantedEpisode)
+  } catch (error) {
+    // A timeout proves only that one service chain lost the race with its budget. The
+    // core has already put the account into short-probe mode, so exactly one new chain
+    // is cheap and gives a transient 10–15s flap a way to heal without another click.
+    if (error?.kind !== 'timeout' || !ownsPlay()) throw error
+    debug(`Debrid resolve timed out; retrying once while ${current.service.title} is in recovery mode`)
+    resolved = await DEBRID.resolve(current.id, current.apiKey, torrentID, wantedEpisode)
+  }
   const target = probeTarget(resolved.files, resolved.target)
-  const verified = verifiedStream(target?.url).then(verdict => {
-    if (!verdict.alive) console.warn(`[stream] the resolved link for "${target?.name}" is dead after ${verdict.attempts} probe(s): ${verdict.reason}`)
+  const verified = verifiedStream(target?.url).then(async verdict => {
+    if (!verdict.alive) {
+      console.warn(`[stream] the resolved link for "${target?.name}" is dead after ${verdict.attempts} probe(s): ${verdict.reason}`)
+      // Direct links are cached in the host because the provider returns the same URL
+      // for a torrent/file pair. A byte probe is the authoritative invalidation signal.
+      await Promise.resolve().then(() => DEBRID.forgetResolved(current.id, current.apiKey, resolved.hash))
+        .catch(error => debug('Could not invalidate the dead resolved-link cache entry:', error))
+    }
     else if (verdict.elapsed > 1_000) console.warn(`[stream] the resolved link took ${verdict.elapsed}ms to answer its range probe`)
     else debug(`Stream link answered its range probe in ${verdict.elapsed}ms`)
     return verdict

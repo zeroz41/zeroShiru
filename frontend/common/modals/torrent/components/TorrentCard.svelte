@@ -22,7 +22,7 @@
     [Availability.UNKNOWN]: { icon: CloudAlert, style: 'background: hsla(var(--white-color-dim-hsl), .08); border-color: var(--white-color-very-dim) !important; color: var(--white-color-dim)' }
   }
 
-  const { reactive, init } = createListener(['torrent-button', 'torrent-safe-area'])
+  const { reactive, init } = createListener(['torrent-button'])
   init(true)
 
   /** @typedef {import('../../../../extensions').TorrentResult} Result */
@@ -371,20 +371,8 @@
   $: availabilityBadge = availabilityBadges[availability]
   $: availabilityTitle = describeAvailability(availability, $debridTransport?.title).description
 
-  let card
-  $: updateGlowColor(countdown)
-  function updateGlowColor(value) {
-    if (!card) return
-    if (countdown < 0 || countdown > 4) {
-      card.style.borderColor = ''
-      card.style.removeProperty('color')
-      return
-    }
-    let color = 'var(--warning-color)'
-    if (value < 3) color = 'var(--danger-color-dim)'
-    card.style.borderColor = color
-    card.style.setProperty('color', color)
-  }
+  // the countdown ring's colour, bound in the template instead of written imperatively
+  $: glowColor = countdown >= 0 && countdown <= 4 ? (countdown < 3 ? 'var(--danger-color-dim)' : 'var(--warning-color)') : null
 </script>
 
 <div class='card bg-dark p-15 d-flex mx-0 mb-10 mt-0 position-relative rounded-3' class:pointer={type !== 'error'} class:scale={type !== 'error'} class:lift={type !== 'error'} class:lift-soft={type !== 'error'} class:not-reactive={!$reactive || type === 'error'} class:glow={countdown > -1} class:error-card={type === 'error'} role='button' tabindex='0' use:click={() => type !== 'error' && play(result)} on:contextmenu|preventDefault={() => type !== 'error' && copyToClipboard(result.link, 'magnet URL')} title={type === 'error' ? `${result.source?.name || 'Unknown Source'}: ${result.title}` : result.parseObject?.file_name}>
@@ -406,7 +394,6 @@
     </div>
     <div class='position-absolute rounded-3 opacity-transition-hack' style='background: var(--torrent-card-gradient);' />
   </div>
-  <button type='button' tabindex='-1' class='position-absolute torrent-safe-area top-0 right-0 h-full w-50 bg-transparent border-0 shadow-none not-reactive z-1' class:d-none={type === 'error'} use:click={() => {}}/>
   <div class='d-flex pl-10 flex-column justify-content-between w-full h-auto position-relative' style='min-height: 10rem; min-width: 0;'>
     <div class='d-flex w-full'>
       {#if type === 'error'}
@@ -490,7 +477,7 @@
       </div>
     {/if}
   </div>
-  <div bind:this={card} class='position-absolute rounded-3 bd-highlight opacity-transition-hack' class:border-best={type === 'best'} class:border-magnet={type === 'magnet'} class:border-warning-dim={errorType === 'warning'} class:border-danger-dim={errorType === 'error'} />
+  <div style:border-color={glowColor} style:color={glowColor} class='position-absolute rounded-3 bd-highlight opacity-transition-hack' class:border-best={type === 'best'} class:border-magnet={type === 'magnet'} class:border-warning-dim={errorType === 'warning'} class:border-danger-dim={errorType === 'error'} />
 </div>
 
 <style>

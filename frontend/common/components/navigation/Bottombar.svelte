@@ -15,7 +15,7 @@
   }
 </script>
 
-<nav class='navbar navbar-fixed-bottom d-block d-md-none border-bottom-0 border-left-0 border-right-0 bg-dark z-80 bt-10 mb-navigation-safe-area'>
+<nav class='navbar bottom-surface navbar-fixed-bottom d-block d-md-none border-bottom-0 border-left-0 border-right-0 z-80 mb-navigation-safe-area'>
   <div class='navbar-menu h-full d-flex flex-row justify-content-center align-items-center m-0 pb-5 animate'>
     <NavBar {closeDrawer} bind:drawerOpen={$drawerOpen} bind:drawerItems={$drawerItems} class='flex-row' />
   </div>
@@ -34,6 +34,11 @@
 <style>
   .navbar {
     --navbar-fixed-bottom-height: var(--bottombar-height) !important;
+  }
+  .bottom-surface {
+    background: linear-gradient(180deg, var(--surface-panel-strong), var(--surface-shell));
+    border-top: .1rem solid var(--surface-border) !important;
+    box-shadow: 0 -1.2rem 3rem hsla(var(--black-color-hsl), .35);
   }
 
   .drawer {
@@ -60,7 +65,7 @@
       right: 0;
       bottom: 0;
       height: var(--safe-area-navigation-bottom);
-      background: var(--dark-color);
+      background: var(--surface-shell);
     }
   }
 </style>

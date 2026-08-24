@@ -6,14 +6,15 @@
 //! across calls, mirroring the service lifecycle the JS layer used to have.
 
 use serde::{Deserialize, Serialize};
-use shiru_core::{pick_pack, EpisodeNotInPack};
+use shiru_core::{parse_names, pick_episode_file, pick_pack, EpisodeNotInPack};
 use shiru_debrid::manager::{create_provider, ManagedProvider, WatchEvent, PROVIDER_IDS};
 use shiru_debrid::platform::NativePlatform;
 use shiru_debrid::{DebridError, ResolveOptions};
-use shiru_domain::{to_player_file, Availability, PlayerFile};
+use shiru_domain::{parse_hash, to_player_file, Availability, DebridResolved, PlayerFile};
 use shiru_networking::NativeTransport;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::Emitter;
 
 /// The event channel availability answers arrive on, so badges fill in as a sweep
@@ -26,6 +27,107 @@ const DEBRID_EVENT: &str = "shiru://debrid";
 /// had installed — in the middle of whatever it was doing.
 const PROVIDER_SLOTS: usize = 4;
 
+/// Direct links are idempotent for a service torrent/file pair and expensive to ask for.
+/// Keep successful windows long enough for re-clicks and stall recovery, but never so
+/// long that an unprobed expired token becomes normal playback.
+const RESOLVED_TTL: Duration = Duration::from_secs(15 * 60);
+/// Bounds accounts/releases/windows held in memory.
+const RESOLVED_SLOTS: usize = 64;
+
+struct ResolvedEntry {
+    service: String,
+    api_key: String,
+    hash: String,
+    resolved: DebridResolved,
+    stored_at: Instant,
+}
+
+#[derive(Default)]
+struct ResolvedCache {
+    /// Most recently used first. A large pack may have several windows cached around
+    /// different episodes; any window containing the next episode is reusable.
+    entries: VecDeque<ResolvedEntry>,
+}
+
+impl ResolvedCache {
+    fn get(
+        &mut self,
+        service: &str,
+        api_key: &str,
+        hash: &str,
+        episode: Option<f64>,
+    ) -> Option<DebridResolved> {
+        self.get_at(service, api_key, hash, episode, Instant::now())
+    }
+
+    fn get_at(
+        &mut self,
+        service: &str,
+        api_key: &str,
+        hash: &str,
+        episode: Option<f64>,
+        now: Instant,
+    ) -> Option<DebridResolved> {
+        self.entries.retain(|entry| now.saturating_duration_since(entry.stored_at) < RESOLVED_TTL);
+        let found = self.entries.iter().position(|entry| {
+            entry.service == service
+                && entry.api_key == api_key
+                && entry.hash == hash
+                && retarget(&entry.resolved, episode).is_some()
+        })?;
+        let entry = self.entries.remove(found)?;
+        let answer = retarget(&entry.resolved, episode);
+        self.entries.push_front(entry);
+        answer
+    }
+
+    fn insert(&mut self, service: &str, api_key: &str, resolved: DebridResolved) {
+        self.insert_at(service, api_key, resolved, Instant::now());
+    }
+
+    fn insert_at(&mut self, service: &str, api_key: &str, resolved: DebridResolved, stored_at: Instant) {
+        // Replace this link window, not every window for the hash: episode 100 of a
+        // long pack can coexist with cached links around episode 1.
+        self.entries.retain(|entry| {
+            !(entry.service == service
+                && entry.api_key == api_key
+                && entry.hash == resolved.hash
+                && entry.resolved.target == resolved.target)
+        });
+        self.entries.push_front(ResolvedEntry {
+            service: service.to_string(),
+            api_key: api_key.to_string(),
+            hash: resolved.hash.clone(),
+            resolved,
+            stored_at,
+        });
+        self.entries.truncate(RESOLVED_SLOTS);
+    }
+
+    fn forget(&mut self, service: &str, api_key: &str, hash: &str) {
+        self.entries.retain(|entry| {
+            entry.service != service || entry.api_key != api_key || entry.hash != hash
+        });
+    }
+}
+
+/// Re-picks the requested episode from a cached link window. If the episode lies
+/// outside it, the provider is asked for a new window instead.
+fn retarget(resolved: &DebridResolved, episode: Option<f64>) -> Option<DebridResolved> {
+    let Some(episode) = episode else { return Some(resolved.clone()) };
+    let files: Vec<(String, u64)> = resolved.files.iter().map(|file| (file.path.clone(), file.size)).collect();
+    // A cached window is not necessarily the whole release. `pick_pack` deliberately
+    // turns a mismatch in <= max_files entries into Ok(None), because a provider handing
+    // over a complete small release lets the player decide. Doing that to a cached slice
+    // could hand episodes 1-12 to a request for episode 50, so cache lookup is strict.
+    let target = match pick_episode_file(&files, episode, parse_names) {
+        Ok(Some(index)) => resolved.files.get(index).map(|file| file.path.clone()),
+        Ok(None) => resolved.target.clone(), // an unnumbered movie is intentionally unjudgeable
+        Err(_) => return None,
+    };
+    Some(DebridResolved { target, ..resolved.clone() })
+}
+
 #[derive(Default)]
 pub struct DebridState {
     /// Most recently used first.
@@ -34,6 +136,8 @@ pub struct DebridState {
     /// supersedes the old one, and aborting mid-flight is safe — every claim the
     /// watch takes is released by a Drop guard in the crate.
     watch: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// Successful direct-link windows, scoped to the account whose links they contain.
+    resolved: Mutex<ResolvedCache>,
 }
 
 impl DebridState {
@@ -335,6 +439,25 @@ pub async fn debrid_resolve(
     let max_files = managed.provider().config().max_files;
     let started = std::time::Instant::now();
     tracing::info!(target: "debrid", %service, ?episode, "resolve started");
+    if let Some(hash) = parse_hash(&magnet) {
+        if let Some(resolved) = state
+            .resolved
+            .lock()
+            .unwrap()
+            .get(&service, &api_key, &hash, episode)
+        {
+            tracing::info!(
+                target: "debrid",
+                %service,
+                ?episode,
+                elapsed_ms = started.elapsed().as_millis(),
+                files = resolved.files.len(),
+                "resolve completed from direct-link cache"
+            );
+            managed.client().remember(&resolved.hash, Availability::Cached);
+            return Ok(resolved_reply(resolved));
+        }
+    }
     let opts = ResolveOptions {
         file_filter: Some(Box::new(shiru_media::is_playback_path)),
         pick_file: episode.map(|episode| -> shiru_debrid::PickFile {
@@ -379,12 +502,22 @@ pub async fn debrid_resolve(
     // thousand-entry response on the play path in the first place
     // playing it proves the service holds it, which is the best answer there is
     managed.client().remember(&resolved.hash, Availability::Cached);
-    let files = resolved
-        .files
-        .iter()
-        .map(|file| to_player_file(&resolved.hash, &resolved.name, file))
-        .collect();
-    Ok(ResolvedReply { hash: resolved.hash, name: resolved.name, files, target: resolved.target })
+    state.resolved.lock().unwrap().insert(&service, &api_key, resolved.clone());
+    Ok(resolved_reply(resolved))
+}
+
+/// Drops cached direct links after the frontend's byte probe proves one dead. Every
+/// episode window for the release goes: an expired account token or CDN assignment can
+/// affect more than the one file that happened to be played first.
+#[tauri::command]
+pub fn debrid_forget_resolved(
+    state: tauri::State<'_, DebridState>,
+    service: String,
+    api_key: String,
+    hash: String,
+) {
+    let hash = parse_hash(&hash).unwrap_or_else(|| hash.to_ascii_lowercase());
+    state.resolved.lock().unwrap().forget(&service, &api_key, &hash);
 }
 
 /// A resolved release, shaped the way the player takes files.
@@ -399,9 +532,37 @@ pub struct ResolvedReply {
     pub target: Option<String>,
 }
 
+fn resolved_reply(resolved: DebridResolved) -> ResolvedReply {
+    let files = resolved
+        .files
+        .iter()
+        .map(|file| to_player_file(&resolved.hash, &resolved.name, file))
+        .collect();
+    ResolvedReply { hash: resolved.hash, name: resolved.name, files, target: resolved.target }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shiru_domain::DebridFile;
+
+    fn cached_resolved() -> DebridResolved {
+        let files = (1..=3)
+            .map(|episode| DebridFile {
+                name: format!("Show - {episode:02}.mkv"),
+                path: format!("/Show - {episode:02}.mkv"),
+                size: 1_000 + episode,
+                url: format!("https://cdn.test/{episode:02}"),
+                r#type: None,
+            })
+            .collect();
+        DebridResolved {
+            hash: "a".repeat(40),
+            name: "Show".into(),
+            files,
+            target: Some("/Show - 01.mkv".into()),
+        }
+    }
 
     #[test]
     fn watch_events_serialize_the_shapes_the_frontend_reads() {
@@ -449,6 +610,43 @@ mod tests {
             kinds,
             ["auth", "network", "timeout", "not-cached", "unavailable", "rejected", "service"]
         );
+    }
+
+    #[test]
+    fn resolved_links_are_reused_and_retargeted_only_inside_the_cached_window() {
+        let now = Instant::now();
+        let mut cache = ResolvedCache::default();
+        cache.insert_at("torbox", "key", cached_resolved(), now);
+
+        let episode_two = cache
+            .get_at("torbox", "key", &"a".repeat(40), Some(2.0), now)
+            .expect("episode two is already linked in this window");
+        assert_eq!(episode_two.target.as_deref(), Some("/Show - 02.mkv"));
+        assert!(
+            cache.get_at("torbox", "key", &"a".repeat(40), Some(50.0), now).is_none(),
+            "an episode outside the window must ask the provider for another window"
+        );
+        assert!(
+            cache.get_at("torbox", "other-key", &"a".repeat(40), Some(2.0), now).is_none(),
+            "account-bound links never cross accounts"
+        );
+    }
+
+    #[test]
+    fn dead_or_expired_resolved_links_leave_the_cache() {
+        let now = Instant::now();
+        let mut cache = ResolvedCache::default();
+        cache.insert_at(
+            "torbox",
+            "key",
+            cached_resolved(),
+            now - RESOLVED_TTL - Duration::from_secs(1),
+        );
+        assert!(cache.get_at("torbox", "key", &"a".repeat(40), Some(1.0), now).is_none());
+
+        cache.insert_at("torbox", "key", cached_resolved(), now);
+        cache.forget("torbox", "key", &"a".repeat(40));
+        assert!(cache.get_at("torbox", "key", &"a".repeat(40), Some(1.0), now).is_none());
     }
     #[test]
     fn a_results_list_holding_a_hashless_release_is_still_answered() {

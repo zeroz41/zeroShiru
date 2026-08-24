@@ -6,6 +6,7 @@
   import { TORRENT } from '@/modules/bridge.js'
   import { loadingSession, loadedTorrent, completedTorrents, seedingTorrents, stagingTorrents } from '@/modules/torrent.js'
   import ErrorCard from '@/components/cards/ErrorCard.svelte'
+  import EmptyState from '@/components/cards/EmptyState.svelte'
   import TorrentCard from '@/routes/torrentManager/components/TorrentCard.svelte'
   import { Search, RefreshCw, TriangleAlert, Package, Percent, Activity, Scale, Gauge, CloudDownload, CloudUpload, Sprout, Magnet, Timer } from 'lucide-svelte'
 </script>
@@ -27,11 +28,19 @@
   $: filteredStaging = filterResults($stagingTorrents, searchText) || []
   $: filteredSeeding = filterResults($seedingTorrents, searchText) || []
   $: filteredCompleted = filterResults($completedTorrents, searchText) || []
-  $: foundResults = !(searchText?.length && !filteredLoaded && !filteredStaging.length && !filteredSeeding.length && !filteredCompleted.length)
+  // loadedTorrent starts as {} and is reset to {} whenever nothing is playing, so its mere
+  // existence proves nothing: rendering the current card off the store alone drew a row of
+  // em-dashes, zeroes and an ETA of infinity, wearing the green "current" border, on a page
+  // with no torrents at all
+  $: hasLoaded = Boolean($loadedTorrent?.infoHash)
+  $: showsLoaded = hasLoaded && (!searchText?.length || filteredLoaded)
+  $: listed = (showsLoaded ? 1 : 0) + filteredStaging.length + filteredSeeding.length + filteredCompleted.length
+  $: foundResults = !(searchText?.length && !listed)
+  $: empty = !searchText?.length && !listed
 </script>
 
-<div class='root bg-dark d-flex flex-column h-full w-full overflow-y-scroll overflow-x-hidden'>
-  <div class='header w-full status-transition pl-20 position-sticky top-0 bg-dark z-20 pb-10' class:mb-25={!disableRescan} class:pt-28px={!$status.match(/offline/i)} class:pt-15={$status.match(/offline/i)}>
+<div class='torrent-page root d-flex flex-column h-full w-full overflow-y-scroll overflow-x-hidden'>
+  <div class='header w-full status-transition pl-20 position-sticky top-0 z-20 pb-10' class:mb-25={!disableRescan} class:pt-28px={!$status.match(/offline/i)} class:pt-15={$status.match(/offline/i)}>
     <h4 class='font-weight-bold m-0 mb-10'>Manage Torrents</h4>
     <div class='d-flex align-items-center'>
       <div class='input-group wm-600'>
@@ -54,7 +63,7 @@
     </div>
   </div>
   <div class='d-flex flex-column flex-1 w-full text-wrap text-break-word font-scale-16'>
-    <div class='labels d-flex flex-row mb-10 font-scale-18 position-sticky bg-dark z-20 status-transition' style='top: calc(9rem + {!$status.match(/offline/i) ? `28px` : `1.5rem`})'>
+    <div class='labels px-10 d-flex flex-row mb-10 font-scale-18 position-sticky z-20 status-transition' style='top: calc(9rem + {!$status.match(/offline/i) ? `28px` : `1.5rem`})'>
       <div class='font-weight-bold p-5 ml-20 mw-150 flex-1 w-auto'>Name</div>
       <div class='font-weight-bold p-5 w-150 d-none d-md-block'><span class='d-none d-lg-block'>Size</span><Package class='d-lg-none' size='2rem'/></div>
       <div class='font-weight-bold p-5 w-150'><span class='d-none d-lg-block'>Progress</span><Percent class='d-lg-none' size='2rem'/></div>
@@ -69,8 +78,10 @@
       <div class='font-weight-bold p-5 w-40 mr-5 mr-md-20 flex-shrink-0'/>
     </div>
     <div class='flex-1' bind:this={containerEl}>
-      {#if foundResults}
-        {#if !searchText?.length || filteredLoaded}
+      {#if empty}
+        <EmptyState icon={Package} title='Nothing downloading' hint='Torrents appear here while they stream, and stay while they seed. Play an episode, or paste a magnet link in the box above.' class='h-full torrents-empty' />
+      {:else if foundResults}
+        {#if showsLoaded}
           <TorrentCard bind:data={$loadedTorrent} current={true} {disableRescan} {containerEl} />
         {/if}
         {#each filteredStaging as torrent (torrent.infoHash)}
@@ -90,6 +101,17 @@
 </div>
 
 <style>
+  .torrent-page { background: transparent; }
+  /* the table's own rows stop at the header when there are none, so the empty state has to
+     claim the height itself rather than sit in a 40px strip under the column labels */
+  :global(.torrents-empty) {
+    min-height: 32rem;
+  }
+  .header,
+  .labels {
+    background: var(--surface-shell);
+    border-bottom: .1rem solid var(--surface-border);
+  }
   .header::after,
   .labels::after {
     content: '';

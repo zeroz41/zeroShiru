@@ -13,7 +13,7 @@
   registerTab(tab)
 </script>
 
-<div class='tab-label pointer mx-auto pl-lg-20 w-lg-full {sidebar ? `d-none d-lg-block` : ``} {substitute ? `d-sm-h-block d-sm-none` : ``}' title={name} use:click={() => (action ?? (() => selectTab(tab)))()}>
+<div class='tab-label pointer mx-auto pl-lg-20 w-lg-full {sidebar ? `d-none d-lg-block` : ``} {substitute ? `d-sm-h-block d-sm-none` : ``}' class:active={$selectedTab === tab} title={name} use:click={() => (action ?? (() => selectTab(tab)))()}>
   <span class='d-flex align-items-center rounded'>
     <slot active={$selectedTab === tab}/>
   </span>
@@ -27,6 +27,10 @@
   .tab-label > span {
     color: var(--highlight-color);
     transition: background var(--motion) var(--ease-settle), color var(--motion) var(--ease-settle);
+  }
+  .tab-label.active > span {
+    background: linear-gradient(90deg, hsla(var(--tertiary-color-hsl), .38), hsla(var(--tertiary-color-hsl), .12));
+    box-shadow: inset .3rem 0 0 var(--tertiary-color-light), inset 0 0 0 .1rem hsla(var(--tertiary-color-hsl), .3);
   }
   /* the same soft wash the nav uses — the solid white hover chip retired with it */
   .tab-label:active > span {

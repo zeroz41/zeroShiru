@@ -19,6 +19,12 @@
  * page the user visits in a long session. */
 export const IMAGE_STORE_BYTE_LIMIT = 160 * 1024 * 1024
 
+/** A home rail deliberately asks for its art before the user flings it into view. Keep
+ * that from turning into 150 simultaneous fetch/decode pipelines when the first three
+ * rails mount together. Twelve keeps the network busy without monopolising WebKit's
+ * main process with response and Blob bookkeeping. */
+export const IMAGE_FETCH_CONCURRENCY = 12
+
 /** @type {Map<string, { object: string, bytes: number }>} Insertion-ordered; eviction
  * drops the least recently touched. Keyed by the URL the image is fetched from. */
 const held = new Map()
@@ -28,6 +34,34 @@ const held = new Map()
 const pending = new Map()
 
 let totalBytes = 0
+let activeFetches = 0
+const fetchQueue = []
+
+function acquireFetchSlot () {
+  if (activeFetches < IMAGE_FETCH_CONCURRENCY) {
+    activeFetches++
+    return Promise.resolve()
+  }
+  // The active count is intentionally not incremented when this waiter wakes: release
+  // hands its occupied slot straight to the next waiter. This avoids a new caller and a
+  // waking caller both claiming the same newly freed slot.
+  return new Promise(resolve => fetchQueue.push(resolve))
+}
+
+function releaseFetchSlot () {
+  const next = fetchQueue.shift()
+  if (next) next()
+  else activeFetches--
+}
+
+async function inFetchSlot (work) {
+  await acquireFetchSlot()
+  try {
+    return await work()
+  } finally {
+    releaseFetchSlot()
+  }
+}
 
 /** Whether a URL's bytes are pinnable at all: real requests, not inline data. */
 function pinnable (url) {
@@ -67,23 +101,25 @@ export async function pin (url, { fetcher = globalThis.fetch?.bind(globalThis), 
   if (pending.has(url)) return pending.get(url)
   const claim = (async () => {
     try {
-      const response = await fetcher(url)
-      if (!response?.ok || typeof response.blob !== 'function') return url
-      const blob = await response.blob()
-      if (!blob?.size || blob.size > IMAGE_STORE_BYTE_LIMIT) return url
-      // a racer may have pinned it while the bytes were in flight
-      const raced = heldNow(url)
-      if (raced) return raced
-      while (totalBytes + blob.size > IMAGE_STORE_BYTE_LIMIT && held.size) {
-        const [oldest, entry] = held.entries().next().value
-        held.delete(oldest)
-        totalBytes -= entry.bytes
-        revokeObjectURL?.(entry.object)
-      }
-      const object = createObjectURL(blob)
-      held.set(url, { object, bytes: blob.size })
-      totalBytes += blob.size
-      return object
+      return await inFetchSlot(async () => {
+        const response = await fetcher(url)
+        if (!response?.ok || typeof response.blob !== 'function') return url
+        const blob = await response.blob()
+        if (!blob?.size || blob.size > IMAGE_STORE_BYTE_LIMIT) return url
+        // a racer may have pinned it while the bytes were in flight
+        const raced = heldNow(url)
+        if (raced) return raced
+        while (totalBytes + blob.size > IMAGE_STORE_BYTE_LIMIT && held.size) {
+          const [oldest, entry] = held.entries().next().value
+          held.delete(oldest)
+          totalBytes -= entry.bytes
+          revokeObjectURL?.(entry.object)
+        }
+        const object = createObjectURL(blob)
+        held.set(url, { object, bytes: blob.size })
+        totalBytes += blob.size
+        return object
+      })
     } catch {
       return url // the <img> can still try the URL itself
     } finally {

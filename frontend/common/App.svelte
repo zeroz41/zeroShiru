@@ -74,7 +74,6 @@
     height: calc(100% - var(--bottombar-height) - max(0px, calc(var(--safe-area-navigation-bottom) - var(--safe-area-gesture-bottom)))) !important;
   }
   .content-wrapper {
-    will-change: width;
     white-space: pre-line;
     top: 0 !important;
   }

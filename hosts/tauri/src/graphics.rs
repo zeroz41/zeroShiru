@@ -319,6 +319,14 @@ pub fn apply(identifier: &str) {
         // a graphics stack reads it, so on Mesa or under X11 it is an unread string, and it
         // turns off nothing this app uses: DMA-BUF, GBM and compositing all stay on
         set_default("__NV_DISABLE_EXPLICIT_SYNC", "1");
+        // WebKitGTK's web process discards decoded image data at a conservative fraction
+        // of its memory limit even while the DOM owns every <img> and zeroShiru holds the
+        // encoded bytes. Scrolling back then visibly re-decodes whole poster rails. Rail
+        // cards request the correctly-sized AniList variant now, bounding their decoded
+        // footprint; disable the periodic pressure sweep that evicted those live frames.
+        // WebKit's ordinary memory-cache cap remains, and lib.rs already revives a web
+        // process the OS chooses to kill.
+        set_default("WEBKIT_DISABLE_MEMORY_PRESSURE_MONITOR", "1");
         let failed = failed_starts(&config_dir);
         let settled = settled_rung(&config_dir);
         let mode = resolve_effective(&config_dir, settled);

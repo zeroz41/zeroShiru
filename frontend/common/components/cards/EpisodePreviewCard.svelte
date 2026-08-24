@@ -9,7 +9,7 @@
   import { episodesList } from '@/modules/episodes.js'
   import { click } from '@/modules/lib/click.js'
   import { getHash } from '@/modules/anime/animehash.js'
-  import { since, fadeIn, fadeOut, isValidNumber } from '@/modules/util.js'
+  import { since, fadeIn, fadeOut, isValidNumber, railCover } from '@/modules/util.js'
   import { liveAnimeEpisodeProgress } from '@/modules/anime/animeprogress.js'
   import { anilistClient } from '@/modules/providers/anilist/anilist.js'
   import { settings } from '@/modules/settings.js'
@@ -26,7 +26,7 @@
   const lastEpisode = (data?.episodeRange || data?.parseObject?.episodeRange)?.last || episodeRange?.last || (isValidNumber(data?.episode) && (data?.episode + (zeroEpisode ? 1 : 0))) || (media?.episodes === 1 && media?.episodes)
   const hasSpoiler = $settings.spoilerStatus.includes(media?.mediaListEntry?.status ?? 'NOTONLIST')
   const isSpoiler = hasSpoiler && (media?.mediaListEntry?.progress ?? 0) < lastEpisode
-  const episodeThumbnail = ((data.similarity || ((!hasSpoiler || (media?.mediaListEntry?.progress >= lastEpisode || !['minimal', 'moderate', 'strict', 'hermit'].includes($settings.spoilers))))) && data.episodeData?.image) || media?.bannerImage || media?.coverImage.extraLarge || ' '
+  const episodeThumbnail = ((data.similarity || ((!hasSpoiler || (media?.mediaListEntry?.progress >= lastEpisode || !['minimal', 'moderate', 'strict', 'hermit'].includes($settings.spoilers))))) && data.episodeData?.image) || media?.bannerImage || railCover(media?.coverImage)[0] || ' '
   const watched = media?.mediaListEntry?.status === 'COMPLETED'
   const completed = !watched && media?.mediaListEntry?.progress >= lastEpisode
   const progress = liveAnimeEpisodeProgress(media?.id, data?.episode, completed)

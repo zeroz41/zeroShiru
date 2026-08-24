@@ -340,7 +340,10 @@ export function drag(node, dp = noop) {
 export function dragScroll(node) {
   let dragging = false
   let activePointer = null
-  let threshold = 50
+  // Once a rail has moved more than a few pixels it was a drag, not a card click. The
+  // old 50px threshold scrolled the rail and then activated the card underneath it on
+  // release, which made dragging feel sticky and unpredictable.
+  let threshold = 6
   let dragged = false
   let draggedX = 0
   let draggedY = 0
@@ -408,7 +411,10 @@ export function dragScroll(node) {
     }
     draggedX += Math.abs(e.clientX - startX)
     draggedY += Math.abs(e.clientY - startY)
-    node.scrollBy(startX - e.clientX, startY - e.clientY)
+    // A horizontal rail must never acquire its own vertical scroll offset from a slightly
+    // diagonal mouse gesture. Direct scrollLeft also avoids allocating a scroll options
+    // operation for every pointer event.
+    node.scrollLeft += startX - e.clientX
     startX = e.clientX
     startY = e.clientY
     node.style.cursor = 'grabbing'

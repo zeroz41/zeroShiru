@@ -20,9 +20,16 @@
     modal.close(modal.TRAILER)
   }
 
-  function show () {
-    hide.set(false)
-    return ''
+  // the trailer button reveals itself once a trailer is known to exist; decided here
+  // rather than from a template expression so rendering stays a pure read
+  $: revealTrailer(staticMedia)
+  async function revealTrailer (media) {
+    let source
+    try {
+      source = (media?.trailer?.id && media) || await episodesList.getMedia(media?.idMal)
+    } catch { return } // no metadata is just no trailer, same as the template's await treated it
+    if (media?.id !== staticMedia?.id) return
+    if (source?.trailer?.id || source?.data?.trailer?.youtube_id) hide.set(false)
   }
   function reset () {
     hide.set(true)
@@ -39,12 +46,10 @@
     <button type='button' class='btn btn-square bg-transparent shadow-none border-0 d-flex align-items-center justify-content-center ml-auto mr-5' use:click={close}><X size='1.7rem' strokeWidth='3'/></button>
   </div>
   <div class='pointer-events-auto ratio-16-9 position-relative w-full wm-calc overflow-hidden rounded-bottom-5'>
-<!--    < css='h-full' bind:hide={$hide} loop={false} bind:autoPause={$modal[modal.TRAILER]} autoPlay={false} autoMute={false} controls={true} fullScreen={true} ids={[staticMedia.trailer?.id, () => episodesList.getMedia(staticMedia.idMal).then(metadata => [metadata?.data?.trailer?.youtube_id])]} title={staticMedia.title.userPreferred}/>-->
     {#key staticMedia?.id}
       {#await (staticMedia.trailer?.id && staticMedia) || episodesList.getMedia(staticMedia.idMal) then trailerUrl}
         {@const trailerId = trailerUrl?.trailer?.id || trailerUrl?.data?.trailer?.youtube_id}
         {#if trailerId}
-          {show()}
           {#if $modal[modal.TRAILER]}
             {#await DESKTOP.getYouTube() then youtubeServer}
               <div class='pointer-events-auto ratio-16-9 position-relative w-full wm-calc'>
@@ -68,10 +73,10 @@
 
 <style>
   .rounded-top-5 {
-    border-radius: .5rem .5rem 0 0;
+    border-radius: var(--radius-panel) var(--radius-panel) 0 0;
   }
   .rounded-bottom-5 {
-    border-radius: 0 0 .5rem .5rem;
+    border-radius: 0 0 var(--radius-panel) var(--radius-panel);
   }
   .wm-calc {
     max-width: min(max(70vw, 100rem), calc(75vh * (16 / 9)));

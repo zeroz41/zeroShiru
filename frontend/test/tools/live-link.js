@@ -3,11 +3,18 @@
 // The debrid providers themselves live in Rust now (crates/debrid, with live coverage in
 // crates/debrid/tests/live.rs). The renderer-side player pieces — DebridMetadata, subtitle
 // and font extraction — are still JS, and testing them against a real CDN needs a real
-// HTTPS link. This is the smallest thing that produces one: no rate limiting, no
-// availability memory, no error taxonomy. It is test scaffolding, not a provider.
+// HTTPS link. This is the smallest thing that produces one: conservative request pacing,
+// no availability memory, no error taxonomy. It is test scaffolding, not a provider.
 const API = 'https://api.torbox.app/v1/api'
 
 const key = () => process.env.TORBOX_API_KEY
+
+/** A request path safe enough to put in test output. */
+export function safeTorBoxPath (path) {
+  return String(path).replace(/([?&]token=)[^&]*/gi, '$1[redacted]')
+}
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 /** @param {string} path @param {RequestInit} [init] */
 async function api (path, init) {
@@ -16,7 +23,7 @@ async function api (path, init) {
     headers: { Authorization: `Bearer ${key()}`, ...init?.headers }
   })
   const body = await response.json().catch(() => null)
-  if (!response.ok || body?.success === false) throw new Error(`TorBox ${path}: ${body?.detail || body?.error || response.status}`)
+  if (!response.ok || body?.success === false) throw new Error(`TorBox ${safeTorBoxPath(path)}: ${body?.detail || body?.error || response.status}`)
   return body?.data
 }
 
@@ -55,10 +62,16 @@ export async function resolveTorBox (hash, { filter = () => true, maxFiles = 12 
     .filter(file => filter(file.name))
     .slice(0, maxFiles)
   if (!files.length) throw new Error(`nothing playable in ${torrent.name}`)
-  const linked = await Promise.all(files.map(async file => ({
-    ...file,
-    url: await api(`/torrents/requestdl?torrent_id=${torrent.id}&file_id=${file.id}&redirect=false&token=${encodeURIComponent(key())}`)
-  })))
+  // TorBox rate-limits requestdl independently. The live helper used to launch twelve at
+  // once, which made a healthy account look broken with 429s and defeated the test itself.
+  const linked = []
+  for (const file of files) {
+    if (linked.length) await wait(200)
+    linked.push({
+      ...file,
+      url: await api(`/torrents/requestdl?torrent_id=${torrent.id}&file_id=${file.id}&redirect=false&token=${encodeURIComponent(key())}`)
+    })
+  }
   return { hash: String(torrent.hash).toLowerCase(), name: torrent.name, files: linked }
 }
 

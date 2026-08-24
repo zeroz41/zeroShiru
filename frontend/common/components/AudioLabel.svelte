@@ -67,30 +67,30 @@
     {#if !banner && !episodeList}
         {@const subEpisodes = String(media.status !== 'NOT_YET_RELEASED' && media.status !== 'CANCELLED' && getMediaMaxEp(media, (media.status !== 'FINISHED')) || dubEpisodes || '')}
         <div use:markFirstInRow class='position-absolute bottom-0 right-0 w-full d-flex flex-row-reverse flex-wrap align-items-end justify-content-start h-20 vertical-flip z-1' {style} class:mb--7={!viewAnime} class:mb--3={viewAnime}>
-            <div class='audio-label px-10 text-dark rounded-right font-weight-bold d-flex align-items-center vertical-flip h-full bg-septenary slant mrl-1 z-5'>
+            <div class='audio-label chip chip-sub px-10 rounded-right font-weight-bold d-flex align-items-center vertical-flip h-full slant mrl-1 z-5'>
                 <Captions size='2rem' strokeWidth='1.5' />
                 <span class='d-flex align-items-center line-height-1' class:ml-3={(subEpisodes && subEpisodes.length > 0) || (dubEpisodes && Number(dubEpisodes) > 0)}><div class='line-height-1 mt-2'>{#if subEpisodes && (!dubEpisodes || (Number(subEpisodes) >= Number(dubEpisodes)))}{Number(subEpisodes)}{:else if dubEpisodes && (Number(dubEpisodes) > 0)}{Number(dubEpisodes)}{/if}</div></span>
             </div>
             {#if $isDubbed || ($isPartial && dubEpisodes && Number(dubEpisodes) > 0)}
-                <div class='audio-label pl-10 pr-20 text-dark rounded-right font-weight-bold d-flex align-items-center vertical-flip h-full slant z-4 bg-senary' class:bg-octonary={$isPartial} class:w-icon={!dubEpisodes || dubEpisodes.length === 0 || Number(dubEpisodes) === 0} class:w-text={dubEpisodes && dubEpisodes.length > 0 && Number(dubEpisodes) > 0}>
+                <div class='audio-label chip chip-dub pl-10 pr-20 rounded-right font-weight-bold d-flex align-items-center vertical-flip h-full slant z-4' class:chip-partial={$isPartial} class:w-icon={!dubEpisodes || dubEpisodes.length === 0 || Number(dubEpisodes) === 0} class:w-text={dubEpisodes && dubEpisodes.length > 0 && Number(dubEpisodes) > 0}>
                     <svelte:component this={$isDubbed ? Mic : MicOff} size='1.8rem' strokeWidth='2' />
                     <span class='d-flex align-items-center line-height-1 ml-2'><div class='line-height-1 mt-2'>{#if Number(dubEpisodes) > 0}{Number(dubEpisodes)}{/if}</div></span>
                 </div>
             {/if}
             {#if media.mediaListEntry?.progress}
-                <div class='audio-label pl-10 pr-20 text-dark rounded-right font-weight-bold d-flex align-items-center vertical-flip h-full slant w-icon w-text bg-current z-3'>
+                <div class='audio-label chip chip-progress pl-10 pr-20 rounded-right font-weight-bold d-flex align-items-center vertical-flip h-full slant w-icon w-text z-3'>
                     <ClockFading size='1.8rem' strokeWidth='2' />
                     <span class='d-flex align-items-center line-height-1 ml-2'><div class='line-height-1 mt-2'>{Number(media.mediaListEntry?.progress)}</div></span>
                 </div>
             {/if}
             {#if $isPartial && (!dubEpisodes || Number(dubEpisodes) <= 0)}
-                <div class='audio-label pl-10 pr-20 text-dark rounded-right font-weight-bold d-flex align-items-center vertical-flip h-full slant z-2 bg-octonary' class:w-icon={!dubEpisodes || dubEpisodes.length === 0 || Number(dubEpisodes) === 0} class:w-text={dubEpisodes && dubEpisodes.length > 0 && Number(dubEpisodes) > 0}>
+                <div class='audio-label chip chip-partial pl-10 pr-20 rounded-right font-weight-bold d-flex align-items-center vertical-flip h-full slant z-2' class:w-icon={!dubEpisodes || dubEpisodes.length === 0 || Number(dubEpisodes) === 0} class:w-text={dubEpisodes && dubEpisodes.length > 0 && Number(dubEpisodes) > 0}>
                     <MicOff size='1.8rem' strokeWidth='2' />
                     <span class='d-flex align-items-center line-height-1 ml-2'><div class='line-height-1 mt-2'>{#if Number(dubEpisodes) > 0}{Number(dubEpisodes)}{/if}</div></span>
                 </div>
             {/if}
             {#if media.isAdult}
-                <div class='audio-label pl-10 pr-15 text-dark rounded-right font-weight-bold d-flex align-items-center vertical-flip h-full lg-slant bg-quinary mrl-2 z-1'>
+                <div class='audio-label chip chip-adult pl-10 pr-15 rounded-right font-weight-bold d-flex align-items-center vertical-flip h-full lg-slant mrl-2 z-1'>
                     <Adult size='2rem' strokeWidth='1.8' />
                 </div>
             {/if}
@@ -98,12 +98,12 @@
     {:else if episodeList}
         <div class='position-absolute bottom-0 right-0 d-flex h-2'>
             {#if dubbed}
-                <div class='pl-10 pr-20 text-dark font-weight-bold d-flex align-items-center h-full bg-senary slant w-icon'>
+                <div class='chip chip-dub pl-10 pr-20 font-weight-bold d-flex align-items-center h-full slant w-icon'>
                     <Mic size='1.8rem' strokeWidth='2' />
                 </div>
             {/if}
             {#if subbed}
-                <div class='px-10 z-10 text-dark rounded-right font-weight-bold d-flex align-items-center h-full bg-septenary slant mrl-1'>
+                <div class='chip chip-sub px-10 z-10 rounded-right font-weight-bold d-flex align-items-center h-full slant mrl-1'>
                     <Captions size='2rem' strokeWidth='1.5' />
                 </div>
             {/if}
@@ -115,6 +115,22 @@
 {/if}
 
  <style>
+     /* washes, not paint pots: these were five saturated solid chips with black text,
+        the loudest thing on every poster. A near-opaque dark seat keeps them legible
+        over artwork; the colour survives as the tint and the rim; the text goes light. */
+     .chip {
+         --chip-color: var(--gray-color-light);
+         color: hsla(var(--white-color-hsl), .93);
+         background:
+             linear-gradient(color-mix(in srgb, var(--chip-color) 16%, transparent), color-mix(in srgb, var(--chip-color) 16%, transparent)),
+             hsla(var(--dark-color-dim-hsl), .92);
+         box-shadow: inset 0 0 0 .1rem color-mix(in srgb, var(--chip-color) 35%, transparent);
+     }
+     .chip-sub { --chip-color: var(--septenary-color); }
+     .chip-dub { --chip-color: var(--senary-color); }
+     .chip-partial { --chip-color: var(--octonary-color); }
+     .chip-progress { --chip-color: var(--current-color); }
+     .chip-adult { --chip-color: var(--quinary-color); }
      .w-icon {
          margin-right: -2rem;
      }

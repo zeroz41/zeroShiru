@@ -568,11 +568,35 @@
 </script>
 
 <script>
-  import PlayerPage from '@/routes/player/PlayerPage.svelte'
+  import { onMount } from 'svelte'
 
   export let miniplayer = false
   export let miniplayerShelved = false
   export let playbackPaused = true
+
+  // The player, subtitle renderer, Matroska parser and their workers are the largest
+  // renderer chunk. Parsing all of them before Home could answer its first click made
+  // the whole shell feel wedged at startup even when nothing was playing. Keep the media
+  // controller above live immediately, then prepare the visual player in the first idle
+  // slice (or immediately if a play arrives first).
+  let PlayerPage = null
+  let playerImport = null
+  function preparePlayer () {
+    if (!playerImport) playerImport = import('@/routes/player/PlayerPage.svelte').then(module => {
+      PlayerPage = module.default
+      return PlayerPage
+    })
+    return playerImport
+  }
+  $: if (Object.keys($nowPlaying || {}).length || $processed?.length) preparePlayer()
+  onMount(() => {
+    const schedule = globalThis.requestIdleCallback || (callback => setTimeout(callback, 0))
+    const cancel = globalThis.cancelIdleCallback || clearTimeout
+    const idle = schedule(preparePlayer, { timeout: 1_500 })
+    return () => cancel(idle)
+  })
 </script>
 
-<PlayerPage files={$processed} playableFiles={$processedFiles} {miniplayer} bind:paused={playbackPaused} bind:miniplayerShelved media={$nowPlaying} bind:playFile on:current={handleCurrent} {updateCurrent} on:duration={handleRanged} />
+{#if PlayerPage}
+  <svelte:component this={PlayerPage} files={$processed} playableFiles={$processedFiles} {miniplayer} bind:paused={playbackPaused} bind:miniplayerShelved media={$nowPlaying} bind:playFile on:current={handleCurrent} {updateCurrent} on:duration={handleRanged} />
+{/if}

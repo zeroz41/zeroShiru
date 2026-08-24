@@ -12,7 +12,7 @@
   const isSuperSmall = readable(!smql.matches, set => {
     const check = ({ matches }) => set(!matches)
     smql.addEventListener('change', check)
-    return () => mql.removeEventListener('change', check)
+    return () => smql.removeEventListener('change', check)
   })
 
   const lgmql = matchMedia('(min-width: 993px)')
@@ -575,7 +575,7 @@
   }
   .shelf-tab {
     background: var(--dark-color-light);
-    transition: opacity 0.15s ease 0.35s;
+    transition: opacity 0.15s ease 0.35s, background-color var(--motion) var(--ease-settle);
   }
   .shelf-tab-right {
     width: 2.6rem;

@@ -66,6 +66,7 @@ const appStubs = {
       cancelAvailability: () => {},
       remember: async () => {},
       resolve: async () => ({ hash: '', name: '', files: [] }),
+      forgetResolved: async () => {},
       onEvent: (callback) => { DEBRID.publishEvent = callback }
     }
   `,
@@ -83,7 +84,7 @@ const appStubs = {
 }
 
 const stubs = {
-  'simple-store-svelte': 'export const writable = value => { let v = value; const subs = new Set(); const store = { get value () { return v }, set value (n) { v = n; subs.forEach(fn => fn(v)) }, set (n) { store.value = n }, update (fn) { store.value = fn(v) }, subscribe (fn) { subs.add(fn); fn(v); return () => subs.delete(fn) } }; return store }',
+  'simple-store-svelte': 'export const writable = value => { let v = value; const subs = new Set(); const store = { get value () { return v }, set value (n) { v = n; subs.forEach(fn => fn(v)) }, set (n) { store.value = n }, update (fn) { store.value = fn(v) }, subscribe (fn) { subs.add(fn); fn(v); return () => subs.delete(fn) } }; return store }\nexport const readable = (value, start) => { let v = value; const subs = new Set(); let stop = null; const set = n => { v = n; subs.forEach(fn => fn(v)) }; return { get value () { return v }, subscribe (fn) { subs.add(fn); if (subs.size === 1) stop = start?.(set) || null; fn(v); return () => { subs.delete(fn); if (!subs.size && stop) { stop(); stop = null } } } } }',
   'svelte/easing': 'export const cubicOut = t => t\nexport const cubicIn = t => t',
   'js-levenshtein': 'export default () => 0',
   'svelte-sonner': `

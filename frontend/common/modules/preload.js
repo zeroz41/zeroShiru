@@ -78,8 +78,11 @@ function releasePool (root, margin, pool) {
  * before `rootMargin` is ever applied, so the margin buys nothing and work starts exactly as
  * the user arrives. Pointing the observer at the scroller instead is what lets it look ahead.
  *
- * The outermost scroller wins, so a card inside a horizontal row is measured against the page
- * it scrolls down, while the row's own clipping still keeps its off-screen cards unloaded.
+ * The nearest scroller wins. This matters for a card inside a horizontal home rail: rooting
+ * its observer at the vertical page means the rail's own overflow clips the card before the
+ * page rootMargin can look ahead horizontally, so artwork starts exactly when it enters the
+ * row and visibly pops in. Rooting at the rail lets AHEAD_IMAGES cover both directions. A
+ * section title has no nested rail above it, so it still roots at the vertical page scroller.
  *
  * @param {Element} node
  * @returns {Element | null}
@@ -102,11 +105,10 @@ function isScroller (element) {
 
 export function scrollRoot (node) {
   if (typeof getComputedStyle !== 'function') return null
-  let outermost = null
   for (let element = node?.parentElement; element; element = element.parentElement) {
-    if (isScroller(element)) outermost = element
+    if (isScroller(element)) return element
   }
-  return outermost
+  return null
 }
 
 /**

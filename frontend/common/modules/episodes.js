@@ -1,6 +1,6 @@
 import { cache, caches } from '@/modules/cache.js'
 import { codes, getRandomInt, sleep, isValidNumber } from '@/modules/util.js'
-import { printError, status, isOffline } from '@/modules/networking.js'
+import { printError, isOffline } from '@/modules/networking.js'
 import { retryWorthwhile } from '@/modules/lib/retry.js'
 import Bottleneck from 'bottleneck'
 import Debug from 'debug'
@@ -20,7 +20,6 @@ class Episodes {
     })
 
     rateLimitPromise = null
-    concurrentRequests = new Map()
 
     constructor() {
         this.limiter.on('failed', async (error, jobInfo) => {
@@ -107,11 +106,11 @@ class Episodes {
 
     async requestEpisodes(id, episode, root) {
         const page = Math.ceil(episode / 100)
-        const cachedEntry = cache.cachedEntry(caches.QUERY_EPISODES, `${id}:${page}:${root}`, status.value === 'offline')
-        if (cachedEntry) return cachedEntry
-        else if (status.value === 'offline') return
-        if (this.concurrentRequests.has(`${id}:${page}:${root}`)) return this.concurrentRequests.get(`${id}:${page}:${root}`)
-        const requestPromise = this.limiter.wrap(async () => {
+        // read-side SWR: an expired episode list paints the modal NOW — it is the same
+        // list it was yesterday — while the refetch below waits its turn behind Jikan's
+        // rate limiter. Blocking the modal on a 60-requests-a-minute API for data that
+        // was already on screen once was most of "the episode list takes forever"
+        return cache.swrRead(caches.QUERY_EPISODES, `${id}:${page}:${root}`, this.limiter.wrap(async () => {
             await this.rateLimitPromise
             debug(`Fetching Episode ${episode} for ${id} with Page ${page}`)
             let res = {}
@@ -140,17 +139,7 @@ class Episodes {
                 }
             }
             return cache.cacheEntry(caches.QUERY_EPISODES, `${id}:${page}:${root}`, {}, json, Date.now() + getRandomInt(1, 3) * 24 * 60 * 60 * 1000)
-        })().catch((error) => {
-            if (status.value === 'offline') {
-                debug(`Network offline, returning cached episode data if available`, error)
-                const cachedEntry = cache.cachedEntry(caches.QUERY_EPISODES, `${id}:${page}:${root}`, true)
-                if (cachedEntry) return cachedEntry
-            } else throw new Error(error)
-        }).finally(() => {
-            this.concurrentRequests.delete(`${id}:${page}:${root}`)
-        })
-        this.concurrentRequests.set(`${id}:${page}:${root}`, requestPromise)
-        return requestPromise
+        }))
     }
 
     checkError(error, silent) {

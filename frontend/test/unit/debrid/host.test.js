@@ -16,7 +16,8 @@ import { toast } from 'svelte-sonner'
 import {
   streamDebrid, resolveDebridFiles, replayDebridPlayback, checkDebridAvailability, cancelDebridAvailability,
   refreshDebridAvailability, testDebrid, debridAvailability, debridReleaseNames, debridChecking,
-  debridEnabled, debridTransport, debridOptions, QUEUE_WINDOW
+  debridEnabled, debridTransport, debridOptions, debridPlayback, debridStatus, boundedDebridPlay,
+  DEBRID_PLAY_DEADLINE_MS, QUEUE_WINDOW
 } from '@/modules/debrid/debrid.js'
 import { Availability } from '@/modules/debrid/availability.js'
 import { get } from 'svelte/store'
@@ -26,6 +27,17 @@ const MAGNET = `magnet:?xt=urn:btih:${HASH}`
 
 /** A host failure, shaped the way a Tauri command error arrives. */
 const failure = (kind, message = kind) => ({ kind, message })
+
+/** A request whose finish order the test controls. */
+const deferred = () => {
+  let resolve
+  let reject
+  const promise = new Promise((yes, no) => {
+    resolve = yes
+    reject = no
+  })
+  return { promise, resolve, reject }
+}
 
 const playerFile = (name = 'Show - 01.mkv') => ({
   infoHash: HASH,
@@ -47,11 +59,14 @@ function configure ({ service = 'torbox', key = 'k', mode = 'prefer', online = t
 /** What the CDN answers each probe with, reset to alive per test. See playback/probe.js. */
 let probeAnswers = []
 let probed = []
+let forgotten = []
 const realFetch = globalThis.fetch
 
 beforeEach(() => {
   toast.shown.length = 0
   files.set([])
+  debridPlayback.set(false)
+  debridStatus.set(null)
   debridAvailability.set(new Map())
   debridReleaseNames.set(new Map())
   cancelDebridAvailability()
@@ -60,12 +75,14 @@ beforeEach(() => {
   DEBRID.cancelAvailability = () => {}
   DEBRID.listAvailability = async () => ({ answers: {}, names: {} })
   DEBRID.remember = async () => {}
+  DEBRID.forgetResolved = async (...args) => { forgotten.push(args) }
   // an answer event re-arms the once-per-outage toast, so each test starts armed
   DEBRID.publishEvent({ type: 'availability', data: { hash: 'f'.repeat(40), state: 'cached' } })
   cancelDebridAvailability() // and the queued badge from that reset never lands
   // every resolve now probes its link before the play is trusted; a healthy CDN by default
   probeAnswers = []
   probed = []
+  forgotten = []
   globalThis.fetch = async url => {
     probed.push(url)
     return probeAnswers.shift() ?? { ok: true, status: 206 }
@@ -113,7 +130,102 @@ test('a resolved release reaches the player as files, and proves itself cached',
   assert.equal(await streamDebrid(MAGNET, undefined, { episode: 1 }), true)
   assert.equal(files.value.length, 1)
   assert.equal(files.value[0].url, 'https://cdn.test/Show - 01.mkv')
+  assert.match(debridStatus.value, /opening|checking/i, 'the player says what it is waiting for until its first frame arrives')
   assert.equal(debridAvailability.value.get(HASH), Availability.CACHED, 'playing it is the best cache answer there is')
+})
+
+test('a renderer deadline releases a native resolve that never settles', async () => {
+  assert.ok(DEBRID_PLAY_DEADLINE_MS <= 30_000, 'a play click cannot wait on IPC for a minute')
+  let expire
+  const pending = boundedDebridPlay(new Promise(() => {}), {
+    ms: 25_000,
+    schedule: callback => { expire = callback; return 1 },
+    cancel: () => {}
+  })
+  expire()
+  await assert.rejects(pending, error => error?.kind === 'timeout' && /25 seconds/i.test(error.message))
+})
+
+test('a pending resolve exposes immediate progress instead of looking like a dead click', async () => {
+  const host = deferred()
+  DEBRID.resolve = () => host.promise
+  const playing = streamDebrid(MAGNET, HASH, { episode: 1 })
+  assert.equal(debridPlayback.value, true)
+  assert.match(debridStatus.value, /resolving cached release/i)
+  host.resolve({ hash: HASH, name: 'Show', files: [playerFile()] })
+  assert.equal(await playing, true)
+})
+
+/** Runs the event loop until `predicate` holds, so a test can watch for something that
+ * must happen WITHOUT the thing it is waiting on being what unblocks it. */
+const until = async (predicate, message) => {
+  for (let tick = 0; tick < 50; tick++) {
+    if (predicate()) return
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+  assert.fail(message)
+}
+
+test('the player receives the link while the warm-up probe is still reading', async () => {
+  const chunk = deferred()
+  globalThis.fetch = async url => {
+    probed.push(url)
+    return {
+      ok: true,
+      status: 206,
+      body: {
+        getReader: () => ({
+          read: () => chunk.promise,
+          cancel: async () => {}
+        })
+      }
+    }
+  }
+
+  const playing = streamDebrid(MAGNET, undefined, { episode: 1 })
+  // the probe has not delivered a byte yet and must not be in the way: it exists to
+  // overlap the warm-up with filename parsing, so gating the link on it simply adds its
+  // whole duration to every start. See the warning in modules/playback/probe.js
+  await until(() => files.value.length === 1, 'the player was made to wait for the probe before it could start')
+
+  chunk.resolve({ done: false, value: new Uint8Array(262_144) })
+  assert.equal(await playing, true)
+  assert.equal(files.value.length, 1)
+})
+
+test('a late older resolve cannot replace the newer episode in the player', async () => {
+  const older = deferred()
+  const newer = deferred()
+  DEBRID.resolve = async (_service, _key, _magnet, episode) => episode === 1 ? older.promise : newer.promise
+
+  const firstPlay = streamDebrid(MAGNET, undefined, { episode: 1 })
+  const latestPlay = streamDebrid(`magnet:?xt=urn:btih:${'b'.repeat(40)}`, undefined, { episode: 2 })
+
+  newer.resolve({ hash: 'b'.repeat(40), name: 'Show', files: [playerFile('Show - 02.mkv')] })
+  assert.equal(await latestPlay, true)
+  assert.equal(files.value[0].name, 'Show - 02.mkv')
+
+  older.resolve({ hash: HASH, name: 'Show', files: [playerFile('Show - 01.mkv')] })
+  assert.equal(await firstPlay, true, 'an obsolete play is consumed instead of falling through to torrents')
+  assert.equal(files.value[0].name, 'Show - 02.mkv', 'the last click owns the player regardless of network finish order')
+  assert.equal(debridPlayback.value, true)
+})
+
+test('a late failure from an older play cannot toast or hand the newer play to torrents', async () => {
+  const older = deferred()
+  const newer = deferred()
+  DEBRID.resolve = async (_service, _key, _magnet, episode) => episode === 1 ? older.promise : newer.promise
+
+  const firstPlay = streamDebrid(MAGNET, undefined, { episode: 1 })
+  const latestPlay = streamDebrid(`magnet:?xt=urn:btih:${'b'.repeat(40)}`, undefined, { episode: 2 })
+  newer.resolve({ hash: 'b'.repeat(40), name: 'Show', files: [playerFile('Show - 02.mkv')] })
+  await latestPlay
+  older.reject(failure('timeout', 'old request timed out'))
+
+  assert.equal(await firstPlay, true, 'stale failures are handled silently')
+  assert.equal(toast.shown.length, 0)
+  assert.equal(files.value[0].name, 'Show - 02.mkv')
+  assert.equal(debridPlayback.value, true, 'the obsolete failure cannot release ownership')
 })
 
 test('the episode being played is passed to the core, which picks it out of the pack', async () => {
@@ -156,10 +268,24 @@ test('in only mode the same failures stop, and say why', async () => {
 })
 
 test('an error that proves nothing about the release still lets torrents through', async () => {
-  DEBRID.resolve = async () => { throw failure('timeout', 'request timed out after 30000ms') }
+  let attempts = 0
+  DEBRID.resolve = async () => { attempts++; throw failure('timeout', 'request timed out after 30000ms') }
   assert.equal(await streamDebrid(MAGNET), false)
+  assert.equal(attempts, 2, 'a timeout gets one bounded resolve retry before the click gives up')
   assert.equal(debridAvailability.value.has(HASH), false, 'a timeout is not an answer about the release')
   assert.match(toast.shown[0].description, /timed out/)
+})
+
+test('a resolve timeout that heals on the bounded retry plays without another click', async () => {
+  let attempts = 0
+  DEBRID.resolve = async () => {
+    if (++attempts === 1) throw failure('timeout', 'request timed out after 10000ms')
+    return { hash: HASH, name: 'Show', files: [playerFile()] }
+  }
+  assert.equal(await streamDebrid(MAGNET), true)
+  assert.equal(attempts, 2)
+  assert.equal(files.value.length, 1)
+  assert.equal(toast.shown.length, 0)
 })
 
 // --- the resolved link is probed before the play is trusted ---
@@ -176,6 +302,8 @@ test('a resolved link that never answers falls back to torrents instead of spinn
   assert.equal(files.value.length, 0, 'the player must not be left holding files that will never play')
   assert.match(toast.shown[0].description, /not answering/)
   assert.equal(probed.length, 2, 'one retry: a single flap is not worth abandoning the stream over')
+  await until(() => forgotten.length === 1, 'the dead direct link was not evicted from the host cache')
+  assert.deepEqual(forgotten[0], ['torbox', 'k', HASH])
 }, 10_000)
 
 test('in only mode a dead link stops and says so, fast, instead of spinning forever', async () => {

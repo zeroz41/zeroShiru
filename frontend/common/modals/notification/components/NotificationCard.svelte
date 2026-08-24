@@ -125,29 +125,29 @@
       <p class='font-size-10 text-muted my-0'>{since(new Date(notification.timestamp * 1_000))}</p>
       <div class='badge-container'>
         {#if announcement}
-          <span class='badge text-dark bg-duodenary mr-5'>Announcement</span>
+          <span class='badge wash mr-5' style='--badge-color: var(--duodenary-color)'>Announcement</span>
         {:else if notification.format === 'MOVIE'}
-          <span class='badge text-dark bg-undenary mr-5'>Movie</span>
+          <span class='badge wash mr-5' style='--badge-color: var(--undenary-color)'>Movie</span>
         {:else if !isValidNumber(notification.season)}
-          {#if delayed}<span class='badge text-dark bg-denary mr-5'>Delayed</span>{/if}
-          <span class='badge text-dark bg-undenary mr-5'>
+          {#if delayed}<span class='badge wash mr-5' style='--badge-color: var(--denary-color)'>Delayed</span>{/if}
+          <span class='badge wash mr-5' style='--badge-color: var(--undenary-color)'>
             {notification.episode != null && (Array.isArray(notification.episode) || isValidNumber(notification.episode))
               ? `Episode ${Array.isArray(notification.episode) ? `${Number(notification.episode[0])} ~ ${Number(notification.episode[1])}` : Number(notification.episode)}`
               : 'Batch'}
           </span>
         {:else if isValidNumber(notification.season)}
-          <span class='badge text-dark bg-undenary mr-5'>Season {notification.season}</span>
+          <span class='badge wash mr-5' style='--badge-color: var(--undenary-color)'>Season {notification.season}</span>
         {/if}
         {#if notification.dub}
-          <span class='badge text-dark bg-senary'>Dub</span>
+          <span class='badge wash' style='--badge-color: var(--senary-color)'>Dub</span>
         {:else}
-          <span class='badge text-dark bg-septenary'>Sub</span>
+          <span class='badge wash' style='--badge-color: var(--septenary-color)'>Sub</span>
         {/if}
       </div>
     </div>
     <div class='position-absolute bd-highlight rounded-5 opacity-transition-hack' style='left: -.5rem' />
   </div>
-  <div class='prompt position-absolute w-full h-full z-40 d-none flex-column align-items-center' class:d-flex={prompt}>
+  <div class='prompt position-absolute z-40 d-none flex-column align-items-center' class:d-flex={prompt}>
     <p class='mx-20 font-scale-20 text-white text-center mt-auto mb-0'>
       {#if !media?.mediaListEntry?.progress}
         You Haven't Watched Any Episodes Yet!
@@ -170,11 +170,20 @@
     margin-right: 8rem !important;
   }
   .scale {
-    transition: transform .2s ease;
-    will-change: transform;
+    /* the `scale` property, not a transform, so nothing that positions itself with a
+       transform is claimed — and no standing will-change layer. See FullCard */
+    transition: scale var(--motion) var(--ease-settle);
   }
-  .scale:hover {
-    transform: scale(1.02);
+  @media (hover: hover) and (pointer: fine) {
+    .scale:hover {
+      scale: 1.02;
+    }
+  }
+  .wash {
+    border: none;
+    background: color-mix(in srgb, var(--badge-color) 16%, transparent);
+    box-shadow: inset 0 0 0 .1rem color-mix(in srgb, var(--badge-color) 35%, transparent);
+    color: color-mix(in srgb, var(--badge-color) 65%, var(--highlight-color));
   }
   .font-size-10 {
     font-size: 1rem;
@@ -214,9 +223,8 @@
   }
 
   .prompt {
-    margin-left: -.9rem !important;
-    width: 100.6% !important;
-    border-radius: .62rem;
+    inset: 0;
+    border-radius: .55rem;
     background-color: hsla(var(--black-color-hsl), .8) !important;
   }
 </style>

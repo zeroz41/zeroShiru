@@ -38,6 +38,16 @@
   $: scrollThreshold = pageThreshold(container)
 
   $: if ($key) $items = []
+
+  /** A wholesale replacement of the search object — a rail title click, a file-edit
+   * search — restarts the grid. The page stays mounted across navigation now, so a new
+   * search can no longer count on a remount to trigger its load; the text inputs are
+   * unaffected because they mutate the same object and reset the key themselves. */
+  let activeSearch = $search
+  $: if ($search !== activeSearch) {
+    activeSearch = $search
+    $key = {}
+  }
   $: $clearNow = $search.clearNow
   $: loadTillFull($key)
 
@@ -150,9 +160,9 @@
   })
 </script>
 
-<div bind:this={container} class='bg-dark h-full w-full overflow-y-scroll d-flex flex-wrap flex-row root overflow-x-hidden justify-content-center align-content-start' class:mt-safe-area={!$search.fileEdit && !$status.match(/offline/i)} class:bg-very-dark={$search.fileEdit} use:trackResize use:trackMutations on:scroll={handleScroll}>
+<div bind:this={container} class='search-page h-full w-full overflow-y-scroll d-flex flex-wrap flex-row root overflow-x-hidden justify-content-center align-content-start' class:mt-safe-area={!$search.fileEdit && !$status.match(/offline/i)} class:bg-very-dark={$search.fileEdit} use:trackResize use:trackMutations on:scroll={handleScroll}>
   <SearchBar bind:search={$search} clearNow={$clearNow} on:input={update} />
-  <div bind:this={keyContainer} class='w-full d-grid d-md-flex flex-wrap flex-row px-20 px-md-40 justify-content-center align-content-start pt-10'>
+  <div bind:this={keyContainer} class='results-surface w-full d-grid d-md-flex flex-wrap flex-row px-20 px-md-40 justify-content-center align-content-start pt-10'>
     {#key $key}
       {#each ($items?.length ? $items : fakecards) as card}
         <Card {card} variables={{...$search}} />
@@ -165,6 +175,13 @@
 </div>
 
 <style>
+  .search-page { background: transparent; }
+  .results-surface {
+    min-height: 65%;
+    border-top: .1rem solid var(--surface-border);
+    border-radius: 2.4rem 2.4rem 0 0;
+    background: linear-gradient(180deg, var(--surface-highlight), transparent 30rem);
+  }
   .d-grid:has(.item.small-card) {
     grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)) !important;
   }

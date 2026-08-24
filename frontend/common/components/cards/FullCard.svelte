@@ -1,11 +1,11 @@
 <script>
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount } from 'svelte'
   import { airingAt, getAiringInfo, formatMap, getMediaMaxEp, statusColorMap } from '@/modules/anime/anime.js'
   import { click } from '@/modules/lib/click.js'
   import SmartImage from '@/components/visual/SmartImage.svelte'
   import AudioLabel from '@/components/AudioLabel.svelte'
   import { anilistClient, currentYear } from '@/modules/providers/anilist/anilist.js'
-  import { baseFontSize, resizeObserver } from '@/modules/util.js'
+  import { baseFontSize, resizeObserver, minuteTick, railCover } from '@/modules/util.js'
   import { settings } from '@/modules/settings.js'
   import { mediaCache, fromCache } from '@/modules/cache.js'
   import { modal } from '@/modules/navigation.js'
@@ -35,22 +35,20 @@
     imageWidth = width
   })
 
-  let airingInterval
   let _airingAt = null
-  $: airingInfo = getAiringInfo(_airingAt)
+  // $minuteTick only forces the re-derive: the shared clock, not an interval per card
+  $: airingInfo = ($minuteTick, getAiringInfo(_airingAt))
   onMount(() => {
     _airingAt = media && _variables?.scheduleList && airingAt(media, _variables)
-    if (_variables?.scheduleList) airingInterval = setInterval(() => airingInfo = getAiringInfo(_airingAt), 60_000)
   })
-  onDestroy(() => clearTimeout(airingInterval))
 </script>
 
 <div class='d-flex px-md-20 px-sm-10 px-5 py-10 position-relative justify-content-center full-card-ct' use:click={viewMedia}>
-  <div class='card load-in m-0 p-0 pointer full-card rounded lift' class:airing={airingInfo?.episode.match(/out for/i)} style:--color={media.coverImage?.color || 'var(--tertiary-color)'} style:--lift-color={media.coverImage?.color || 'var(--tertiary-color)'}>
+  <div class='card m-0 p-0 pointer full-card rounded lift' class:airing={airingInfo?.episode.match(/out for/i)} style:--color={media.coverImage?.color || 'var(--tertiary-color)'} style:--lift-color={media.coverImage?.color || 'var(--tertiary-color)'}>
     <div class='row h-full'>
       <div use:trackWidth class='img-col d-inline-block position-relative col-3 col-md-4'>
         <span class='airing-badge rounded-10 font-weight-semi-bold text-light bg-success' class:d-none={!airingInfo?.episode?.match(/out for/i)}>AIRING</span>
-        <SmartImage class='cover-img w-full h-270' color={media.coverImage?.color || 'var(--tertiary-color)'} images={[media.coverImage.extraLarge, media.coverImage?.medium, './no_image_cover.jpg']}/>
+        <SmartImage eager={!!_variables?.section} class='cover-img w-full h-270' color={media.coverImage?.color || 'var(--tertiary-color)'} images={[...railCover(media.coverImage), './no_image_cover.jpg']}/>
         {#if !_variables?.scheduleList}
           <AudioLabel {media} style='transform: scaleY(-1) scale({scale}) !important; transform-origin: right !important; width: {100 / scale}% !important; bottom: {.4 * scale}rem !important;' />
         {/if}
@@ -128,20 +126,24 @@
 </div>
 
 <style>
+  /* the ring is drawn once and then only moved and faded — an animated box-shadow is
+     repainted by the CPU every frame, forever, per airing card. Same treatment as
+     SmallCard. */
   .airing::before {
     content: '';
     position: absolute;
     inset: -0.4rem -1rem;
     border-radius: .4rem;
     pointer-events: none;
+    box-shadow: 0 0 0 .7rem var(--dark-color);
     animation: airing-pulse 7.5s infinite;
-    will-change: box-shadow, opacity;
+    will-change: transform, opacity;
   }
   @keyframes airing-pulse {
-    0%   { box-shadow: 0 0 0 0 var(--success-color); opacity: 0.9; }
-    25%  { box-shadow: 0 0 0 .7rem var(--dark-color); opacity: 0.6; }
-    40% { box-shadow: 0 0 0 0 var(--dark-color); opacity: 0.4; }
-    100% { box-shadow: 0 0 0 0 var(--dark-color); opacity: 0; }
+    0%   { transform: scale(.97); opacity: 0.9; }
+    25%  { transform: scale(1); opacity: 0.6; }
+    40%  { transform: scale(1); opacity: 0.4; }
+    100% { transform: scale(1.01); opacity: 0; }
   }
   .airing-badge {
     position: absolute;

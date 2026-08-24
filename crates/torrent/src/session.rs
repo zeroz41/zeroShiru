@@ -12,8 +12,11 @@ use librqbit::{AddTorrent, AddTorrentOptions, ManagedTorrent, Session};
 use serde::{Deserialize, Serialize};
 use shiru_domain::{parse_hash, to_magnet};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Mutex;
 
@@ -473,15 +476,51 @@ impl TorrentSession {
         let Some(url) = current.get("url").and_then(|value| value.as_str()).map(String::from) else {
             return self.notify("error", "External playback failed: no stream URL");
         };
-        let player = self.state.lock().await.settings.player_path.clone().unwrap_or_default();
-        if player.is_empty() {
-            return self.notify("error", "External playback failed: no player configured");
-        }
+        let configured = self.state.lock().await.settings.player_path.clone().unwrap_or_default();
+        let Some(player) = external_player(&configured, std::env::var_os("PATH").as_deref()) else {
+            return self.notify(
+                "error",
+                "External playback failed: install mpv or choose a player in Settings → Player",
+            );
+        };
+        let title = external_media_title(&current);
+        let mpv = is_mpv(&player);
         let session = self.clone();
         tokio::spawn(async move {
             let started = std::time::Instant::now();
-            match tokio::process::Command::new(&player).arg(&url).spawn() {
+            let mut command = tokio::process::Command::new(&player);
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+            if mpv {
+                // A debrid URL is a bearer credential. Putting it in argv leaks it to
+                // process viewers, and letting mpv derive its default media title leaks it
+                // in the title bar. Feed a one-line playlist over stdin and force a title
+                // made only from the release name instead.
+                command
+                    .arg(format!("--force-media-title={title}"))
+                    .arg("--playlist=-")
+                    .stdin(Stdio::piped());
+            } else {
+                // Arbitrary configured players retain the historical one-argument
+                // contract; only mpv has a stable stdin-playlist interface we can rely on.
+                command.arg(&url).stdin(Stdio::null());
+            }
+            match command.spawn() {
                 Ok(mut child) => {
+                    if mpv {
+                        let write = async {
+                            let input = child.stdin.as_mut().ok_or_else(|| {
+                                std::io::Error::other("mpv playlist input was unavailable")
+                            })?;
+                            input.write_all(url.as_bytes()).await?;
+                            input.write_all(b"\n").await?;
+                            input.shutdown().await
+                        }
+                        .await;
+                        if let Err(error) = write {
+                            let _ = child.kill().await;
+                            return session.notify("error", format!("Failed to send the stream to mpv: {error}"));
+                        }
+                    }
                     session.emit(SessionEvent::ExternalReady);
                     let _ = child.wait().await;
                     session.emit(SessionEvent::ExternalWatched(started.elapsed().as_secs()));
@@ -874,6 +913,58 @@ impl TorrentSession {
     }
 }
 
+/// Resolve the user's configured executable, or a native Linux player that can
+/// consume a ranged MKV URL without WebKitGTK in the middle. Configured values
+/// retain the old behavior: they may be absolute paths or commands found by the OS.
+fn external_player(configured: &str, path: Option<&OsStr>) -> Option<OsString> {
+    if !configured.trim().is_empty() {
+        return Some(OsString::from(configured));
+    }
+    #[cfg(target_os = "linux")]
+    for name in ["mpv", "vlc", "gst-play-1.0", "ffplay"] {
+        if let Some(player) = find_on_path(name, path) {
+            return Some(player.into_os_string());
+        }
+    }
+    None
+}
+
+fn is_mpv(player: &OsStr) -> bool {
+    Path::new(player)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .map(|name| name.eq_ignore_ascii_case("mpv") || name.eq_ignore_ascii_case("mpv.exe"))
+        .unwrap_or(false)
+}
+
+fn external_media_title(current: &serde_json::Value) -> String {
+    let raw = current
+        .get("name")
+        .or_else(|| current.get("torrent_name"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    let clean: String = raw.chars().filter(|character| !character.is_control()).take(160).collect();
+    let clean = clean.trim();
+    if clean.is_empty() {
+        "zeroShiru".into()
+    } else {
+        format!("zeroShiru — {clean}")
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn find_on_path(name: &str, path: Option<&OsStr>) -> Option<PathBuf> {
+    std::env::split_paths(path?).map(|dir| dir.join(name)).find(|candidate| is_executable(candidate))
+}
+
+#[cfg(target_os = "linux")]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
 fn shape_player_file(info_hash: &str, torrent_name: &str, path: &str, size: u64, url: String) -> PlayerFile {
     let relative = path.trim_start_matches('/');
     let name = relative.rsplit('/').next().unwrap_or(relative).to_string();
@@ -1145,6 +1236,33 @@ mod tests {
         for key in ["infoHash", "fileHash", "torrent_name", "name", "type", "size", "path", "url"] {
             assert!(json.get(key).is_some(), "missing wire field {key}");
         }
+    }
+
+    #[test]
+    fn external_player_honors_configuration_and_has_an_honest_missing_fallback() {
+        assert_eq!(
+            external_player("/opt/my player", None),
+            Some(OsString::from("/opt/my player")),
+        );
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            external_player("", Some(OsStr::new("/definitely/not/a/player/path"))),
+            None,
+        );
+    }
+
+    #[test]
+    fn mpv_transport_keeps_signed_urls_out_of_argv_and_window_titles() {
+        assert!(is_mpv(OsStr::new("/usr/bin/mpv")));
+        assert!(!is_mpv(OsStr::new("/usr/bin/vlc")));
+        let current = serde_json::json!({
+            "name": "Episode 2.mkv\nignored",
+            "url": "https://example.invalid/file?token=do-not-display"
+        });
+        let title = external_media_title(&current);
+        assert_eq!(title, "zeroShiru — Episode 2.mkvignored");
+        assert!(!title.contains("token"));
+        assert!(!title.contains("do-not-display"));
     }
 
     #[test]

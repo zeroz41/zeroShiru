@@ -8,7 +8,7 @@ import { malDubs } from '@/modules/anime/animedubs.js'
 import { isSubbedProgress, getMediaMaxEp } from '@/modules/anime/anime.js'
 import { getRandomInt, sleep, debounce, uniqueStore, normalizeASCII, codes } from '@/modules/util.js'
 import { printError, status } from '@/modules/networking.js'
-import { cache, caches, mediaCache } from '@/modules/cache.js'
+import { cache, caches, mediaCache, canonicalKey } from '@/modules/cache.js'
 import { MutationQueue } from '@/modules/providers/lib/mutationqueue.js'
 import { malClient } from '@/modules/providers/myanimelist/myanimelist.js'
 import { queueNotification } from '@/modules/notification/manager.js'
@@ -72,6 +72,7 @@ tags {
 isFavourite,
 coverImage {
   extraLarge,
+  large,
   medium,
   color
 },
@@ -441,7 +442,7 @@ class AnilistClient {
     variables.id = variables.userID || this.userID?.viewer?.data?.Viewer?.id
     const userSort = variables.sort || 'UPDATED_TIME_DESC'
     if (!variables.sort || Helper.isUserSort(variables)) variables.sort = 'UPDATED_TIME_DESC'
-    const cachedEntry = !ignoreCache && this.sortListEntries(userSort, await cache.cachedEntry(caches.USER_LISTS, JSON.stringify(variables), ignoreExpiry || status.value.match(/offline/i)))
+    const cachedEntry = !ignoreCache && this.sortListEntries(userSort, await cache.cachedEntry(caches.USER_LISTS, canonicalKey(variables), ignoreExpiry || status.value.match(/offline/i)))
     if (cachedEntry) return cachedEntry
 
     this.mutationQueue.isFetchingList = true
@@ -470,7 +471,7 @@ class AnilistClient {
       }
     }
 
-    const result = await cache.cacheEntry(caches.USER_LISTS, JSON.stringify(variables), variables, res, Date.now() + 14 * 60 * 1_000) // expire after 14 minutes as this will be re-cached by our 15-minute interval.
+    const result = await cache.cacheEntry(caches.USER_LISTS, canonicalKey(variables), variables, res, Date.now() + 14 * 60 * 1_000) // expire after 14 minutes as this will be re-cached by our 15-minute interval.
     this.mutationQueue.isFetchingList = false
     return this.sortListEntries(userSort, result)
   }
@@ -604,7 +605,7 @@ class AnilistClient {
           }
         }
       })
-      cache.cacheEntry(caches.USER_LISTS, JSON.stringify({ sort: 'UPDATED_TIME_DESC', id: this.userID?.viewer?.data?.Viewer?.id }), { sort: 'UPDATED_TIME_DESC', id: this.userID?.viewer?.data?.Viewer?.id }, res, (await cache.cachedEntry(caches.USER_LISTS, JSON.stringify({ sort: 'UPDATED_TIME_DESC', id: this.userID?.viewer?.data?.Viewer?.id })))?.expiry || (Date.now() + 14 * 60 * 1_000))
+      cache.cacheEntry(caches.USER_LISTS, canonicalKey({ sort: 'UPDATED_TIME_DESC', id: this.userID?.viewer?.data?.Viewer?.id }), { sort: 'UPDATED_TIME_DESC', id: this.userID?.viewer?.data?.Viewer?.id }, res, (await cache.cachedEntry(caches.USER_LISTS, canonicalKey({ sort: 'UPDATED_TIME_DESC', id: this.userID?.viewer?.data?.Viewer?.id })))?.expiry || (Date.now() + 14 * 60 * 1_000))
       this.userLists.value = res
     })
     this.#listPromise = result.catch(() => {})
@@ -623,7 +624,7 @@ class AnilistClient {
           }
         }
       })
-      cache.cacheEntry(caches.USER_LISTS, JSON.stringify({ sort: 'UPDATED_TIME_DESC', id: this.userID?.viewer?.data?.Viewer?.id }), { sort: 'UPDATED_TIME_DESC', id: this.userID?.viewer?.data?.Viewer?.id }, res, (await cache.cachedEntry(caches.USER_LISTS, JSON.stringify({ sort: 'UPDATED_TIME_DESC', id: this.userID?.viewer?.data?.Viewer?.id })))?.expiry || (Date.now() + 14 * 60 * 1_000))
+      cache.cacheEntry(caches.USER_LISTS, canonicalKey({ sort: 'UPDATED_TIME_DESC', id: this.userID?.viewer?.data?.Viewer?.id }), { sort: 'UPDATED_TIME_DESC', id: this.userID?.viewer?.data?.Viewer?.id }, res, (await cache.cachedEntry(caches.USER_LISTS, canonicalKey({ sort: 'UPDATED_TIME_DESC', id: this.userID?.viewer?.data?.Viewer?.id })))?.expiry || (Date.now() + 14 * 60 * 1_000))
       this.userLists.value = res
     })
     this.#listPromise = result.catch(() => {})
@@ -712,7 +713,7 @@ class AnilistClient {
     if (variables.search) variables.search = normalizeASCII(variables.search) // stupid fix because AniList search sucks.
 
     debug(`Searching ${JSON.stringify(variables)}`)
-    const cachedEntry = cache.cachedEntry(caches.QUERY_SEARCH, JSON.stringify(variables), status.value.match(/offline/i))
+    const cachedEntry = cache.cachedEntry(caches.QUERY_SEARCH, canonicalKey(variables), status.value.match(/offline/i))
     if (cachedEntry) return cachedEntry
     const query = /* js */` 
     query($page: Int, $perPage: Int, $sort: [MediaSort], $search: String, $onList: Boolean, $status: [MediaStatus], $status_not: [MediaStatus], $season: MediaSeason, $year: Int, $genre: [String], $genre_not: [String], $tag: [String], $tag_not: [String], $format: [MediaFormat], $format_not: [MediaFormat], $id_not: [Int], $idMal_not: [Int], $id: [Int], $idMal: [Int], $isAdult: Boolean) {
@@ -734,13 +735,13 @@ class AnilistClient {
       }
     })()
 
-    return cache.cacheEntry(caches.QUERY_SEARCH, JSON.stringify(variables), { ...variables, ...(malClient.userID ? { fillLists: malClient.userLists.value } : {}) }, request, Date.now() + getRandomInt(75, 100) * 60 * 1_000)
+    return cache.cacheEntry(caches.QUERY_SEARCH, canonicalKey(variables), { ...variables, ...(malClient.userID ? { fillLists: malClient.userLists.value } : {}) }, request, Date.now() + getRandomInt(75, 100) * 60 * 1_000)
   }
 
   searchIDSingle(variables) {
     variables.sort = variables.sort || 'OMIT'
     debug(`Searching for ID: ${variables?.id || variables?.idMal}`)
-    const cachedEntry = cache.cachedEntry(caches.QUERY_SEARCH_IDS, JSON.stringify(variables), status.value.match(/offline/i))
+    const cachedEntry = cache.cachedEntry(caches.QUERY_SEARCH_IDS, canonicalKey(variables), status.value.match(/offline/i))
     if (cachedEntry) return cachedEntry
     const query = /* js */` 
     query($id: Int, $idMal: Int) { 
@@ -757,7 +758,7 @@ class AnilistClient {
       }
     })()
 
-    return cache.cacheEntry(caches.QUERY_SEARCH_IDS, JSON.stringify(variables), { ...variables, ...(malClient.userID ? { fillLists: malClient.userLists.value } : {}) }, request, Date.now() + getRandomInt(80, 100) * 60 * 1_000)
+    return cache.cacheEntry(caches.QUERY_SEARCH_IDS, canonicalKey(variables), { ...variables, ...(malClient.userID ? { fillLists: malClient.userLists.value } : {}) }, request, Date.now() + getRandomInt(80, 100) * 60 * 1_000)
   }
 
   /** returns {import('./al.d.ts').PagedQuery<{media: import('./al.d.ts').Media[]}>} */
@@ -769,7 +770,7 @@ class AnilistClient {
     if (variables.search) variables.search = normalizeASCII(variables.search) // stupid fix because AniList search sucks.
 
     debug(`Searching for IDs ${JSON.stringify(variables)}`)
-    const cachedEntry = !variables.skipCache && cache.cachedEntry(caches.QUERY_SEARCH_IDS, JSON.stringify(variables), status.value.match(/offline/i))
+    const cachedEntry = !variables.skipCache && cache.cachedEntry(caches.QUERY_SEARCH_IDS, canonicalKey(variables), status.value.match(/offline/i))
     if (cachedEntry) return cachedEntry
     const query = /* js */` 
     query($id: [Int], $idMal: [Int], $id_not: [Int], $page: Int, $perPage: Int, $status: [MediaStatus], $onList: Boolean, $sort: [MediaSort], $search: String, $season: MediaSeason, $year: Int, $genre: [String], $genre_not: [String], $tag: [String], $tag_not: [String], $format: [MediaFormat], $isAdult: Boolean) { 
@@ -791,7 +792,7 @@ class AnilistClient {
       }
     })()
 
-    return cache.cacheEntry(caches.QUERY_SEARCH_IDS, JSON.stringify(variables), { ...variables, ...(malClient.userID ? { fillLists: malClient.userLists.value } : {}) }, request, Date.now() + getRandomInt(24, 30) * 60 * 1_000)
+    return cache.cacheEntry(caches.QUERY_SEARCH_IDS, canonicalKey(variables), { ...variables, ...(malClient.userID ? { fillLists: malClient.userLists.value } : {}) }, request, Date.now() + getRandomInt(24, 30) * 60 * 1_000)
   }
 
   /** returns {import('./al.d.ts').PagedQuery<{media: import('./al.d.ts').Media[]}>} */
@@ -800,7 +801,7 @@ class AnilistClient {
     if (settings.value.adult === 'none') variables.isAdult = false
     if (settings.value.adult !== 'hentai' && (!variables.genre_not || !variables.genre_not.includes('Hentai'))) variables.genre_not = [ ...(variables.genre_not ? variables.genre_not : []), 'Hentai' ]
     debug(`Searching for (ALL) IDs ${JSON.stringify(variables)}`)
-    const cachedEntry = !variables.skipCache && cache.cachedEntry(caches.QUERY_SEARCH_IDS, JSON.stringify(variables), status.value.match(/offline/i))
+    const cachedEntry = !variables.skipCache && cache.cachedEntry(caches.QUERY_SEARCH_IDS, canonicalKey(variables), status.value.match(/offline/i))
     if (cachedEntry) return cachedEntry
     let fetchedIDS = []
     let currentPage = 1
@@ -815,7 +816,7 @@ class AnilistClient {
       if (!res?.data?.Page.pageInfo.hasNextPage) break
       currentPage++
     }
-    return cache.cacheEntry(caches.QUERY_SEARCH_IDS, JSON.stringify(variables), { ...variables, ...(malClient.userID ? { fillLists: malClient.userLists.value } : {}) }, ({ ...(failedRes || failedRes?.errors ? {errors: failedRes?.errors ? failedRes.errors : failedRes} : {}), data: { Page: {  pageInfo: { hasNextPage: false }, media: fetchedIDS } } }), Date.now() + getRandomInt(34, 46) * 60 * 1_000)
+    return cache.cacheEntry(caches.QUERY_SEARCH_IDS, canonicalKey(variables), { ...variables, ...(malClient.userID ? { fillLists: malClient.userLists.value } : {}) }, ({ ...(failedRes || failedRes?.errors ? {errors: failedRes?.errors ? failedRes.errors : failedRes} : {}), data: { Page: {  pageInfo: { hasNextPage: false }, media: fetchedIDS } } }), Date.now() + getRandomInt(34, 46) * 60 * 1_000)
   }
 
   /** @returns {Promise<import('./al.d.ts').PagedQuery<{ airingSchedules: { airingAt: number, episode: number }[]}>>} */
@@ -838,7 +839,7 @@ class AnilistClient {
   /** @returns {Promise<import('./al.d.ts').Query<{ AiringSchedule: { airingAt: number }}>>} */
   episodeDate(variables) {
     debug(`Searching for episode date: ${variables.id}, ${variables.ep}`)
-    const cachedEntry = cache.cachedEntry(caches.QUERY_EPISODES, JSON.stringify(variables), status.value.match(/offline/i))
+    const cachedEntry = cache.cachedEntry(caches.QUERY_EPISODES, canonicalKey(variables), status.value.match(/offline/i))
     if (cachedEntry) return cachedEntry
     const query = /* js */`
       query($id: Int, $ep: Int) {
@@ -846,13 +847,13 @@ class AnilistClient {
           airingAt
         }
       }`
-    return cache.cacheEntry(caches.QUERY_EPISODES, JSON.stringify(variables), variables, this.alRequest(query, variables), Date.now() + getRandomInt(90, 100) * 60 * 1_000)
+    return cache.cacheEntry(caches.QUERY_EPISODES, canonicalKey(variables), variables, this.alRequest(query, variables), Date.now() + getRandomInt(90, 100) * 60 * 1_000)
   }
 
   /** @returns {Promise<import('./al.d.ts').PagedQuery<{ mediaList: import('./al.d.ts').Following[]}>>} */
   following(variables) {
     debug('Getting following')
-    const cachedEntry = cache.cachedEntry(caches.QUERY_FOLLOWING, JSON.stringify(variables), status.value.match(/offline/i))
+    const cachedEntry = cache.cachedEntry(caches.QUERY_FOLLOWING, canonicalKey(variables), status.value.match(/offline/i))
     if (cachedEntry) return cachedEntry
     const query = /* js */`
       query($id: Int) {
@@ -892,7 +893,7 @@ class AnilistClient {
           }
         }
       }`
-    return cache.cacheEntry(caches.QUERY_FOLLOWING, JSON.stringify(variables), variables, this.alRequest(query, variables), Date.now() + getRandomInt(200, 300) * 60 * 1_000)
+    return cache.cacheEntry(caches.QUERY_FOLLOWING, canonicalKey(variables), variables, this.alRequest(query, variables), Date.now() + getRandomInt(200, 300) * 60 * 1_000)
   }
 
   /** @returns {Promise<import('./al.d.ts').Query<{Media: import('./al.d.ts').Media}>>} */

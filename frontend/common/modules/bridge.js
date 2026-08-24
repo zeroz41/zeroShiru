@@ -150,6 +150,8 @@ const debridDefaults = {
   remember: noopAsyncVoid,
   /** magnet -> player-ready files; `episode` picks the right one out of a pack */
   resolve: async (service, apiKey, magnet, episode) => ({ hash: '', name: '', files: [] }),
+  /** invalidate direct links after the byte probe proves one dead */
+  forgetResolved: noopAsyncVoid,
   /** fires per watch event as it happens, each carrying the request id of its watch */
   onEvent: noopVoid
 }

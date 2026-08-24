@@ -95,6 +95,15 @@ export async function probeStream (url, { fetcher = globalThis.fetch?.bind(globa
           received += value?.byteLength ?? value?.length ?? 0
         }
       } finally {
+        // NEVER await this, and never await anything between here and the abort below.
+        // The reasoning that keeps producing the opposite ("finish releasing the range
+        // before WebKit opens its own") is seductive and wrong, and it has now cost two
+        // separate outages: the identical edit in debrid/metadata.js on 2026-08-22 left
+        // the user unable to play anything at all, and this one starved every debrid
+        // start at readyState=0 while the probe itself kept reporting the link alive in
+        // ~600ms. Both times every suite stayed green — a mock body lets go instantly
+        // where an open-ended range against a real CDN need not — so this is measured
+        // behaviour, not a theory. Change it only with evidence from a real link.
         reader.cancel?.().catch?.(() => {})
       }
       // a body shorter than the mark that properly ENDED is delivery (a tiny file); only

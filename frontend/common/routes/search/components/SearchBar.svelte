@@ -176,7 +176,7 @@
   }
 </script>
 
-<form class='container-fluid px-md-10 bg-dark position-sticky top-0 search-container z-40' class:px-10={search.fileEdit} class:px-md-50={!search.fileEdit} class:pt-20={!search.fileEdit} class:mt-20={!SUPPORTS.isAndroid && !search.fileEdit} class:mt-md-0={!SUPPORTS.isAndroid && !search.fileEdit} class:bg-very-dark={search.fileEdit} style:--container-color={search.fileEdit ? 'var(--dark-color-dim)' : 'var(--dark-color)'} on:input bind:this={form}>
+<form class='container-fluid px-md-10 position-sticky top-0 search-container z-40' class:px-10={search.fileEdit} class:px-md-50={!search.fileEdit} class:pt-20={!search.fileEdit} class:mt-20={!SUPPORTS.isAndroid && !search.fileEdit} class:mt-md-0={!SUPPORTS.isAndroid && !search.fileEdit} class:bg-very-dark={search.fileEdit} style:--container-color={search.fileEdit ? 'var(--dark-color-dim)' : 'hsl(var(--dark-color-dim-hsl))'} on:input bind:this={form}>
   <div class='row'>
     <div class='col-lg col-4 p-10 d-flex flex-column justify-content-end' class:d-advanced-title={advancedSearch}>
       <div class='pb-10 font-weight-semi-bold d-flex align-items-center {advancedSearch} font-scale-24'>
@@ -360,6 +360,11 @@
 </form>
 
 <style>
+  .search-container {
+    background: linear-gradient(180deg, var(--surface-shell), hsla(var(--dark-color-hsl), .93));
+    border-bottom: .1rem solid var(--surface-border);
+    box-shadow: 0 1rem 2.4rem hsla(var(--black-color-hsl), .25);
+  }
   .pl-35 {
     padding-left: 3.5rem;
   }

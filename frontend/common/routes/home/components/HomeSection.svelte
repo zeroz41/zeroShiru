@@ -1,6 +1,5 @@
 <script context='module'>
   const defaultLength = 15
-  const overflowLength = 1
   const loadableLength = 50
   const fakecards = Array.from({ length: loadableLength }, () => ({ data: new Promise(() => {}) }))
 </script>
@@ -15,7 +14,7 @@
   import { settings } from '@/modules/settings.js'
   import { resizeObserver, baseFontSize } from '@/modules/util.js'
   import { AHEAD_SECTIONS, nearViewport } from '@/modules/preload.js'
-  import { onMount, onDestroy } from 'svelte'
+  import { onDestroy } from 'svelte'
   import { ChevronLeft, ChevronRight } from 'lucide-svelte'
 
   export let lastEpisode = false
@@ -30,9 +29,14 @@
     episode: 36 + 5
   }
   const cardWidth = cardWidthMap[opts.isRSS ? 'episode' : ($settings.cards || 'small')] || cardWidthMap.small
-  let previewLength = Math.floor(containerWidth / cardWidth) + overflowLength || defaultLength
-  let sectionVisible = index < 5
-  let visibleLength = 0
+  let previewLength = Math.floor(containerWidth / cardWidth) + 1 || defaultLength
+  let sectionVisible = index < 3
+  // A rail has at most 50 lightweight card shells. Mount it once, before the vertical
+  // viewport arrives, and never mutate its DOM during a horizontal fling. Incremental
+  // growth was visible as cards appearing under the pointer and made Svelte reconcile a
+  // row in the hottest part of scrolling. The images are correctly sized and pinned;
+  // section cards ask them to preload while this rail is still offscreen.
+  const visibleLength = loadableLength
 
   // Starts the row's media query well before the row is reached, rooted at the page scroller
   // so the distance counts for anything at all — see modules/preload.js.
@@ -62,33 +66,17 @@
       scrolling()
       scrollContainer.scrollTo({ left: 0, behavior: 'smooth' })
     } else if (direction === 'left' && scrollContainer.scrollLeft <= 0) {
-      visibleLength = loadableLength
       setTimeout(() => {
         scrolling()
         scrollContainer.scrollTo({ left: (scrollContainer.scrollWidth - scrollContainer.clientWidth), behavior: 'smooth' })
       })
     } else {
-      visibleLength = Math.min((visibleLength || previewLength) + previewLength, loadableLength)
       setTimeout(() => {
         scrolling(500)
         const scrollAmount = scrollContainer.offsetWidth
         scrollContainer.scrollBy({ left: direction === 'right' ? scrollAmount : -scrollAmount, behavior: 'smooth' })
       })
     }
-  }
-
-  // one growth decision per frame, not one per scroll event: a fling fires dozens of
-  // scroll events a frame, and each one re-ran the row's whole {#each}
-  let scrollScheduled = false
-  function handleScroll() {
-    if (scrollScheduled) return
-    scrollScheduled = true
-    requestAnimationFrame(() => {
-      scrollScheduled = false
-      if (scrollContainer && ((scrollContainer.scrollWidth - scrollContainer.clientWidth) - scrollContainer.scrollLeft < 100)) {
-        visibleLength = Math.min((visibleLength || previewLength) + overflowLength, loadableLength)
-      }
-    })
   }
 
   let timeout
@@ -98,15 +86,14 @@
       // querySelector, not querySelectorAll: a NodeList has no offsetWidth, so this
       // computed NaN and every row silently fell back to the default length
       const cardItem = node.querySelector('.small-card-ct, .full-card-ct, .episode-card')
-      if (cardItem?.offsetWidth) previewLength = Math.floor(node.offsetWidth / cardItem.offsetWidth) + overflowLength
+      if (cardItem?.offsetWidth) {
+        previewLength = Math.floor(node.offsetWidth / cardItem.offsetWidth) + 1
+      }
     }, 15)
   })
 
-  onMount(() => {
-    scrollContainer.addEventListener('scroll', handleScroll, { passive: true })
-  })
   onDestroy(() => {
-    scrollContainer.removeEventListener('scroll', handleScroll)
+    clearTimeout(timeout)
   })
 </script>
 
@@ -119,7 +106,10 @@
   <div class='pb-10 w-full d-flex flex-row justify-content-start gallery {!opts.isRSS ? `pl-15 pl-sm-10 pl-md-0` : ``}' class:pt-10={!opts.isRSS && $settings.cards === `full`} use:dragScroll use:trackSectionWidth bind:this={scrollContainer}>
     <Card card={($preview || fakecards)[0]} variables={{...opts.variables, section: true}} />
     {#if sectionVisible}
-      {#each ($preview || fakecards).slice(1, visibleLength || previewLength) as card (card)}
+      <!-- keyed by SLOT, not by wrapper identity: every refresh path builds a brand new
+           array of wrappers, and keying on them destroyed and recreated every card — and
+           every painted image — for a refresh that usually changes nothing -->
+      {#each ($preview || fakecards).slice(1, visibleLength) as card, slot (slot)}
         <Card {card} variables={{...opts.variables, section: true}} />
       {/each}
     {/if}
@@ -190,6 +180,9 @@
   }
   .gallery {
     overflow-x: scroll;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
     flex-shrink: 0;
     min-height: 25rem;
     cursor: grab;

@@ -112,8 +112,8 @@
 <!-- TODO: Remove usage of tabs in favor of native routing, add top navigation bar with search box for easily finding settings. -->
 
 <Tabs>
-  <div class='d-flex w-full h-full position-relative settings root flex-md-row flex-column'>
-    <div class='tab-container bg-dark position-absolute position-lg-relative h-lg-full w-full w-lg-300 br-10 z-10 pb-1' class:status-transition={statusTransition} class:pt-28px={!SUPPORTS.isAndroid && !$status.match(/offline/i)} class:pt-lg-28px={SUPPORTS.isAndroid && !$status.match(/offline/i)} class:pt-safe-area={SUPPORTS.isAndroid && !$status.match(/offline/i)}>
+  <div class='settings-page d-flex w-full h-full position-relative settings root flex-md-row flex-column'>
+    <div class='settings-rail tab-container position-absolute position-lg-relative h-lg-full w-full w-lg-300 br-10 z-10 pb-1' class:status-transition={statusTransition} class:pt-28px={!SUPPORTS.isAndroid && !$status.match(/offline/i)} class:pt-lg-28px={SUPPORTS.isAndroid && !$status.match(/offline/i)} class:pt-safe-area={SUPPORTS.isAndroid && !$status.match(/offline/i)}>
       <div class='d-flex flex-column flex-lg-shrink-0 h-lg-full w-full w-lg-300 bb-10'>
         <div class='px-20 py-5 font-size-24 font-weight-semi-bold position-absolute d-none d-lg-block'>Settings</div>
         <div class='mt-lg-20 py-lg-20 py-10 d-flex flex-lg-column flex-row justify-content-center justify-content-lg-start align-items-center align-items-lg-start'>
@@ -191,6 +191,12 @@
 </Tabs>
 
 <style>
+  .settings-page { background: transparent; }
+  .settings-rail {
+    background: linear-gradient(180deg, var(--surface-panel-strong), var(--surface-shell));
+    border-right: .1rem solid var(--surface-border);
+    box-shadow: 1rem 0 2.8rem hsla(var(--black-color-hsl), .24);
+  }
   .mt-75 {
     margin-top: 7.5rem;
   }

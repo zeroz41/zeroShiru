@@ -49,7 +49,7 @@
 </script>
 
 <div class='sidebar z-80 d-md-block' style='height: calc(100% - var(--safe-area-bottom)) !important' class:animated={$settings.expandingSidebar} class:open={$drawerOpen && $settings.expandingSidebar}>
-  <div class='z--1 pointer-events-none h-full bg-dark position-absolute' style='width: var(--sidebar-width)'/>
+  <div class='sidebar-base z--1 pointer-events-none h-full position-absolute' style='width: var(--sidebar-width)'/>
   <div class='sidebar-overlay z--1 pointer-events-none h-full position-absolute' class:animated={$settings.expandingSidebar} />
   <div class='sidebar-menu h-full d-flex flex-column m-0 pb-5 animate' class:br-10={!$settings.expandingSidebar}>
     <div class='w-50 top-0 flex-shrink-0 pointer-events-none {_status?.match(/offline/i) ? `h-25` : `${COMMON.getPlatformInfo().platform === `darwin` && !fullScreen ? `h-25` : `h-0`}`}' class:status-transition={statusTransition}/>
@@ -62,7 +62,7 @@
       </NavLink>
     </div>
     <div class='d-flex flex-column align-items-center' style='width: var(--sidebar-width)'>
-      <img src='./icon_filled.png' tabindex='-1' class='w-50 h-50 m-10 pointer d-sm-h-none p-5' alt='ico' use:click={() => page.navigateTo(page.HOME)} />
+      <img src='./icon_filled.png' tabindex='-1' class='brand-mark w-50 h-50 m-10 pointer d-sm-h-none p-5' alt='zeroShiru home' use:click={() => page.navigateTo(page.HOME)} />
     </div>
     <NavBar sidebar={true} {closeDrawer} bind:drawerOpen={$drawerOpen} bind:drawerItems={$drawerItems} class='align-items-start flex-column' />
   </div>
@@ -93,8 +93,17 @@
   }
   .sidebar-overlay {
     width: var(--sidebar-width);
-    background: var(--sidebar-gradient);
-    backdrop-filter: blur(2px);
+    background: linear-gradient(90deg, var(--surface-shell) 0%, hsla(var(--dark-color-hsl), .9) 42%, hsla(var(--dark-color-hsl), .5) 72%, transparent 100%);
+  }
+  .sidebar-base {
+    background: linear-gradient(180deg, var(--surface-panel-strong), var(--surface-shell));
+    border-right: .1rem solid var(--surface-border);
+    box-shadow: 1.2rem 0 3rem hsla(var(--black-color-hsl), .32);
+  }
+  .brand-mark {
+    border-radius: 1.35rem;
+    background: linear-gradient(145deg, hsla(var(--tertiary-color-hsl), .3), var(--surface-highlight));
+    box-shadow: inset 0 0 0 .1rem hsla(var(--white-color-hsl), .15), 0 .8rem 2rem hsla(var(--black-color-hsl), .42);
   }
   .sidebar.animated:hover .sidebar-overlay,
   .sidebar.animated.open .sidebar-overlay {
@@ -134,7 +143,7 @@
       top: 0;
       bottom: 0;
       width: var(--safe-area-left);
-      background: var(--dark-color);
+      background: var(--surface-shell);
     }
   }
 </style>

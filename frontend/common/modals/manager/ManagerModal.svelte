@@ -7,6 +7,7 @@
   import FileCard from '@/modals/manager/components/FileCard.svelte'
 </script>
 <script>
+  import { onDestroy } from 'svelte'
   import { matchKeys, matchPhrase } from '@/modules/util.js'
   import { cache } from '@/modules/cache.js'
 
@@ -22,10 +23,12 @@
   }
 
   let fileEdit
-  window.addEventListener('fileEdit', (event) => {
+  const onFileEdit = (event) => {
     if (!event.detail?.manager) return
     modal.open(modal.FILE_MANAGER)
-  })
+  }
+  window.addEventListener('fileEdit', onFileEdit)
+  onDestroy(() => window.removeEventListener('fileEdit', onFileEdit))
 
   function close() {
     modal.close(modal.FILE_MANAGER)

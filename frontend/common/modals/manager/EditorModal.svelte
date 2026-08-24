@@ -45,7 +45,7 @@
             })
           }
         }
-        window.dispatchEvent(new Event('fileEdit', { detail: { manager: true } }))
+        window.dispatchEvent(new CustomEvent('fileEdit', { detail: { manager: true } }))
         close()
       }
     }

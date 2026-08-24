@@ -128,7 +128,7 @@ test.skipIf(Boolean(skip))('DebridMetadata streams real subtitle metadata from t
     handleSubtitleFile: file => seen.files.push(file)
   }
   const metadata = new DebridMetadata(video, resolved.files, spy, { getTime: () => Number.MAX_SAFE_INTEGER })
-  const tracks = await metadata.metadata.getTracks().catch(() => [])
+  const tracks = await metadata.tracksReady.catch(() => [])
   metadata.destroy()
   assert.equal(seen.files.length, matchSubtitleFiles(resolved.files, video.name).length, 'external subs must match the shared matcher')
   console.log(`  ${tracks.length} embedded subtitle tracks in the live fixture`)

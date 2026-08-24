@@ -6,7 +6,7 @@
   import { onDestroy, onMount } from 'svelte'
   import { writable } from 'simple-store-svelte'
   import { playActive } from '@/components/TorrentButton.svelte'
-  import { createListener, since, isValidNumber } from '@/modules/util.js'
+  import { createListener, since, isValidNumber, railCover } from '@/modules/util.js'
   const { reactive, init } = createListener(['torrent-button', 'cont-button', 'episode-safe-area'])
   init(true)
 </script>
@@ -40,7 +40,7 @@
   $: lastEpisode = (data?.episodeRange || data?.parseObject?.episodeRange)?.last || episodeRange?.last || (isValidNumber(data?.episode) && (data?.episode + (zeroEpisode ? 1 : 0))) || (media?.episodes === 1 && media?.episodes)
   $: hasSpoiler = $settings.spoilerStatus.includes(media?.mediaListEntry?.status ?? 'NOTONLIST')
   $: isSpoiler = hasSpoiler && (media?.mediaListEntry?.progress ?? 0) < lastEpisode
-  $: episodeThumbnail = ((data.similarity || ((!hasSpoiler || (media?.mediaListEntry?.progress >= lastEpisode || !['minimal', 'moderate', 'strict', 'hermit'].includes($settings.spoilers))))) && data.episodeData?.image) || media?.bannerImage || media?.coverImage.extraLarge || ' '
+  $: episodeThumbnail = ((data.similarity || ((!hasSpoiler || (media?.mediaListEntry?.progress >= lastEpisode || !['minimal', 'moderate', 'strict', 'hermit'].includes($settings.spoilers))))) && data.episodeData?.image) || media?.bannerImage || railCover(media?.coverImage)[0] || ' '
   $: watched = media?.mediaListEntry?.status === 'COMPLETED'
   $: completed = !watched && media?.mediaListEntry?.progress >= lastEpisode
   $: progress = liveAnimeEpisodeProgress(media?.id, data?.episode, completed)
@@ -137,13 +137,13 @@
   {#if preview}
     <EpisodePreviewCard {data} {zeroEpisode} bind:prompt={$prompt} bind:element={previewCard} />
   {/if}
-  <div class='item load-in d-flex flex-column h-full pointer content-visibility-auto' class:opacity-half={completed}>
+  <div class='item d-flex flex-column h-full pointer' class:opacity-half={completed}>
     <!-- the shadow lives on a wrapper, not on .image: that one clips its own overflow to
          keep the artwork inside its rounded corners, and a shadow drawn inside it would be
          clipped away with everything else -->
     <div class='w-full rounded lift lift-soft' style:--lift-color={media?.coverImage?.color || 'var(--tertiary-color)'}>
     <div class='image h-200 w-full position-relative rounded overflow-hidden d-flex justify-content-between align-items-end text-white'>
-      <SmartImage class='cover-img w-full h-full position-absolute {!(data.episodeData?.image || media?.bannerImage) && media?.genres?.includes(`Hentai`) ? `cover-rotated cr-380` : ``}' color={media?.coverImage?.color || 'var(--tertiary-color)'} images={[episodeThumbnail, (!media ? './404_episode.jpg' : './no_image_episode.jpg')]}/>
+      <SmartImage eager={section} class='cover-img w-full h-full position-absolute {!(data.episodeData?.image || media?.bannerImage) && media?.genres?.includes(`Hentai`) ? `cover-rotated cr-380` : ``}' color={media?.coverImage?.color || 'var(--tertiary-color)'} images={[episodeThumbnail, (!media ? './404_episode.jpg' : './no_image_episode.jpg')]}/>
       {#if data.failed}
         <div class='pl-10 pt-10 z-10 position-absolute top-0 left-0 text-danger icon-shadow' title='Failed to resolve media'>
           <RefreshCwOff size='3rem' />

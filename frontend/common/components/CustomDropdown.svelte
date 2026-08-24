@@ -115,7 +115,20 @@
             return !state
         })
     }
-    $: displayedOptions = 0
+    /* sections precomputed with their running offsets: the old template mutated a
+       counter mid-render ({(displayedOptions += ...) && ''}), state Svelte happily
+       re-ran with whatever was left in it */
+    $: sections = (() => {
+        const searchInput = searchTextInput ? searchTextInput.toLowerCase() : null
+        const query = searchInput?.startsWith('!') ? searchInput.slice(1) : searchInput
+        const base = headerSections.length ? headerSections : [{ header: null, start: 0, end: getOptions()?.length || 1 }]
+        let shown = 0
+        return base.map(({ header, start, end }) => {
+            const sectionOptions = getOptions().slice(start, end).filter((val) => !searchInput || includes(getOptionDisplay(val)?.toLowerCase(), query)).sort((a, b) => ((includes(value, a) ? -1 : 1) - (includes(value, b) ? -1 : 1)) || ((includes(altValue, a) ? 0 : 1) - (includes(altValue, b) ? 0 : 1))).slice(0, (headerSections.length ? end : displaySize) - shown)
+            shown += sectionOptions.length
+            return { header, options: sectionOptions }
+        }).filter(({ options: sectionOptions }) => sectionOptions.length > 0)
+    })()
 </script>
 
 <div class='custom-dropdown w-full'>
@@ -139,40 +152,35 @@
         list='sections-{id}'
     />
     {#if $dropdown}
-        {@const searchInput = searchTextInput ? searchTextInput.toLowerCase() : null}
         <div class='custom-dropdown-menu position-absolute mh-300 overflow-y-auto w-full bg-dark custom-menu-{id}' in:fadeIn={{ duration: 150 }} out:fadeOut={{ duration: 120 }}>
-            {#each headerSections?.length ? headerSections : [{ header: null, start: 0, end: getOptions()?.length || 1 }] as { header, start, end }}
-                {@const options = getOptions().slice(start, end).filter((val) => !searchInput || includes(getOptionDisplay(val)?.toLowerCase(), searchInput.startsWith('!') ? searchInput.slice(1) : searchInput)).sort((a, b) => ((includes(value, a) ? -1 : 1) - (includes(value, b) ? -1 : 1)) || ((includes(altValue, a) ? 0 : 1) - (includes(altValue, b) ? 0 : 1))).slice(0, ((headerSections?.length ? end : displaySize) - displayedOptions))}
-                {#if options.length > 0}
-                    {#if header}<span class='not-reactive font-weight-bold p-5'>{header}</span>{/if}
-                    {#each options as option}
-                        <div role='button' tabindex='0' class='custom-dropdown-item {!headers ? `text-center` : `pl-20`} not-reactive pointer custom-menu-{id}' class:custom-dropdown-item-selected={includes(value, option)} class:custom-dropdown-item-alt-selected={includes(altValue, option)}
-                             use:click={() => {
-                                 if (includes(value, option)) value = arrayValue ? value.filter(item => item !== option) : null
+            {#each sections as { header, options: sectionOptions }}
+                {#if header}<span class='not-reactive font-weight-bold p-5'>{header}</span>{/if}
+                {#each sectionOptions as option}
+                    <div role='button' tabindex='0' class='custom-dropdown-item {!headers ? `text-center` : `pl-20`} not-reactive pointer custom-menu-{id}' class:custom-dropdown-item-selected={includes(value, option)} class:custom-dropdown-item-alt-selected={includes(altValue, option)}
+                         use:click={() => {
+                             if (includes(value, option)) value = arrayValue ? value.filter(item => item !== option) : null
+                             else {
+                                 value = arrayValue ? [...(Array.isArray(value) ? value : value ? [value] : []), option] : option
+                                 if (altValue && constrainAlt) altValue = arrayValue ? [] : null
+                                 else if (includes(altValue, option)) altValue = arrayValue ? altValue.filter(item => item !== option) : null
+                             }
+                             setTimeout(() => form?.dispatchEvent(new Event('input', { bubbles: true })))
+                         }}
+                         on:contextmenu={(event) => {
+                             event.preventDefault()
+                             if (altValue) {
+                                 if (includes(altValue, option)) altValue = arrayValue ? altValue.filter(item => item !== option) : null
                                  else {
-                                     value = arrayValue ? [...(Array.isArray(value) ? value : value ? [value] : []), option] : option
-                                     if (altValue && constrainAlt) altValue = arrayValue ? [] : null
-                                     else if (includes(altValue, option)) altValue = arrayValue ? altValue.filter(item => item !== option) : null
+                                     altValue = arrayValue ? [...(Array.isArray(altValue) ? altValue : altValue ? [altValue] : []), option] : option
+                                     if (constrainAlt) value = arrayValue ? [] : null
+                                     else if (includes(value, option)) value = arrayValue ? value.filter(item => item !== option) : null
                                  }
                                  setTimeout(() => form?.dispatchEvent(new Event('input', { bubbles: true })))
-                             }}
-                             on:contextmenu={(event) => {
-                                 event.preventDefault()
-                                 if (altValue) {
-                                     if (includes(altValue, option)) altValue = arrayValue ? altValue.filter(item => item !== option) : null
-                                     else {
-                                         altValue = arrayValue ? [...(Array.isArray(altValue) ? altValue : altValue ? [altValue] : []), option] : option
-                                         if (constrainAlt) value = arrayValue ? [] : null
-                                         else if (includes(value, option)) value = arrayValue ? value.filter(item => item !== option) : null
-                                     }
-                                     setTimeout(() => form?.dispatchEvent(new Event('input', { bubbles: true })))
-                                 }
-                             }}>
-                            <span class='not-reactive'>{getOptionDisplay(option)}</span>
-                        </div>
-                    {/each}
-                    {(displayedOptions += options.length) && ''}
-                {/if}
+                             }
+                         }}>
+                        <span class='not-reactive'>{getOptionDisplay(option)}</span>
+                    </div>
+                {/each}
             {/each}
         </div>
     {/if}
@@ -192,15 +200,22 @@
         box-shadow: 0 0.8rem 2rem hsla(var(--black-color-hsl), 0.5);
         z-index: 15;
     }
+    .custom-dropdown-item {
+        transition: background-color var(--motion-quick) var(--ease-settle), color var(--motion-quick) var(--ease-settle);
+    }
+    /* a wash, not the inverted chip: hover used to swap rows to solid-light with black
+       text, the idiom the nav just retired */
     @media (hover: hover) and (pointer: fine) {
       .custom-dropdown-item:hover {
-        background-color: var(--tertiary-color-very-light);
-        color: var(--black-color);
+        background-color: hsla(var(--tertiary-color-hsl), .16);
+        color: var(--highlight-color);
       }
     }
+    /* chosen entries read as lit, not inverted: the accent pill the nav's active page wears */
     .custom-dropdown-item-selected {
-        background-color: var(--tertiary-color);
-        color: var(--black-color);
+        background: linear-gradient(145deg, hsla(var(--tertiary-color-hsl), .42), hsla(var(--tertiary-color-hsl), .2));
+        color: var(--tertiary-color-very-light);
+        box-shadow: inset 0 0 0 .1rem hsla(var(--tertiary-color-hsl), .5);
     }
     .custom-dropdown-item-alt-selected {
         /* --danger-color-very-dim was never defined, so exclusions rendered unmarked */

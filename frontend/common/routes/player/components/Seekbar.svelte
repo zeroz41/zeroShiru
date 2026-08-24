@@ -205,14 +205,15 @@
 
 <style>
   .h-25px {
-    height: 25px;
+    /* rem, not px: the whole control bar ignored --ui-scale before this pass */
+    height: 2.5rem;
   }
   .seekbar {
     user-select: none;
     touch-action: none;
     -webkit-touch-callout: none;
     -webkit-tap-highlight-color: transparent;
-    gap: 2px;
+    gap: .2rem;
   }
   .seekbar:active {
     cursor: grabbing;
@@ -225,21 +226,21 @@
   }
 
   .chapter {
-    height: 10px;
+    height: 1rem;
   }
   .chapter div {
-    height: 3px;
+    height: .3rem;
     position: absolute;
     transition: height .08s linear, filter .08s linear;
   }
 
   .seekbar:not(.chapters):hover .chapter div,
   .seekbar:not(.chapters):focus-visible .chapter div {
-    height: 7px;
+    height: .7rem;
     filter: brightness(120%);
   }
   .chapter.active div {
-    height: 7px;
+    height: .7rem;
     filter: brightness(120%);
   }
   .seekbar:active .chapter div {
@@ -247,7 +248,7 @@
   }
 
   .thumb-container {
-    bottom: 5px;
+    bottom: .5rem;
   }
   .thumb {
     background: var(--accent);
@@ -256,8 +257,8 @@
   .seekbar:hover .thumb,
   .seekbar:active .thumb,
   .seekbar:focus-visible .thumb {
-    width: 12px;
-    height: 12px;
+    width: 1.2rem;
+    height: 1.2rem;
   }
   .seekbar:hover .thumb.active,
   .seekbar:active .thumb.active,
@@ -265,14 +266,14 @@
   .seekbar:not(.chapters):hover .thumb,
   .seekbar:not(.chapters):active .thumb,
   .seekbar:not(.chapters):focus-visible .thumb {
-    width: 17px;
-    height: 17px;
+    width: 1.7rem;
+    height: 1.7rem;
     filter: brightness(120%);
   }
 
   .hover-container {
     left: clamp(var(--padding), var(--progress), calc(100% - var(--padding))) !important;
-    text-shadow: 0 0 4px hsla(var(--black-color-hsl), .75);
+    text-shadow: 0 0 .4rem hsla(var(--black-color-hsl), .75);
   }
   @media (pointer: fine) {
     .seekbar:hover .hover-container {
@@ -280,15 +281,15 @@
     }
   }
   .tooltip-inner {
-    gap: 3px;
-    bottom: 25px;
+    gap: .3rem;
+    bottom: 2.5rem;
   }
   .tooltip-inner div {
     background: hsla(var(--black-color-hsl), .45);
     backdrop-filter: blur(16px) saturate(160%);
     -webkit-backdrop-filter: blur(16px) saturate(160%);
-    padding: 0 6px;
-    border-radius: 6px;
+    padding: 0 .6rem;
+    border-radius: .6rem;
   }
   .tooltip-inner div::before {
     content: '';
@@ -299,16 +300,16 @@
     inset: 0;
   }
   .tooltip-inner div:first-child {
-    border-left: 2px solid var(--accent);
-    padding-left: 6px;
-    border-radius: 0 6px 6px 0;
+    border-left: .2rem solid var(--accent);
+    padding-left: .6rem;
+    border-radius: 0 .6rem .6rem 0;
   }
   .thumbnail {
-    border-radius: 8px;
+    border-radius: .8rem;
     border-top: 1px solid hsla(var(--gray-color-hsl), .4);
     border-left: 1px solid hsla(var(--gray-color-hsl), .15);
     border-right: 1px solid hsla(var(--gray-color-hsl), .05);
     border-bottom: 1px solid hsla(var(--black-color-hsl), .2);
-    box-shadow: 0 4px 24px hsla(var(--black-color-hsl), .4);
+    box-shadow: 0 .4rem 2.4rem hsla(var(--black-color-hsl), .4);
   }
 </style>

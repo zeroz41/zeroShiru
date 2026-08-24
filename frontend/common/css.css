@@ -66,6 +66,13 @@
     0 0 0 .1rem hsla(0, 0%, 100%, .16),
     0 .6rem 1.4rem hsla(0, 0%, 0%, .6),
     0 0 2rem -.6rem var(--lift-color, transparent);
+  /* Opaque-enough surfaces keep the shell readable without leaning on large-area
+     backdrop-filter passes, which are fragile on the Linux/NVIDIA WebKit path. */
+  --surface-shell: hsla(var(--dark-color-dim-hsl), .97);
+  --surface-panel: hsla(var(--dark-color-light-hsl), .72);
+  --surface-panel-strong: hsla(var(--dark-color-light-hsl), .92);
+  --surface-border: hsla(var(--white-color-hsl), .11);
+  --surface-highlight: hsla(var(--white-color-hsl), .055);
 
   /* --- surface geometry ----------------------------------------------------------
      One radius scale instead of the thirteen ad-hoc values that grew here. The base
@@ -185,7 +192,6 @@
   --dm-link-text-color: var(--dm-muted-text-color) !important;
   --dm-link-text-color-hover: var(--dm-text-color) !important;
   --skeleton-swipe-background: var(--dark-color-light);
-  --sidebar-gradient: linear-gradient(90deg, var(--dark-color) 15.62%, hsla(var(--dark-color-hsl), 0.92) 36.46%, hsla(var(--dark-color-hsl), 0.62) 70.83%, hsla(var(--black-color-hsl), 0) 100%);
   /* The home banner's scrims. Theme-derived throughout — the left fade used to carry
      two hardcoded rgba() stops of the old default dark, which landed visibly wrong on
      the AMOLED theme — and the bottom ramp runs a third of the height in three stops,
@@ -345,9 +351,6 @@
 .mw-0 {
   min-width: 0;
 }
-.mw-80 {
-  min-width: 8rem !important;
-}
 .mw-100 {
   min-width: 10rem !important;
 }
@@ -359,9 +362,6 @@
 }
 .mw-180 {
   min-width: 18rem;
-}
-.mw-200 {
-  min-width: 20rem;
 }
 .mw-220 {
   min-width: 22rem;
@@ -394,9 +394,6 @@
 
 .hm-250 {
   max-height: 25rem;
-}
-.hm-400 {
-  max-height: 40rem;
 }
 
 @media (min-width: 769px) {
@@ -488,10 +485,18 @@ a[href]:active, button:not([disabled], .not-reactive):active:not([data-sonner-to
   transform: translateY(0.1rem) scale(.99) !important;
 }
 
-.btn-secondary {
-  --dm-button-secondary-bg-color: var(--white-color) !important;
-  --dm-button-secondary-bg-color-hover: var(--white-color-dim) !important;
+/* the last white pill in the app: quartermoon painted every .btn-secondary — the
+   biggest CTAs there are — white with black text. Accent-filled instead, hero-cta's
+   treatment, and the light text is forced past the `text-dark` the call sites still
+   carry so every consumer modernizes without an edit. Disabled falls through to
+   quartermoon's dimmed base button, which was never white. */
+.btn.btn-secondary {
+  color: var(--highlight-color) !important;
+  --dm-button-secondary-bg-color: var(--tertiary-color) !important;
+  --dm-button-secondary-bg-color-hover: var(--tertiary-color-light) !important;
   --dm-button-secondary-bg-color-focus: var(--dm-button-secondary-bg-color) !important;
+  --dm-button-secondary-box-shadow: 0 0.4rem 1.8rem hsla(var(--tertiary-color-hsl), 0.35);
+  --dm-button-secondary-box-shadow-hover: 0 0.4rem 1.8rem hsla(var(--tertiary-color-hsl), 0.45);
 }
 
 [data-sonner-toaster][data-theme='dark'] {
@@ -589,9 +594,6 @@ a[href]:active, button:not([disabled], .not-reactive):active:not([data-sonner-to
 }
 .z-11 {
   z-index: 11 !important;
-}
-.z-45 {
-  z-index: 45;
 }
 .z-55 {
   z-index: 55;
@@ -736,14 +738,8 @@ a[href]:active, button:not([disabled], .not-reactive):active:not([data-sonner-to
   padding-bottom: 1.3rem !important;
 }
 
-.mt-safe-area-10 {
-  margin-top: max(var(--safe-area-top), 1rem) !important;
-}
 .mt-safe-area {
   margin-top: var(--safe-area-top) !important;
-}
-.mb-safe-area {
-  margin-bottom: var(--safe-area-bottom) !important;
 }
 .pt-safe-area {
   padding-top: var(--safe-area-top) !important;
@@ -786,7 +782,10 @@ a[href]:active, button:not([disabled], .not-reactive):active:not([data-sonner-to
 }
 
 body {
-  scroll-behavior: smooth;
+  /* Input scrolling follows the pointer/wheel exactly. Places that intentionally animate
+     a programmatic jump already pass behavior:'smooth'; forcing it globally makes nested
+     WebKit scrollers feel delayed and rubbery. */
+  scroll-behavior: auto;
   overscroll-behavior: none;
   user-select: none;
   font-family: 'Nunito Variable';
@@ -824,11 +823,6 @@ body {
 }
 .border-error-light {
   border-color: var(--error-color-light) !important;
-}
-
-.bg-muted {
-  border-color: var(--dm-muted-text-color) !important;
-  background-color: var(--dm-muted-text-color) !important;
 }
 
 .bg-quinary {
@@ -976,7 +970,6 @@ img[src=''], img[src=' '] {
 
 .modal-soft-ellipse {
   background: radial-gradient(ellipse at center, transparent 0%, hsla(var(--black-color-hsl), 0.85) 100%), hsla(var(--black-color-hsl), 0.65) !important;
-  backdrop-filter: blur(8px) !important;
 }
 .modal:focus-visible {
   box-shadow: none !important;
@@ -996,13 +989,14 @@ img[src=''], img[src=' '] {
    follows the theme's tertiary hue, so custom themes tint the whole room. */
 .page-wrapper {
   background:
-    radial-gradient(110rem 55rem at 88% -12%, hsla(var(--tertiary-color-hsl), 0.09), transparent 62%),
+    radial-gradient(110rem 55rem at 88% -12%, hsla(var(--tertiary-color-hsl), 0.17), transparent 62%),
+    /* color-mix, not hsla(--accent-color-hsl): there is no such token and there cannot be
+       one. themes.css and the custom-CSS box in settings both set --accent-color as a raw
+       hex, which CSS cannot decompose into hue/saturation parts — so an hsla() wash would
+       silently keep its hardcoded fallback and be the one color in the app that ignores
+       the user's theme. */
+    radial-gradient(80rem 55rem at 15% 112%, color-mix(in srgb, var(--accent-color) 8%, transparent), transparent 68%),
     linear-gradient(180deg, hsl(var(--dark-color-dim-hsl)) 0%, hsl(var(--dark-color-hsl)) 34rem) !important;
-}
-
-.nav-hidden > .content-wrapper {
-  left: 0 !important;
-  width: 100% !important;
 }
 
 .fill-1 {
@@ -1116,10 +1110,15 @@ img[src=''], img[src=' '] {
 
 .option {
   border: .1rem solid var(--dark-color-dim) !important;
+  transition: border-color var(--motion) var(--ease-settle);
 }
+/* the hover answer the cards give: a translucent accent ring that eases in, plus a
+   gentle brightening of whatever background the row already wears. A gradient wash
+   was tried here and snapped — background-image cannot interpolate. */
 @media (hover: hover) and (pointer: fine) {
   .option:hover {
-    border: .1rem solid var(--highlight-color) !important;
+    border-color: hsla(var(--tertiary-color-hsl), .42) !important;
+    filter: brightness(1.12);
   }
 }
 
@@ -1175,10 +1174,6 @@ img[src=''], img[src=' '] {
   padding-left: 4rem;
   padding-right: 4rem;
 }
-.px-50 {
-  padding-left: 5rem;
-  padding-right: 5rem;
-}
 
 .mr--8 {
   margin-right: -.8rem !important;
@@ -1201,35 +1196,6 @@ img[src=''], img[src=' '] {
   left: -1px;
   right: -1px;
   bottom: -1px;
-}
-
-.dr-arrow, .dmr-arrow {
-  z-index: 0;
-}
-.dr-arrow::after, .dmr-arrow::after {
-    content: '';
-    position: absolute;
-    z-index: -1;
-    border-style: solid;
-    border-color: transparent;
-}
-.dr-arrow::after {
-    bottom: -.8rem;
-    right: 1.2rem;
-    border-left-width: 1rem;
-    border-right-width: 1rem;
-    border-top-width: 1rem;
-    border-top-color: var(--dark-color-dim);
-    border-bottom-width: 0;
-}
-.dmr-arrow::after {
-    top: .7rem;
-    right: -.9rem;
-    border-top-width: 1rem;
-    border-bottom-width: 1rem;
-    border-left-width: 1rem;
-    border-left-color: var(--dark-color-dim);
-    border-right-width: 0;
 }
 
 .br-10 {
@@ -1261,10 +1227,13 @@ img[src=''], img[src=' '] {
 
 .bd-highlight {
   border: .1rem solid transparent;
+  transition: border-color var(--motion) var(--ease-settle);
 }
 @media (hover: hover) and (pointer: fine) {
   .bd-highlight:hover {
-    border: .1rem solid var(--highlight-color) !important;
+    /* ring only: the gradient wash that used to ride along is not interpolable and
+       snapped over these buttons' bg-* utilities */
+    border-color: hsla(var(--tertiary-color-hsl), .42) !important;
   }
 }
 
@@ -1277,10 +1246,23 @@ img[src=''], img[src=' '] {
   }
 }
 
+/* The one transition every interactive element rides. This rule used to say
+   `transition: scale` alone — and because `button:not([disabled])` outranks `.btn`, it
+   REPLACED the motion layer below on all 124 buttons and every input in the app: the
+   2% scale eased while every color, background and border snapped. "Hovers have no
+   smooth animation" was this one line. Lives outside the hover guard on purpose: a
+   transition is inert without a state change, and focus/active changes deserve it too. */
+button:not([disabled]), input:not([disabled]), input:not([disabled]):not(.input-group input, .long-input), .input-group:not(:has(input:disabled)):not(:has(input.long-input)):not(.long-input), .icon.text-white:not([disabled]) > svg, .icon.text-dark-light:not([disabled]) > svg, .button:not([disabled]) > svg, .custom-switch:not([disabled]), .form-control:not([disabled], .long-input), .progressive:not([disabled]), .long-input:not([disabled]), .long-button:not([disabled]) {
+  transition:
+    background-color var(--motion) var(--ease-settle),
+    color var(--motion) var(--ease-settle),
+    border-color var(--motion) var(--ease-settle),
+    opacity var(--motion) var(--ease-settle),
+    filter var(--motion) var(--ease-settle),
+    translate var(--motion) var(--ease-settle),
+    scale var(--motion) var(--ease-settle);
+}
 @media (hover: hover) and (pointer: fine) {
-  button:not([disabled]), input:not([disabled]), input:not([disabled]):not(.input-group input, .long-input), .input-group:not(:has(input:disabled)):not(:has(input.long-input)):not(.long-input), .icon.text-white:not([disabled]) > svg, .icon.text-dark-light:not([disabled]) > svg, .button:not([disabled]) > svg, .custom-switch:not([disabled]), .form-control:not([disabled], .long-input), .progressive:not([disabled]), .long-input:not([disabled]), .long-button:not([disabled]) {
-    transition: scale var(--motion) var(--ease-settle);
-  }
   button.bg-dark:not([disabled]):hover {
     background: var(--dark-color-light) !important;
   }

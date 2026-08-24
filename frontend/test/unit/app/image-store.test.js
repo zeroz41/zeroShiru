@@ -3,7 +3,7 @@
 // (pinning is an upgrade, never a gate), and two askers cost one request.
 import { test, beforeEach } from 'bun:test'
 import assert from 'node:assert/strict'
-import { pin, heldNow, isHeld, heldStats, releaseAll, IMAGE_STORE_BYTE_LIMIT } from '@/modules/lib/image-store.js'
+import { pin, heldNow, isHeld, heldStats, releaseAll, IMAGE_STORE_BYTE_LIMIT, IMAGE_FETCH_CONCURRENCY } from '@/modules/lib/image-store.js'
 
 let served
 let revoked
@@ -62,4 +62,22 @@ test('two askers for the same url share one fetch', async () => {
   const [a, b] = await Promise.all([pin('https://cdn/same.jpg', slow), pin('https://cdn/same.jpg', slow)])
   assert.equal(a, b)
   assert.equal(fetches, 1)
+})
+
+test('rail preloading cannot flood WebKit with unbounded image fetches', async () => {
+  let active = 0
+  let peak = 0
+  const fetcher = async () => {
+    active++
+    peak = Math.max(peak, active)
+    await new Promise(resolve => setTimeout(resolve, 5))
+    active--
+    return { ok: true, blob: async () => ({ size: 10 }) }
+  }
+  const requests = Array.from(
+    { length: IMAGE_FETCH_CONCURRENCY * 3 },
+    (_, index) => pin(`https://cdn/rail-${index}.jpg`, { fetcher, ...seams() })
+  )
+  await Promise.all(requests)
+  assert.equal(peak, IMAGE_FETCH_CONCURRENCY)
 })

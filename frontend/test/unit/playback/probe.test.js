@@ -145,3 +145,27 @@ test('a healthy link is not slowed down by the retry machinery', async () => {
   assert.deepEqual({ alive: verdict.alive, attempts: verdict.attempts }, { alive: true, attempts: 1 })
   assert.equal(slept, false)
 })
+
+// The rule this pins, learned twice the hard way (see the warning in playback/probe.js):
+// the probe must never AWAIT the reader's cancellation. Both times the opposite was tried
+// the whole suite stayed green — a mock body lets go instantly — and real playback died,
+// so the mock here is the one that tells the truth: a cancellation that never settles.
+test('a cancellation that never settles cannot hold up the probe', async () => {
+  const response = {
+    ok: true,
+    status: 206,
+    body: {
+      getReader: () => ({
+        read: () => Promise.resolve({ done: false, value: new Uint8Array(PROBE_BYTES) }),
+        // the shape of an open-ended range against a CDN that is in no hurry to let go
+        cancel: () => new Promise(() => {})
+      })
+    }
+  }
+  const verdict = await Promise.race([
+    probeStream('https://nexus-143.cdn/dld/aa?token=t', { fetcher: async () => response }),
+    new Promise(resolve => setTimeout(() => resolve({ alive: 'hung' }), 1_000))
+  ])
+  assert.equal(verdict.alive, true, 'awaiting the cancel strands every debrid start at readyState=0')
+  assert.equal(verdict.received, PROBE_BYTES)
+})

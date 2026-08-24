@@ -104,13 +104,13 @@
         </div>
         <p class='font-scale-12 my-5 mr-40 text-muted text-break-word overflow-hidden line-2'>{file?.name || 'UNK'}</p>
         <div class='d-flex align-items-center mt-5'>
-            {#if playing}<span class='badge text-dark bg-duodenary' title='The current file'>Now Playing</span>{/if}
-            {#if file?.locked || file?.media?.locked}<span class='badge text-dark bg-success' class:ml-5={playing} title='This series was manually set by the user'>Locked</span>{/if}
-            {#if failed}<span class='badge text-dark bg-danger-dim ml-auto h-27 mr-5 d-flex align-items-center justify-content-center' title='Failed to resolve the playing media based on the file name.'>Failed</span>{/if}
+            {#if playing}<span class='badge wash' style='--badge-color: var(--duodenary-color)' title='The current file'>Now Playing</span>{/if}
+            {#if file?.locked || file?.media?.locked}<span class='badge wash' style='--badge-color: var(--success-color)' class:ml-5={playing} title='This series was manually set by the user'>Locked</span>{/if}
+            {#if failed}<span class='badge wash ml-auto h-27 mr-5 d-flex align-items-center justify-content-center' style='--badge-color: var(--danger-color)' title='Failed to resolve the playing media based on the file name.'>Failed</span>{/if}
             {#if file?.media?.media?.format === 'MOVIE' && (file?.media?.media?.episodes ?? 0) <= 1}
-                <span class='badge text-dark bg-undenary h-27 mr-5 d-flex align-items-center justify-content-center' class:ml-auto={!failed}>Movie</span>
+                <span class='badge wash h-27 mr-5 d-flex align-items-center justify-content-center' style='--badge-color: var(--undenary-color)' class:ml-auto={!failed}>Movie</span>
             {:else if episode && (file?.media?.media?.episodes !== 1 || episode !== 1) || episode === 0 || file?.media?.media?.episodes > 1 || (!file?.media?.media && failed)}
-                <span class='badge text-dark bg-undenary mr-5 d-flex align-items-center justify-content-center' class:ml-auto={!failed} title={`Episode ${episode}`}>
+                <span class='badge wash mr-5 d-flex align-items-center justify-content-center' style='--badge-color: var(--undenary-color)' class:ml-auto={!failed} title={`Episode ${episode}`}>
                     <span class='mr-5'>Episode</span>
                     <button type='button' tabindex='-1' class='position-absolute f-safe-area bottom-0 right-0 h-40 bg-transparent border-0 shadow-none not-reactive z-1' style='margin-bottom: -.5rem; margin-right: -1rem; width: calc(5.5rem + {((episode || isValidNumber(episode)) && String(episode).length <= 10 ? String(episode).length : 2) * .7}rem) !important' use:click={() => {}}/>
                     <input
@@ -133,15 +133,15 @@
                             updateEpisode(file, event)
                           }
                         }}
-                        class='episode-input input form-control h-20 text-left text-dark text-truncate font-weight-semi-bold font-size-12 justify-content-center z-1'
-                        style='background-color: {failed && !episode && episode !== 0 && file?.media?.media?.episodes > 1 ? `var(--danger-color-dim)` : `var(--undenary-color-dim)`}; width: calc(1.8rem + {((episode || isValidNumber(episode)) && String(episode).length <= 10 ? String(episode).length : 2) * .7}rem) !important'
+                        class='episode-input input form-control h-20 text-left text-truncate font-weight-semi-bold font-size-12 justify-content-center z-1'
+                        style='color: {failed && !episode && episode !== 0 && file?.media?.media?.episodes > 1 ? `color-mix(in srgb, var(--danger-color) 65%, var(--highlight-color))` : `color-mix(in srgb, var(--undenary-color) 65%, var(--highlight-color))`}; background-color: {failed && !episode && episode !== 0 && file?.media?.media?.episodes > 1 ? `color-mix(in srgb, var(--danger-color) 22%, transparent)` : `color-mix(in srgb, var(--undenary-color) 22%, transparent)`}; width: calc(1.8rem + {((episode || isValidNumber(episode)) && String(episode).length <= 10 ? String(episode).length : 2) * .7}rem) !important'
                         title='Episode Number(s)'/>
                 </span>
             {/if}
         </div>
       <div class='position-absolute bd-highlight rounded-5 opacity-transition-hack' class:playing={playing} style='left: -.6rem;' />
     </div>
-    <div class='prompt position-absolute w-full h-full z-40 d-flex flex-column align-items-center' class:visible={prompt} class:invisible={!prompt}>
+    <div class='prompt position-absolute z-40 d-flex flex-column align-items-center' class:visible={prompt} class:invisible={!prompt}>
         <p class='mx-20 font-scale-20 text-white text-center mt-auto mb-0'>
             {#if !$mediaCache[file?.media?.media?.id]?.mediaListEntry?.progress}
                 You Haven't Watched Any Episodes Yet!
@@ -164,11 +164,20 @@
         height: 3.3rem !important;
     }
     .scale {
-        transition: transform 0.2s ease;
-        will-change: transform;
+        /* the `scale` property, not a transform, so nothing that positions itself with a
+           transform is claimed — and no standing will-change layer. See FullCard */
+        transition: scale var(--motion) var(--ease-settle);
     }
-    .scale:hover{
-        transform: scale(1.025);
+    @media (hover: hover) and (pointer: fine) {
+        .scale:hover {
+            scale: 1.025;
+        }
+    }
+    .wash {
+        border: none;
+        background: color-mix(in srgb, var(--badge-color) 16%, transparent);
+        box-shadow: inset 0 0 0 .1rem color-mix(in srgb, var(--badge-color) 35%, transparent);
+        color: color-mix(in srgb, var(--badge-color) 65%, var(--highlight-color));
     }
     .playing {
         border: .2rem solid var(--tertiary-color);
@@ -211,9 +220,8 @@
         height: 8rem !important;
     }
     .prompt {
-        margin-left: -.9rem !important;
-        width: 100.6% !important;
-        border-radius: .62rem;
+        inset: 0;
+        border-radius: .55rem;
         background-color: hsla(var(--black-color-hsl), 0.8) !important;
     }
 </style>

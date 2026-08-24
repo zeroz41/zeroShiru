@@ -3,10 +3,10 @@
   import { localNotifications, unreadCount } from '@/modules/notification/manager.js'
   import NotificationCardSk from '@/components/skeletons/NotificationCardSk.svelte'
   import { sort, filter } from '@/modules/notification/util.js'
-  import { Search, MailCheck, X } from 'lucide-svelte'
+  import { Search, MailCheck, X, BellOff, SearchX } from 'lucide-svelte'
   import { playActive } from '@/components/TorrentButton.svelte'
   import SoftModal from '@/components/modals/SoftModal.svelte'
-  import ErrorCard from '@/components/cards/ErrorCard.svelte'
+  import EmptyState from '@/components/cards/EmptyState.svelte'
   import { handleAnime } from '@/modules/anime/anime.js'
   import { modal } from '@/modules/navigation.js'
   import { click } from '@/modules/lib/click.js'
@@ -131,7 +131,7 @@
         on:input={(event) => updateSearch(event.target.value)}/>
   </div>
   {#if $localNotifications?.length && !currentNotifications?.length}
-    <ErrorCard promise={{ errors: [{ message: 'found no results' }] }} />
+    <EmptyState icon={SearchX} title='No matches' hint='No notifications match that filter.' />
   {/if}
   <div bind:this={container} class='notification-list mt-10 overflow-y-auto' on:scroll={handleScroll}>
     {#if $localNotifications?.length && !currentNotifications.length}
@@ -165,7 +165,7 @@
       </button>
     {:else}
       <div class='w-800 mw-0'>
-        <ErrorCard promise={{ errors: [{ message: ['Nothing To See Here!', 'Settings > Interface > Notifications Settings'] }] }} />
+        <EmptyState icon={BellOff} title='Nothing to see here' hint='New episodes and announcements land here. Tune what arrives in Settings > Interface > Notifications Settings.' />
       </div>
     {/if}
   </div>

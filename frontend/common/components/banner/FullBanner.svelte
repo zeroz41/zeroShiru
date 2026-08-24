@@ -56,7 +56,9 @@
 
 <!-- every field below is read unguarded; a list that empties out must not take the app down -->
 {#if currentStatic}
-{#key currentStatic}
+<!-- keyed by id: a cache write to the SAME show (a progress save, a favourite toggle)
+     used to tear down and rebuild the largest image on screen -->
+{#key currentStatic?.id}
   <div class='position-absolute h-full w-full overflow-hidden z--1'>
     <SmartImage eager class={`img-cover position-absolute h-full w-full ${(!(currentStatic.bannerImage || currentStatic.trailer?.id) && settings.value.adult === 'hentai' && settings.value.hentaiBanner) ? 'banner-rotated' : ''}`} images={[currentStatic.bannerImage, ...(currentStatic.trailer?.id ? [`https://i.ytimg.com/vi/${currentStatic.trailer.id}/maxresdefault.jpg`, `https://i.ytimg.com/vi/${currentStatic.trailer.id}/hqdefault.jpg`] : []), currentStatic.coverImage?.extraLarge, './no_image_banner.jpg']}/>
   </div>
@@ -195,16 +197,19 @@
     transition: width .8s ease;
   }
   .progress-badge.active .progress-content {
+    /* a keyframe scaleX, not a width tween: 15s of animated width is 15s of layout,
+       every frame. Safe on transform here — nothing positions this bar with one. */
+    transform-origin: left;
     animation: fill 15s linear;
-    will-change: width;
+    will-change: transform;
   }
 
   @keyframes fill {
     from {
-      width: 0;
+      transform: scaleX(0);
     }
     to {
-      width: 100%;
+      transform: scaleX(1);
     }
   }
   .details span + span::before {

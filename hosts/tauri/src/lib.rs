@@ -94,6 +94,7 @@ pub fn run() {
             debrid::debrid_cancel_availability,
             debrid::debrid_remember,
             debrid::debrid_resolve,
+            debrid::debrid_forget_resolved,
             torrent::torrent_start,
             torrent::torrent_stream,
             torrent::torrent_stage,
@@ -172,7 +173,17 @@ pub fn run() {
             {
                 let _ = window.with_webview(|webview| {
                     use std::sync::atomic::{AtomicU32, Ordering};
-                    use webkit2gtk::WebViewExt;
+                    use webkit2gtk::{SecurityManagerExt, WebContextExt, WebViewExt};
+                    // WebKitGTK refuses cross-origin fetch() of custom schemes unless the
+                    // scheme is registered CORS-enabled — the access-control-allow-origin
+                    // header on the response is never even consulted. wry registers the
+                    // scheme as secure but not as CORS-enabled, so the renderer's image
+                    // pinning (lib/image-store.js) silently failed on Linux: pin() caught
+                    // the TypeError, fell back to the bare URL, and every remount decoded
+                    // from disk again. That was the pop-in.
+                    if let Some(security) = webview.inner().context().and_then(|context| context.security_manager()) {
+                        security.register_uri_scheme_as_cors_enabled(media_cache::SCHEME);
+                    }
                     static REVIVALS: AtomicU32 = AtomicU32::new(0);
                     /// A page that dies as soon as it is revived is not coming back;
                     /// reloading it forever would just glow the CPU.

@@ -190,10 +190,10 @@
     background: var(--error-color) !important;
   }
   .rounded-top-30 {
-    border-radius: 3rem 3rem 0 0;
+    border-radius: var(--radius-panel) var(--radius-panel) 0 0;
   }
   .rounded-bottom-30 {
-    border-radius: 0 0 3rem 3rem;
+    border-radius: 0 0 var(--radius-panel) var(--radius-panel);
   }
   .auth-icon {
     position: absolute;

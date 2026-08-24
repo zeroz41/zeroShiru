@@ -23,6 +23,9 @@
     screen.orientation.addEventListener('change', onOrientation)
     onDestroy(() => screen.orientation.removeEventListener('change', onOrientation))
   }
+
+  // the offset lives on <html>, outside this component's teardown
+  onDestroy(() => document.documentElement.style.removeProperty('--wrapper-offset'))
 </script>
 
 <div class='overflow-hidden status-bar h-0' class:status-bar-transition={transition} class:offline={!SUPPORTS.isAndroid && $status.match(/offline/i)} class:offline-safe={SUPPORTS.isAndroid && $status.match(/offline/i)}>

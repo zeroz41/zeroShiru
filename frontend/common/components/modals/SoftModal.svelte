@@ -71,7 +71,13 @@
 
 <style>
   .modal-soft {
-    background-color: hsla(var(--black-color-hsl), 0.85);
+    /* the vignette every modal used to have to opt into via .modal-soft-ellipse: dark
+       at the edges, the page still dimly legible behind the dialog. The css prop keeps
+       working for the ones that want something else. */
+    background: radial-gradient(ellipse at center, transparent 0%, hsla(var(--black-color-hsl), 0.85) 100%), hsla(var(--black-color-hsl), 0.65);
+    /* A viewport-sized backdrop blur is a live full-screen filter pass on WebKitGTK.
+       The vignette already supplies depth; keeping this layer to opacity makes modal
+       open/close composited and responsive on the Linux/NVIDIA path. */
     transition: opacity var(--motion-panel) var(--ease-settle), visibility var(--motion-panel) var(--ease-settle);
   }
   .modal-soft.show {

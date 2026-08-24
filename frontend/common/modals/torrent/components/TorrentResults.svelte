@@ -21,7 +21,7 @@
   import { click } from '@/modules/lib/click.js'
   import { toast } from 'svelte-sonner'
   import NestedDropdown from '@/components/overlays/NestedDropdown.svelte'
-  import { X, Search, EllipsisVertical, Timer, Clapperboard, MonitorCog, ArrowDownWideNarrow, Paintbrush, ListMusic, ChevronUp, ChevronDown, Radio, RefreshCw, Cloud } from 'lucide-svelte'
+  import { X, Search, EllipsisVertical, Timer, Clapperboard, MonitorCog, ArrowDownWideNarrow, Paintbrush, ListMusic, ChevronUp, ChevronDown, Radio, RefreshCw, Cloud, SearchX } from 'lucide-svelte'
   import Debug from 'debug'
   const debug = Debug('ui:torrents')
 
@@ -163,6 +163,7 @@
   import TorrentCardSk from '@/components/skeletons/TorrentCardSk.svelte'
   import SmartImage from '@/components/visual/SmartImage.svelte'
   import ErrorCard from '@/components/cards/ErrorCard.svelte'
+  import EmptyState from '@/components/cards/EmptyState.svelte'
   import { onDestroy } from 'svelte'
   import { writable } from 'simple-store-svelte'
 
@@ -227,15 +228,17 @@
   }
 
   function addResults(newItems, source) {
-    if (!newItems?.length) return ''
+    if (!newItems?.length) return
     results.update(r => ({ ...r, torrents: [...existing(r), ...newItems.map(item => ({ ...item, source }))] }))
-    return ''
   }
 
-  $: errorCardOnly = search && false
-  function hideErrors() {
-    errorCardOnly = true
-    return ''
+  let errorCardOnly = false
+  // decided here rather than from a template expression, so rendering stays a pure read
+  $: hideExtensionErrors(errors, $results)
+  async function hideExtensionErrors(promise, results) {
+    const errorResult = await promise
+    if (promise !== errors) return
+    if (errorResult?.errorCardOnly && results?.resolved && !results?.torrents?.length) errorCardOnly = true
   }
 
   async function addCachedHashes(cachedHashes) {
@@ -278,6 +281,7 @@
 
   async function queryExtensions(request, resolution) {
     scrollTop()
+    errorCardOnly = false // a new question gets to show its own errors
     if ($debridEnabled) refreshDebridAvailability()
     askedHashes = null // a different question, so its answers are worth asking about again
     supersede = true
@@ -362,6 +366,20 @@
 
   $: resolution = $settings.rssQuality
   $: queries = queryExtensions({...search}, resolution)
+  // results are folded into the store as each source answers, instead of from a
+  // template expression whose re-evaluation was a rendering side effect
+  $: collectResults(queries)
+  async function collectResults(promise) {
+    const extensions = await promise
+    if (!extensions) return
+    for (const [, extension] of extensions) {
+      const extensionName = `${(extension.name).slice(0, 25)}${extension?.name?.length > 25 ? '...' : ''}`
+      extension.promise.then(resolved => {
+        if (promise !== queries) return // superseded mid-flight
+        if (!resolved?.errors?.length) addResults(resolved, { name: extensionName, icon: extension.icon })
+      }).catch(() => {}) // rejections are rendered by the error cards below
+    }
+  }
   $: errors = getErrors({...search}, queries)
   $: cachedOnly = $debridEnabled && $settings.debridCachedOnly
   $: debridFilters = { cachedOnly, only: $debridEnabled && Boolean($debridTransport?.only) }
@@ -435,7 +453,7 @@
   $: lookup = queryResults?.results
   $: (episodeSearch || resolution || $settings.torrentSort || $settings.audioLanguage) && scrollTop()
 
-  $: best = null
+  let best = null
   let current = 0
   let bestPromiseId = current
   $: {
@@ -451,13 +469,16 @@
   }
 
   $: lookupHidden = queryResults?.hiddenResults
-  $: viewHidden = false
+  let viewHidden = false
 
   $: if (!$settings.rssAutoplay) clearTimeout(timeoutHandle)
   $: autoPlay(best, $results?.resolved)
 
   const lastMagnet = cache.getEntry(caches.HISTORY, 'lastMagnet')?.[`${search?.media?.id}`]?.[`${search?.episode}`] || cache.getEntry(caches.HISTORY, 'lastMagnet')?.[`${search?.media?.id}`]?.batch
   let searchText = ''
+  // the fuzzy filter used to run four times per render, once per template call site
+  $: filteredLookup = filterResults(lookup, searchText)
+  $: filteredHidden = filterResults(lookupHidden ?? [], searchText)
 
   /** @param {import('../../../../extensions').TorrentResult} result */
   function play (result) {
@@ -631,7 +652,6 @@
     {#await errors then errorResult}
       {#if errorResult?.errorCardOnly && $results?.resolved && !$results?.torrents?.length}
         <div class='mt-80'>
-          {hideErrors()}
           <ErrorCard promise={Promise.resolve(errorResult)} />
         </div>
       {/if}
@@ -641,14 +661,14 @@
     {:else if $results?.torrents?.length}
       {#if best}<TorrentCard type='best' countdown={$settings.rssAutoplay && $results?.resolved ? countdown : -1} result={best} {play} media={search.media} episode={search.episode} />{/if}
       {#if lastMagnet}
-        {#each filterResults(lookup, searchText) as result}
+        {#each filteredLookup as result}
           {#if ((result.link === lastMagnet.link) || (result.hash === lastMagnet.hash)) && (result.seeders ?? 0) > 1 && ((best?.link !== lastMagnet.link) && (best?.hash !== lastMagnet.hash)) }
             <TorrentCard type='magnet' result={result} {play} media={search.media} episode={search.episode} />
           {/if}
         {/each}
       {/if}
     {/if}
-    {#each filterResults(lookup, searchText) as result}
+    {#each filteredLookup as result}
       {#if ((best?.link !== result.link) && (best?.hash !== result.hash)) && (!lastMagnet || (((result.link !== lastMagnet.link) || (result.hash !== lastMagnet.hash)) || (result.seeders ?? 0) <= 1))}
         <TorrentCard {result} {play} media={search.media} episode={search.episode} />
       {/if}
@@ -659,11 +679,7 @@
           {@const extensionName = `${(extension.name).slice(0, 25)}${extension?.name?.length > 25 ? '...' : ''}`}
           {#await extension.promise}
             <TorrentCardSk name={extensionName} icon={extension.icon || 'none'} />
-          {:then resolved}
-            {#if !resolved?.errors?.length}
-              {addResults(resolved, { name: extensionName, icon: extension.icon })}
-            {/if}
-          {/await}
+          {:then}{/await}
         {/each}
       {/await}
     {/if}
@@ -671,14 +687,20 @@
       {#each Array.from({ length: $results?.torrents?.length ? Math.max(15 - $results.torrents.length, 0) : 15 }) as _}
         <TorrentCardSk />
       {/each}
+    {:else if !$results?.torrents?.length && !errorCardOnly}
+      {#await errors then errorResult}
+        {#if !errorResult?.errors?.length}
+          <EmptyState icon={SearchX} title='No releases found' hint='The sources answered but none of them hold this episode. Try another quality, or paste a magnet link or torrent file in the box above.' />
+        {/if}
+      {/await}
     {/if}
-    {#if lookupHidden?.length && $results?.torrents?.length && filterResults(lookupHidden, searchText)?.length}
+    {#if lookupHidden?.length && $results?.torrents?.length && filteredHidden?.length}
       <button type='button' class='long-button mb-10 control bd-highlight h-50 btn w-full p-5 rounded-3 d-flex align-items-center font-size-16 font-weight-semi-bold overflow-hidden' class:bg-dark={!viewHidden} class:bg-primary={viewHidden} use:click={()=> { viewHidden = !viewHidden }}>
         <span class='ml-20'>{lookupHidden?.length} {cachedOnly ? `Result${lookupHidden?.length > 1 ? 's' : ''} Not Cached` : `Unseeded Result${lookupHidden?.length > 1 ? 's' : ''} (Unavailable)`}</span>
         <svelte:component this={ viewHidden ? ChevronUp : ChevronDown } class='ml-auto mr-10' size='2.2rem' />
       </button>
       {#if viewHidden}
-        {#each filterResults(lookupHidden, searchText) as result}
+        {#each filteredHidden as result}
           {#if (!best || ((best.link !== result.link) && (best.hash !== result.hash))) && (!lastMagnet || (((result.link !== lastMagnet.link) || (result.hash !== lastMagnet.hash)) || (result.seeders ?? 0) <= 1))}
             <div class='unavailable'><TorrentCard {result} {play} media={search.media} episode={search.episode} /></div>
           {/if}

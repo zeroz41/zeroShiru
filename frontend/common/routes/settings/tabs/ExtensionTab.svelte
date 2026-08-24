@@ -10,8 +10,9 @@
   import { slide } from 'svelte/transition'
   import { marked } from 'marked'
   import DOMPurify from 'dompurify'
-  import { TriangleAlert, CircleAlert, Github, Folder, FileQuestion, Trash2, CircleX, ChevronDown, ChevronUp, SquarePlus, Settings, RefreshCw } from 'lucide-svelte'
+  import { TriangleAlert, CircleAlert, Github, Folder, FileQuestion, Trash2, CircleX, ChevronDown, ChevronUp, SquarePlus, Settings, RefreshCw, Puzzle } from 'lucide-svelte'
   import Adult from '@/components/icons/Adult.svelte'
+  import EmptyState from '@/components/cards/EmptyState.svelte'
   export let settings
 
   const activeWorkers = extensionManager.activeWorkers
@@ -19,12 +20,12 @@
   const updateExtensionSettings = debounce((key) => extensionManager.updateExtensionSettings(key), 500)
   const npmIcon = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcBAMAAACAI8KnAAAALVBMVEXLAADKAADMERHVSkrURkb////eeXnghITfgIDstrbFAADJAADhiorPJCTVSUliGH6+AAAAUklEQVR4AWMgETAKQoEAmKvsAgVGYEnTUCgIFmBgYmAQgOtiAHERACdXSNkBmevi/AGZyxrwAU3v4OJ+gLACGP7DA8dZgOGeixEi6ECUAIlhDgBoOA7wXH0RDQAAAABJRU5ErkJggg=='
 
-  $: mainTab = true
-  $: viewSources = false
-  $: viewSettings = {}
-  $: pendingSource = false
-  $: pendingReload = false
-  $: failedSource = null
+  let mainTab = true
+  let viewSources = false
+  let viewSettings = {}
+  let pendingSource = false
+  let pendingReload = false
+  let failedSource = null
   $: availableSources = (settings.extensionsNew && cache.getEntry(caches.EXTENSIONS, 'repositorySources')) || {}
   $: availableExtensions = (settings.extensionsNew && cache.getEntry(caches.EXTENSIONS, 'extensionSources')) || {}
 
@@ -197,15 +198,11 @@
   <div class='wm-1200 w-full'>
     <div class='w-full d-flex flex-column mb-10'>
       {#if !Object.values(availableExtensions)?.length}
-        <div class='card m-0 p-15 mb-10 solid-border bg-error'>
-          <div class='d-flex'>
-            <TriangleAlert size='4.3rem' />
-            <div class='ml-10 mb-5 mb-md-0'>
-              <div class='font-size-18 font-weight-bold'>No Extensions Installed</div>
-              <div class='text-muted pre-wrap'>This is not a bug, extensions are not included by default. Visit the <u>Sources</u> tab to add an extension source.</div>
-            </div>
-          </div>
-        </div>
+        <EmptyState icon={Puzzle} title='No extensions installed' hint='Extensions are not included by default — add a source and its extensions appear here.'>
+          <button type='button' class='btn pill px-25 shadow-none border-0 d-flex align-items-center justify-content-center' use:click={() => { mainTab = false; viewSettings = {} }}>
+            <span>Browse Sources</span>
+          </button>
+        </EmptyState>
       {:else}
         {#each Object.values(availableExtensions).sort((a, b) => (settings.extensionsNew[getKey(b)]?.enabled ? 1 : 0) - (settings.extensionsNew[getKey(a)]?.enabled ? 1 : 0)) as extension (getKey(extension))}
           {#if !extension?.nsfw || (settings.adult !== 'none')}
@@ -480,8 +477,23 @@
   .mw-300 {
     max-width: 30rem;
   }
-  .solid-border {
-    border: .1rem solid;
+  .pill {
+    background: var(--tertiary-color) !important;
+    color: var(--highlight-color) !important;
+    border-radius: 5rem;
+    font-weight: 700;
+    box-shadow: 0 .4rem 1.8rem hsla(var(--tertiary-color-hsl), .45);
+    transition: scale var(--motion) var(--ease-settle);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .pill:hover {
+      background: var(--tertiary-color-light) !important;
+      scale: 1.03;
+    }
+  }
+  .pill:active {
+    scale: 1;
+    transition: scale var(--motion-press) var(--ease-press);
   }
   .sourceIcon {
     width: 2.2rem;
@@ -516,7 +528,7 @@
     left: -1.2rem;
   }
   .error-indicator {
-    animation: wiggle 4s ease-in-out infinite;
+    animation: wiggle .9s ease-in-out 1;
     transition: filter 0.2s ease;
   }
   .error-indicator:hover {
@@ -527,13 +539,12 @@
   }
   @keyframes wiggle {
     0% { transform: rotate(0deg); }
-    2% { transform: rotate(-15deg); }
-    4% { transform: rotate(15deg); }
-    6% { transform: rotate(-12deg); }
-    8% { transform: rotate(12deg); }
-    10% { transform: rotate(-8deg); }
-    12% { transform: rotate(8deg); }
-    14% { transform: rotate(0deg); }
+    14% { transform: rotate(-15deg); }
+    28% { transform: rotate(15deg); }
+    42% { transform: rotate(-12deg); }
+    56% { transform: rotate(12deg); }
+    70% { transform: rotate(-8deg); }
+    84% { transform: rotate(8deg); }
     100% { transform: rotate(0deg); }
   }
   @keyframes attention {

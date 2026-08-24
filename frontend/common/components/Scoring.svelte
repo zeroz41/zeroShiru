@@ -6,6 +6,7 @@
   import { SUPPORTS } from '@/modules/support.js'
   import { click } from '@/modules/lib/click.js'
   import { writable } from 'simple-store-svelte'
+  import { onDestroy } from 'svelte'
   import { toast } from 'svelte-sonner'
   import { X, Bookmark, PencilLine } from 'lucide-svelte'
   import Helper from '@/modules/providers/helper.js'
@@ -19,7 +20,18 @@
 
   let scoringModal
   const showModal = writable(false)
-  $: setTimeout(() => $showModal && scoringModal?.focus())
+  /* focus once, on the opening transition: the old `$: setTimeout(...)` armed a fresh
+     uncancelled timer on every reactive pass this component made */
+  let focusTimeout
+  let wasOpen = false
+  $: {
+    if ($showModal && !wasOpen) {
+      clearTimeout(focusTimeout)
+      focusTimeout = setTimeout(() => scoringModal?.focus())
+    }
+    wasOpen = $showModal
+  }
+  onDestroy(() => clearTimeout(focusTimeout))
 
   let score = 0
   let status = 'NOT IN LIST'

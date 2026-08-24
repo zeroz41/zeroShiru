@@ -157,24 +157,12 @@
     opacity: .75;
     padding: 0.2rem 2rem;
   }
+  /* the donator badge sits still now: an accent wash instead of a 13-stop
+     rainbow repaint that ran forever */
   .bubble {
     top: 4rem;
     right: 1.6rem;
-    animation: bubble-animation 10s linear infinite;
-  }
-  @keyframes bubble-animation {
-    0%   { background-color: rgba(0, 105, 255, .9); }
-    10%  { background-color: rgba(100, 0, 255, .9); }
-    20%  { background-color: rgba(255, 0, 139, .9); }
-    30%  { background-color: rgba(255, 0, 0, .9); }
-    40%  { background-color: rgba(255, 96, 0, .9); }
-    50%  { background-color: rgba(202, 255, 0, .9); }
-    60%  { background-color: rgba(0, 255, 139, .9); }
-    70%  { background-color: rgba(202, 255, 0, .9); }
-    80%  { background-color: rgba(255, 96, 0, .9); }
-    85%  { background-color: rgba(255, 0, 0, .9); }
-    90%  { background-color: rgba(255, 0, 139, .9); }
-    95%  { background-color: rgba(100, 0, 255, .9); }
-    100% { background-color: rgba(0, 105, 255, .9); }
+    background: hsla(var(--tertiary-color-hsl), .3);
+    box-shadow: inset 0 0 0 .1rem hsla(var(--tertiary-color-hsl), .45);
   }
 </style>

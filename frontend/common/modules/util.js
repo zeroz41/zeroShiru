@@ -1,5 +1,5 @@
 import { SUPPORTS } from '@/modules/support.js'
-import { writable } from 'simple-store-svelte'
+import { readable, writable } from 'simple-store-svelte'
 import { cubicOut, cubicIn } from 'svelte/easing'
 import levenshtein from 'js-levenshtein'
 import Fuse from 'fuse.js'
@@ -130,6 +130,18 @@ export const baseFontSize = (() => {
  * @param {MutationObserverInit} options
  * @returns {(node: HTMLElement) => { destroy: () => void }}
  */
+/**
+ * One shared clock for every airing countdown on screen: ticks once a minute while
+ * anyone is subscribed. A schedule page mounts ~50 airing cards, and each used to run
+ * its own sixty-second setInterval (and clear it with clearTimeout).
+ */
+export const minuteTick = readable(0, set => {
+  let minutes = 0
+  const interval = setInterval(() => set(++minutes), 60_000)
+  interval.unref?.()
+  return () => clearInterval(interval)
+})
+
 export function mutationObserver(callback, options = {}) {
   return (node) => {
     const observer = new MutationObserver(callback)
@@ -896,4 +908,20 @@ export function matchFontFiles (files) {
     if (fontRx.test(file.name)) fonts.set(file.name, file)
   }
   return [...fonts.values()]
+}
+
+/**
+ * The cover variant a rail card should decode. The cards all asked for `extraLarge`
+ * (~460x650, ~1.2MB DECODED) to paint a ~230px-wide poster; WebKit's in-process image
+ * cache tops out around 128MB, so two screens of rails filled it and the engine purged
+ * and re-decoded covers continuously while the user scrolled — the pop-in. `large`
+ * (~230x326) is a near-exact fit at standard density and a quarter of the memory;
+ * high-density screens keep the sharp variant, they have the pixels to show it.
+ * @param {{ extraLarge?: string, large?: string, medium?: string } | null | undefined} coverImage
+ * @param {number} [pixelRatio] Device density; injectable so the choice is testable.
+ * @returns {(string | undefined)[]} Candidates, best first.
+ */
+export function railCover (coverImage, pixelRatio = globalThis.devicePixelRatio || 1) {
+  if (pixelRatio > 1.5) return [coverImage?.extraLarge, coverImage?.large, coverImage?.medium]
+  return [coverImage?.large, coverImage?.extraLarge, coverImage?.medium]
 }

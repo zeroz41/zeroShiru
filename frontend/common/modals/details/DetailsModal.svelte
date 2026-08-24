@@ -137,6 +137,9 @@
   }
 
   let rightColumn
+  // deliberately JS, not CSS: flex and grid both size a row to its TALLEST column, and this
+  // needs the inverse — the episode list pinned to the left column's height without ever
+  // adding its own. The absolute-fill trick would change the list's containing block.
   const syncColumnHeights = resizeObserver((node) => {
     if (rightColumn) {
       const leftHeight = node.offsetHeight
@@ -249,7 +252,7 @@
           <div use:resetScroll={staticMedia?.id} class='m-0 px-20 pb-0 pt-10 d-flex flex-row text-nowrap overflow-x-scroll text-capitalize align-items-start'>
             {#each staticMedia.tags as tag}
               {#if !(hasSpoiler && ((tag.isGeneralSpoiler && ['strict', 'hermit'].includes($settings.spoilers)) || (tag.isMediaSpoiler && ['moderate', 'strict', 'hermit'].includes($settings.spoilers))))}
-                <div class='bg-dark-light px-20 py-10 mr-10 rounded text-nowrap d-flex align-items-center'>
+                <div class='chip px-20 py-10 mr-10 text-nowrap d-flex align-items-center'>
                   <Hash class='mr-5' size='1.8rem' /><span class='font-weight-bolder select-all'>{tag.name}</span><span class='font-weight-light'>: {tag.rank}%</span>
                 </div>
               {/if}
@@ -257,24 +260,18 @@
           </div>
           <div use:resetScroll={staticMedia?.id} class='m-0 px-20 pb-0 pt-10 d-flex flex-row text-nowrap overflow-x-scroll text-capitalize align-items-start'>
             {#each staticMedia.genres as genre}
-              <div class='bg-dark-light px-20 py-10 mr-10 rounded text-nowrap d-flex align-items-center select-all'><svelte:component this={genreIcons[genre]} class='mr-5' size='1.8rem' /> {genre}</div>
+              <div class='chip px-20 py-10 mr-10 text-nowrap d-flex align-items-center select-all'><svelte:component this={genreIcons[genre]} class='mr-5' size='1.8rem' /> {genre}</div>
             {/each}
           </div>
           {#if staticMedia.description}
-            <div class='w-full d-flex flex-row align-items-center pt-20 mt-10'>
-              <hr class='w-full' />
-              <div class='font-size-18 font-weight-semi-bold px-20 text-white'>Synopsis</div>
-              <hr class='w-full' />
-            </div>
+            <div class='section-title font-scale-24 font-weight-bold pt-20 mt-10'>Synopsis</div>
             <div class='font-size-16 pt-20 select-all' class:text-spoiler={hasSpoiler && ['strict', 'hermit'].includes($settings.spoilers)}>
               {@html sanitize(staticMedia.description)}
             </div>
           {/if}
           {#if episodeList?.length}
             <div class='w-full d-flex d-lg-none flex-row align-items-center pt-20 mt-10 pointer' aria-hidden='true' use:click={() => { episodeOrder = !episodeOrder }}>
-              <hr class='w-full' />
-              <div class='position-absolute font-size-18 font-weight-semi-bold px-20 text-white' style='left: 50%; transform: translateX(-50%);'>Episodes</div>
-              <hr class='w-full' />
+              <div class='section-title font-scale-24 font-weight-bold'>Episodes</div>
               <div class='ml-auto pl-20 font-size-12 more text-muted text-nowrap pr-20' use:click={() => { episodeOrder = !episodeOrder }}>Reverse</div>
             </div>
           {/if}
@@ -357,5 +354,25 @@
   }
   .cover {
     aspect-ratio: 7/10;
+  }
+  /* the section-title treatment the home rails use, instead of the double-hr band */
+  .section-title {
+    color: var(--highlight-color);
+    display: flex;
+    align-items: center;
+  }
+  .section-title::before {
+    content: '';
+    width: 0.45rem;
+    height: 1.05em;
+    margin-right: 1rem;
+    border-radius: 5rem;
+    background: linear-gradient(180deg, var(--tertiary-color-light), var(--tertiary-color));
+  }
+  /* tags and genres as washes with light text, not flat solid blocks */
+  .chip {
+    border-radius: 5rem;
+    background: hsla(var(--tertiary-color-hsl), .16);
+    box-shadow: inset 0 0 0 .1rem hsla(var(--tertiary-color-hsl), .35);
   }
 </style>

@@ -221,7 +221,7 @@
       const episodeNumber = episode - (zeroAsFirstEpisode ? 1 : 0)
       const foundTitle = (media?.status === 'FINISHED' || (validatedAiringAt && new Date(validatedAiringAt).getTime() <= (Date.now() + 7 * 24 * 60 * 60 * 1000))) ? title || newTitle?.jp || oldTitle?.jp : null
       built++
-      result[episodeNumber - (!zeroEpisode ? 1 : 0)] = { zeroEpisode, episode: episodeNumber, image: (media?.status === 'FINISHED' || (validatedAiringAt && new Date(validatedAiringAt).getTime() <= (Date.now() + 7 * 24 * 60 * 60 * 1000))) ? episode === 0 ? zeroEpisode[0]?.thumbnail : result.some((ep) => ep.image === (image || streamingThumbnail) && ep.episode !== episodeNumber) ? null : (image || streamingThumbnail) : null, summary: (media?.status === 'FINISHED' || (validatedAiringAt && new Date(validatedAiringAt).getTime() <= Date.now()) || ((episode === 0 || episode === 1) && !validatedAiringAt && media?.status === 'RELEASING')) ? episode === 0 ? (zeroSummary || summary || overview) : result.some((ep) => ep.summary === (summary || overview) && ep.episode !== episodeNumber) ? null : (summary || overview) : `This episode ${validatedAiringAt || (media?.status === 'NOT_YET_RELEASED' && (media?.startDate?.month || media?.season || media?.seasonYear)) ? `will be released ${validatedAiringAt || media?.startDate?.month ? `${validatedAiringAt ? `on` : `in`} ${monthDay(validatedAiringAt || new Date(media.startDate.year, media.startDate.month, media.startDate.day), !validatedAiringAt)}` : `in ${media?.season ? capitalize(media?.season?.toLowerCase()) : ''} ${media?.seasonYear || ''}`}.` : ` is in production and does not have an estimated release date.`}`, rating, title: foundTitle && media?.episodes === 1 && (foundTitle.match(/ web|web |movie/i) || foundTitle.toLowerCase() === 'web') ? 'The Movie' : foundTitle, length: media?.status === 'FINISHED' || validatedAiringAt ? lastDuration : null, airdate: validatedAiringAt, airingAt: validatedAiringAt, filler, dubAiring: !zeroEpisode ? _dubAiring : dubbedEpisode(episodeNumber - 1, media) }
+      result[episodeNumber - (!zeroEpisode ? 1 : 0)] = { zeroEpisode, episode: episodeNumber, image: (media?.status === 'FINISHED' || (validatedAiringAt && new Date(validatedAiringAt).getTime() <= (Date.now() + 7 * 24 * 60 * 60 * 1000))) ? episode === 0 ? zeroEpisode[0]?.thumbnail : result.some((ep) => ep.image === (image || streamingThumbnail) && ep.episode !== episodeNumber) ? null : (image || streamingThumbnail) : null, summary: (media?.status === 'FINISHED' || (validatedAiringAt && new Date(validatedAiringAt).getTime() <= Date.now()) || ((episode === 0 || episode === 1) && !validatedAiringAt && media?.status === 'RELEASING')) ? episode === 0 ? (zeroSummary || summary || overview) : result.some((ep) => ep.summary === (summary || overview) && ep.episode !== episodeNumber) ? null : (summary || overview) : `This episode ${validatedAiringAt || (media?.status === 'NOT_YET_RELEASED' && (media?.startDate?.month || media?.season || media?.seasonYear)) ? `will be released ${validatedAiringAt || media?.startDate?.month ? `${validatedAiringAt ? `on` : `in`} ${monthDay(validatedAiringAt || new Date(media.startDate.year, media.startDate.month, media.startDate.day), !validatedAiringAt)}` : `in ${media?.season ? capitalize(media?.season?.toLowerCase()) : ''} ${media?.seasonYear || ''}`}.` : ` is in production and does not have an estimated release date.`}`, rating, title: foundTitle && media?.episodes === 1 && (foundTitle.match(/ web|web |movie/i) || foundTitle.toLowerCase() === 'web') ? 'The Movie' : foundTitle, length: media?.status === 'FINISHED' || validatedAiringAt ? lastDuration : null, airdate: validatedAiringAt, airingAt: validatedAiringAt, filler: await filler, dubAiring: await (!zeroEpisode ? _dubAiring : dubbedEpisode(episodeNumber - 1, media)) }
       // every row that fits on screen is ready, so show them and let the rest fill in
       // behind. The loop stays ordered — each air date is validated against the last —
       // this only stops the user waiting on rows they cannot see yet
@@ -242,7 +242,12 @@
     return result?.length > 0 ? result : null
   }
 
-  $: if (media) {
+  /** Which show the list is built for. Resetting on the media OBJECT re-ran the whole
+   * load — and blanked every episode image — any time a parent re-render produced a new
+   * object for the same show (a progress save does exactly that). */
+  let loadedId = null
+  $: if (media && media.id !== loadedId) {
+    loadedId = media.id
     episodeList = []
     episodeOrder = true
     currentEpisodes = []
@@ -302,12 +307,12 @@
 
 <div bind:this={container} class='episode-list overflow-y-auto overflow-x-hidden {$$restProps.class}' on:scroll={handleScroll}>
   {#if currentEpisodes?.length}
-      {#each currentEpisodes as { zeroEpisode, episode, image, summary, rating, title, length, airdate, filler, dubAiring}, index}
-        {#await Promise.all([title, filler, dubAiring, currentEpisodes[episodeOrder ? index - 1 : index + 1]?.dubAiring])}
-          <div class='w-full px-20 content-visibility-auto scale h-150' class:h-165={SUPPORTS.isAndroid} class:my-20={!mobileList || index !== 0}>
-            <EpisodeListSk/>
-          </div>
-        {:then [title, filler, dubAiring, nextDubAiring]}
+      <!-- keyed by episode, and every field is a resolved VALUE: an unkeyed {#await
+           Promise.all(...)} here built a brand-new promise on every re-render of the row,
+           dropping back to the skeleton and destroying the episode image beneath it —
+           ten times a second, courtesy of the renderVisible interval -->
+      {#each currentEpisodes as { zeroEpisode, episode, image, summary, rating, title, length, airdate, filler, dubAiring}, index (episode)}
+        {@const nextDubAiring = currentEpisodes[episodeOrder ? index - 1 : index + 1]?.dubAiring}
           {#if media?.status === 'FINISHED' || (episodeOrder ? (index === 0 || ((currentEpisodes[index - 1]?.airdate && (new Date(currentEpisodes[index - 1].airdate).getTime() <= new Date().getTime())) || (media?.status !== 'NOT_YET_RELEASED' && airdate && currentEpisodes[index - 1]?.airdate && (currentEpisodes[index - 1]?.airdate === airdate)) || (nextDubAiring?.airdate && new Date(nextDubAiring.airdate).getTime() === new Date(dubAiring.airdate).getTime()))) : (index === currentEpisodes.length - 1 || (currentEpisodes[index + 1]?.airdate && (new Date(currentEpisodes[index + 1]?.airdate).getTime() <= new Date().getTime())) || (currentEpisodes[index + 1]?.airdate && currentEpisodes[index + 1]?.airdate === airdate) || (nextDubAiring?.airdate && new Date(nextDubAiring.airdate).getTime() === new Date(dubAiring.airdate).getTime())))}
             {@const unreleased = media?.status !== 'FINISHED' && ((airdate && new Date(airdate).getTime() > new Date()) || (!airdate && (episode > 1 || media?.status === 'NOT_YET_RELEASED')))}
             {@const completed = !watched && userProgress >= (episode + (zeroEpisode ? 1 : 0))}
@@ -318,7 +323,7 @@
             {@const resolvedTitle = (isSpoiler && ['strict', 'hermit'].includes($settings.spoilers)) || episodeList.filter((ep) => ep.episode < episode).some((ep) => matchPhrase(ep.title, title, 0.1, true)) ? null : title}
             {@const largeCard = image}
             {@const resolvedHash = ($completedTorrents || $seedingTorrents || $stagingTorrents || $loadedTorrent) && getHash(media?.id, { episode, client: true, batchGuess: true }, false, true)}
-            <div class='w-full content-visibility-auto scale my-20' class:load-in={!loadScroll} class:opacity-half={completed} class:scale-target={target} class:px-20={!target} class:px-10={target} class:h-150={!SUPPORTS.isAndroid && largeCard} class:h-165={SUPPORTS.isAndroid && largeCard}>
+            <div class='w-full scale my-20' class:load-in={!loadScroll} class:opacity-half={completed} class:scale-target={target} class:px-20={!target} class:px-10={target} class:h-150={!SUPPORTS.isAndroid && largeCard} class:h-165={SUPPORTS.isAndroid && largeCard}>
               <div role='button' tabindex='0' class='episode-card rounded-2 w-full h-full overflow-hidden d-flex flex-xsm-column flex-row position-relative {unreleased ? `unreleased not-allowed` : `pointer`}' class:not-reactive={!$reactive} class:smallCard={!largeCard} class:android={SUPPORTS.isAndroid}  class:border={target || hasFiller} class:bg-black={completed} class:border-secondary={hasFiller} class:bg-dark-light={!completed} use:click={() => play(media, episode)} on:contextmenu|preventDefault={() => play(media, episode, true)}>
                 <div class='unreleased-overlay position-absolute top-0 left-0 right-0 h-full pointer-events-none rounded-2' class:d-none={!unreleased}/>
                 {#if image}
@@ -421,7 +426,6 @@
               </div>
             </div>
           {/if}
-        {/await}
       {/each}
   {:else}
     {#await (episodeLoad || mobileWait(() => episodeList?.length > 0 || !episodeList)?.then(() => episodeList))}
@@ -430,7 +434,14 @@
           <EpisodeListSk />
         </div>
       {/each}
-    {:then _}{/await}
+    {:then _}
+      <!-- a load that resolved with nothing used to leave this column blank forever
+           after the skeletons vanished; say so instead -->
+      <div class='w-full px-20 my-20 py-30 d-flex flex-column align-items-center justify-content-center text-muted'>
+        <div class='font-size-16 font-weight-bold'>No episodes listed yet</div>
+        <div class='font-size-12 mt-5'>Episode details appear once this release has aired or been indexed.</div>
+      </div>
+    {/await}
   {/if}
 </div>
 
@@ -441,6 +452,7 @@
   }
   .unreleased {
     filter: blur(.06rem) grayscale(50%);
+    transition: filter var(--motion) var(--ease-settle);
   }
   .unreleased:hover, .unreleased:focus {
     filter: blur(0) grayscale(20%);
@@ -461,13 +473,13 @@
     word-break: break-all;
   }
   .scale {
-    transition: opacity .2s ease-in-out, transform .2s ease-in-out, padding .1s ease-in-out;
+    transition: opacity .2s ease-in-out, scale .2s ease-in-out, padding .1s ease-in-out;
   }
   .scale:hover, .scale:focus {
-    transform: scale(1.035);
+    scale: 1.035;
   }
   .scale-target:hover, .scale-target:focus {
-    transform: scale(1.015) !important;
+    scale: 1.015 !important;
   }
   .episode-card .torrent-button-container {
     opacity: 0;
@@ -518,34 +530,34 @@
 
   @media (min-width: 1920px) {
     .scale:hover, .scale:focus {
-      transform: scale(1.04);
+      scale: 1.04;
     }
     .scale-target:hover, .scale-target:focus {
-      transform: scale(1.02) !important;
+      scale: 1.02 !important;
     }
   }
   @media (min-width: 2400px) {
     .scale:hover, .scale:focus {
-      transform: scale(1.03);
+      scale: 1.03;
     }
     .scale-target:hover, .scale-target:focus {
-      transform: scale(1.015) !important;
+      scale: 1.015 !important;
     }
   }
   @media (min-width: 3360px) {
     .scale:hover, .scale:focus {
-      transform: scale(1.02);
+      scale: 1.02;
     }
     .scale-target:hover, .scale-target:focus {
-      transform: scale(1.01) !important;
+      scale: 1.01 !important;
     }
   }
   @media (min-width: 4800px) {
     .scale:hover, .scale:focus {
-      transform: scale(1.01);
+      scale: 1.01;
     }
     .scale-target:hover, .scale-target:focus {
-      transform: scale(1.005) !important;
+      scale: 1.005 !important;
     }
   }
 </style>
