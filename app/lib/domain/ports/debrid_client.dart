@@ -3,6 +3,11 @@ import '../models/torrent.dart';
 
 enum DebridService { alldebrid, premiumize, realdebrid, torbox }
 
+/// Stable OS-keyring entry for one provider. This identifier is not secret;
+/// the credential it names never belongs in ordinary settings storage.
+String debridCredentialKey(DebridService service) =>
+    'debrid_api_key_${service.name}';
+
 /// Error vocabulary shared with the UI's outage notices. Mirrors the redo
 /// branch's kind contract: auth | network | timeout | not-cached |
 /// unavailable | rejected | service.

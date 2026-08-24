@@ -1,19 +1,16 @@
-/// Settings <-> JSON, plus copyWith. The Settings model in domain/ is an
-/// immutable const schema, so the mutation and serialization helpers live
-/// here in infrastructure.
+/// Settings <-> JSON. Immutable updates live on the domain model; persistence
+/// and tolerant decoding stay here in infrastructure.
 ///
 /// Standing contract: API keys are never ordinary settings entries. That is
 /// structural — [SettingsJson.toJson] simply has no `debridApiKeys` field, so
 /// nothing that serializes Settings can leak a key into the kv table. Keys
 /// live in the CredentialStore (OS keyring) and are joined back in memory by
-/// the application layer via [SettingsJson.copyWith].
+/// the application layer via [Settings.copyWith].
 library;
 
 import '../../domain/models/debrid_route.dart';
 import '../../domain/models/settings.dart';
 import '../../domain/ports/debrid_client.dart';
-
-const Object _unset = Object();
 
 extension SettingsJson on Settings {
   /// Everything persistable. Deliberately absent: `debridApiKeys`.
@@ -48,79 +45,6 @@ extension SettingsJson on Settings {
     'seedingLimit': seedingLimit,
     'torrentPath': torrentPath,
   };
-
-  /// Field-wise copy. `debridService` distinguishes "leave alone" (omitted)
-  /// from "clear" (explicit null) via a sentinel.
-  Settings copyWith({
-    String? titleLanguage,
-    String? cardSize,
-    String? adultContent,
-    bool? preferDubs,
-    double? volume,
-    bool? playerAutoplay,
-    bool? playerPauseOnLostFocus,
-    bool? playerAutocomplete,
-    int? playerAutocompleteThreshold,
-    int? playerSeekStep,
-    String? playerChapterSkip,
-    bool? enableExternalPlayer,
-    String? externalPlayerPath,
-    String? audioLanguage,
-    String? subtitleLanguage,
-    String? rssQuality,
-    bool? rssAutoplay,
-    String? torrentSort,
-    bool? torrentAutoScrape,
-    Object? debridService = _unset,
-    Map<DebridService, String>? debridApiKeys,
-    DebridMode? debridMode,
-    bool? debridCachedOnly,
-    bool? debridCacheCheck,
-    int? torrentSpeedBytes,
-    bool? torrentPersist,
-    bool? torrentStreamedDownload,
-    int? maxConnections,
-    int? seedingLimit,
-    String? torrentPath,
-  }) {
-    return Settings(
-      titleLanguage: titleLanguage ?? this.titleLanguage,
-      cardSize: cardSize ?? this.cardSize,
-      adultContent: adultContent ?? this.adultContent,
-      preferDubs: preferDubs ?? this.preferDubs,
-      volume: volume ?? this.volume,
-      playerAutoplay: playerAutoplay ?? this.playerAutoplay,
-      playerPauseOnLostFocus:
-          playerPauseOnLostFocus ?? this.playerPauseOnLostFocus,
-      playerAutocomplete: playerAutocomplete ?? this.playerAutocomplete,
-      playerAutocompleteThreshold:
-          playerAutocompleteThreshold ?? this.playerAutocompleteThreshold,
-      playerSeekStep: playerSeekStep ?? this.playerSeekStep,
-      playerChapterSkip: playerChapterSkip ?? this.playerChapterSkip,
-      enableExternalPlayer: enableExternalPlayer ?? this.enableExternalPlayer,
-      externalPlayerPath: externalPlayerPath ?? this.externalPlayerPath,
-      audioLanguage: audioLanguage ?? this.audioLanguage,
-      subtitleLanguage: subtitleLanguage ?? this.subtitleLanguage,
-      rssQuality: rssQuality ?? this.rssQuality,
-      rssAutoplay: rssAutoplay ?? this.rssAutoplay,
-      torrentSort: torrentSort ?? this.torrentSort,
-      torrentAutoScrape: torrentAutoScrape ?? this.torrentAutoScrape,
-      debridService: identical(debridService, _unset)
-          ? this.debridService
-          : debridService as DebridService?,
-      debridApiKeys: debridApiKeys ?? this.debridApiKeys,
-      debridMode: debridMode ?? this.debridMode,
-      debridCachedOnly: debridCachedOnly ?? this.debridCachedOnly,
-      debridCacheCheck: debridCacheCheck ?? this.debridCacheCheck,
-      torrentSpeedBytes: torrentSpeedBytes ?? this.torrentSpeedBytes,
-      torrentPersist: torrentPersist ?? this.torrentPersist,
-      torrentStreamedDownload:
-          torrentStreamedDownload ?? this.torrentStreamedDownload,
-      maxConnections: maxConnections ?? this.maxConnections,
-      seedingLimit: seedingLimit ?? this.seedingLimit,
-      torrentPath: torrentPath ?? this.torrentPath,
-    );
-  }
 }
 
 /// Tolerant decode: unknown fields ignored, missing or mistyped fields fall

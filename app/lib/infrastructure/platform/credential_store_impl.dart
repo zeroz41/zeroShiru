@@ -19,7 +19,7 @@ class SecureCredentialStore implements CredentialStore {
   /// One key per debrid service — switching services never loses a key, and
   /// no key is ever sent to another service's API.
   static String debridKeyFor(DebridService service) =>
-      'debrid_api_key_${service.name}';
+      debridCredentialKey(service);
 
   @override
   Future<String?> read(String key) => _storage.read(key: key);

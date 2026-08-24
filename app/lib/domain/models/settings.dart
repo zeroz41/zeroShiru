@@ -1,6 +1,8 @@
 import '../ports/debrid_client.dart';
 import 'debrid_route.dart';
 
+const Object _unsetSetting = Object();
+
 /// Typed application settings with the redo branch's defaults. Persisted as a
 /// keyed map by SettingsRepository; this class is the schema.
 class Settings {
@@ -88,4 +90,77 @@ class Settings {
 
   String? get activeDebridKey =>
       debridService == null ? null : debridApiKeys[debridService];
+
+  /// Field-wise immutable update. [debridService] distinguishes an omitted
+  /// value from an explicit `null`, which disables the selected service.
+  Settings copyWith({
+    String? titleLanguage,
+    String? cardSize,
+    String? adultContent,
+    bool? preferDubs,
+    double? volume,
+    bool? playerAutoplay,
+    bool? playerPauseOnLostFocus,
+    bool? playerAutocomplete,
+    int? playerAutocompleteThreshold,
+    int? playerSeekStep,
+    String? playerChapterSkip,
+    bool? enableExternalPlayer,
+    String? externalPlayerPath,
+    String? audioLanguage,
+    String? subtitleLanguage,
+    String? rssQuality,
+    bool? rssAutoplay,
+    String? torrentSort,
+    bool? torrentAutoScrape,
+    Object? debridService = _unsetSetting,
+    Map<DebridService, String>? debridApiKeys,
+    DebridMode? debridMode,
+    bool? debridCachedOnly,
+    bool? debridCacheCheck,
+    int? torrentSpeedBytes,
+    bool? torrentPersist,
+    bool? torrentStreamedDownload,
+    int? maxConnections,
+    int? seedingLimit,
+    String? torrentPath,
+  }) {
+    return Settings(
+      titleLanguage: titleLanguage ?? this.titleLanguage,
+      cardSize: cardSize ?? this.cardSize,
+      adultContent: adultContent ?? this.adultContent,
+      preferDubs: preferDubs ?? this.preferDubs,
+      volume: volume ?? this.volume,
+      playerAutoplay: playerAutoplay ?? this.playerAutoplay,
+      playerPauseOnLostFocus:
+          playerPauseOnLostFocus ?? this.playerPauseOnLostFocus,
+      playerAutocomplete: playerAutocomplete ?? this.playerAutocomplete,
+      playerAutocompleteThreshold:
+          playerAutocompleteThreshold ?? this.playerAutocompleteThreshold,
+      playerSeekStep: playerSeekStep ?? this.playerSeekStep,
+      playerChapterSkip: playerChapterSkip ?? this.playerChapterSkip,
+      enableExternalPlayer: enableExternalPlayer ?? this.enableExternalPlayer,
+      externalPlayerPath: externalPlayerPath ?? this.externalPlayerPath,
+      audioLanguage: audioLanguage ?? this.audioLanguage,
+      subtitleLanguage: subtitleLanguage ?? this.subtitleLanguage,
+      rssQuality: rssQuality ?? this.rssQuality,
+      rssAutoplay: rssAutoplay ?? this.rssAutoplay,
+      torrentSort: torrentSort ?? this.torrentSort,
+      torrentAutoScrape: torrentAutoScrape ?? this.torrentAutoScrape,
+      debridService: identical(debridService, _unsetSetting)
+          ? this.debridService
+          : debridService as DebridService?,
+      debridApiKeys: debridApiKeys ?? this.debridApiKeys,
+      debridMode: debridMode ?? this.debridMode,
+      debridCachedOnly: debridCachedOnly ?? this.debridCachedOnly,
+      debridCacheCheck: debridCacheCheck ?? this.debridCacheCheck,
+      torrentSpeedBytes: torrentSpeedBytes ?? this.torrentSpeedBytes,
+      torrentPersist: torrentPersist ?? this.torrentPersist,
+      torrentStreamedDownload:
+          torrentStreamedDownload ?? this.torrentStreamedDownload,
+      maxConnections: maxConnections ?? this.maxConnections,
+      seedingLimit: seedingLimit ?? this.seedingLimit,
+      torrentPath: torrentPath ?? this.torrentPath,
+    );
+  }
 }

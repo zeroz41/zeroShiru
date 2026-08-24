@@ -3,6 +3,7 @@
 library;
 
 import '../models/media.dart';
+import '../models/settings.dart';
 import '../models/torrent.dart';
 
 export 'catalog_repository.dart';
@@ -33,6 +34,9 @@ abstract interface class SettingsRepository {
   T read<T>(String key, T fallback);
   Future<void> write<T>(String key, T value);
   Stream<void> get changes;
+
+  Settings readSettings();
+  Future<void> writeSettings(Settings settings);
 }
 
 abstract interface class CredentialStore {

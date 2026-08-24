@@ -76,6 +76,7 @@ class SqliteSettingsRepository implements SettingsRepository {
   /// The typed Settings model, decoded from [settingsKey]. Note that the
   /// result never carries API keys — the application layer joins those back
   /// in from the CredentialStore with `copyWith(debridApiKeys: ...)`.
+  @override
   Settings readSettings() {
     final json = read<Map<String, dynamic>>(settingsKey, const {});
     return settingsFromJson(json);
@@ -83,6 +84,7 @@ class SqliteSettingsRepository implements SettingsRepository {
 
   /// Persists the typed model. toJson has no debridApiKeys field, so keys in
   /// the in-memory Settings can never reach the database through this path.
+  @override
   Future<void> writeSettings(Settings settings) =>
       write(settingsKey, settings.toJson());
 

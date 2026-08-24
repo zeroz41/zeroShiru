@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 import 'app/app.dart';
 import 'application/library/providers.dart';
 import 'application/playback/providers.dart';
+import 'application/settings/providers.dart';
 import 'infrastructure/bootstrap/app_services.dart';
 
 Future<void> main() async {
@@ -48,6 +49,7 @@ Future<void> main() async {
           settingsRepositoryProvider.overrideWithValue(services.settings),
           credentialStoreProvider.overrideWithValue(services.credentials),
           playbackBackendProvider.overrideWithValue(services.playback),
+          debridClientsProvider.overrideWithValue(services.debrid),
         ],
         child: const ZeroShiruApp(),
       ),
