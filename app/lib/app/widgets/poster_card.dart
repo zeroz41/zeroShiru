@@ -25,9 +25,9 @@ class PosterCard extends StatefulWidget {
     this.airing = false,
     this.width = ShiruTokens.cardWidth,
   }) : assert(
-          image == null || imageBuilder == null,
-          'Provide image or imageBuilder, not both.',
-        );
+         image == null || imageBuilder == null,
+         'Provide image or imageBuilder, not both.',
+       );
 
   final String title;
 
@@ -135,13 +135,11 @@ class _PosterCardState extends State<PosterCard> {
         Positioned.fill(
           child: AnimatedOpacity(
             opacity: lifted ? 1 : (_pressed && hovered ? 0.4 : 0),
-            duration:
-                _pressed ? ShiruTokens.motionPress : ShiruTokens.motion,
+            duration: _pressed ? ShiruTokens.motionPress : ShiruTokens.motion,
             curve: ShiruTokens.easeSettle,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                borderRadius:
-                    BorderRadius.circular(ShiruTokens.radiusCard),
+                borderRadius: BorderRadius.circular(ShiruTokens.radiusCard),
                 boxShadow: ShiruTokens.liftShadow(widget.bloomColor),
               ),
             ),
@@ -170,8 +168,7 @@ class _PosterCardState extends State<PosterCard> {
         Positioned.fill(
           child: AnimatedOpacity(
             opacity: showHoverSkin ? 1 : 0,
-            duration:
-                _pressed ? ShiruTokens.motionPress : ShiruTokens.motion,
+            duration: _pressed ? ShiruTokens.motionPress : ShiruTokens.motion,
             curve: ShiruTokens.easeSettle,
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -190,8 +187,9 @@ class _PosterCardState extends State<PosterCard> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 ClipRRect(
-                  borderRadius:
-                      BorderRadius.circular(ShiruTokens.radiusPosterArt),
+                  borderRadius: BorderRadius.circular(
+                    ShiruTokens.radiusPosterArt,
+                  ),
                   child: AspectRatio(
                     aspectRatio: ShiruTokens.cardArtAspect,
                     child: _artwork(context),
@@ -254,9 +252,8 @@ class _PosterCardState extends State<PosterCard> {
         image: widget.image!,
         fit: BoxFit.cover,
         gaplessPlayback: true,
-        errorBuilder: (_, _, _) => const ColoredBox(
-          color: ShiruTokens.darkVeryLight,
-        ),
+        errorBuilder: (_, _, _) =>
+            const ColoredBox(color: ShiruTokens.darkVeryLight),
       );
     }
     return const ColoredBox(color: ShiruTokens.darkVeryLight);
@@ -301,8 +298,7 @@ class _AiringRingState extends State<_AiringRing>
         },
         child: DecoratedBox(
           decoration: BoxDecoration(
-            borderRadius:
-                BorderRadius.circular(ShiruTokens.radiusCard + 10),
+            borderRadius: BorderRadius.circular(ShiruTokens.radiusCard + 10),
             border: Border.all(color: ShiruTokens.greenLight, width: 1.5),
           ),
         ),

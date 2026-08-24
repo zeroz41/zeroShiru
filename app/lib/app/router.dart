@@ -38,10 +38,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
         ],
       ),
-      GoRoute(
-        path: '/player',
-        builder: (context, state) => const PlayerPage(),
-      ),
+      GoRoute(path: '/player', builder: (context, state) => const PlayerPage()),
     ],
   );
 });

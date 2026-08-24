@@ -33,8 +33,7 @@ class _AmbientDecoration extends Decoration {
   const _AmbientDecoration();
 
   @override
-  BoxPainter createBoxPainter([VoidCallback? onChanged]) =>
-      _AmbientPainter();
+  BoxPainter createBoxPainter([VoidCallback? onChanged]) => _AmbientPainter();
 }
 
 class _AmbientPainter extends BoxPainter {
@@ -47,8 +46,10 @@ class _AmbientPainter extends BoxPainter {
     canvas.clipRect(rect);
 
     // 3. Vertical settle: darkDim -> dark over 34rem, then flat dark.
-    final settleExtent =
-        ShiruTokens.ambientSettleExtent.clamp(1.0, size.height);
+    final settleExtent = ShiruTokens.ambientSettleExtent.clamp(
+      1.0,
+      size.height,
+    );
     canvas.drawRect(
       rect,
       Paint()
@@ -105,8 +106,7 @@ class _AmbientPainter extends BoxPainter {
     canvas.save();
     canvas.translate(center.dx, center.dy);
     canvas.scale(1, radiusY / radiusX);
-    final gradientRect =
-        Rect.fromCircle(center: Offset.zero, radius: radiusX);
+    final gradientRect = Rect.fromCircle(center: Offset.zero, radius: radiusX);
     canvas.drawRect(
       Rect.fromCenter(
         center: Offset.zero,

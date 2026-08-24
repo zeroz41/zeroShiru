@@ -60,10 +60,7 @@ void main() {
       expect(ShiruTokens.motionQuick, const Duration(milliseconds: 120));
       expect(ShiruTokens.motion, const Duration(milliseconds: 160));
       expect(ShiruTokens.motionPanel, const Duration(milliseconds: 240));
-      expect(
-        ShiruTokens.motionPageFade,
-        const Duration(milliseconds: 180),
-      );
+      expect(ShiruTokens.motionPageFade, const Duration(milliseconds: 180));
 
       const settle = ShiruTokens.easeSettle as Cubic;
       expect(settle.a, 0.16);
@@ -93,18 +90,9 @@ void main() {
       expect(theme.scaffoldBackgroundColor, ShiruTokens.dark);
       expect(theme.colorScheme.primary, ShiruTokens.accent);
       expect(theme.textTheme.bodyLarge?.fontFamily, 'Nunito');
-      expect(
-        theme.textTheme.headlineMedium?.fontSize,
-        ShiruTokens.fontScale24,
-      );
-      expect(
-        theme.textTheme.headlineMedium?.fontWeight,
-        FontWeight.w700,
-      );
-      expect(
-        theme.textTheme.displayMedium?.fontWeight,
-        FontWeight.w900,
-      );
+      expect(theme.textTheme.headlineMedium?.fontSize, ShiruTokens.fontScale24);
+      expect(theme.textTheme.headlineMedium?.fontWeight, FontWeight.w700);
+      expect(theme.textTheme.displayMedium?.fontWeight, FontWeight.w900);
       expect(theme.dialogTheme.backgroundColor, ShiruTokens.darkVeryDim);
     });
   });

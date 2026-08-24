@@ -35,13 +35,10 @@ void main() {
     expect(tapped, isTrue);
   });
 
-  testWidgets('PosterCard shows the AIRING badge when airing',
-      (tester) async {
+  testWidgets('PosterCard shows the AIRING badge when airing', (tester) async {
     await tester.pumpWidget(
       _app(
-        const Center(
-          child: PosterCard(title: 'Ongoing Show', airing: true),
-        ),
+        const Center(child: PosterCard(title: 'Ongoing Show', airing: true)),
       ),
     );
     expect(find.text('AIRING'), findsOneWidget);
@@ -56,11 +53,7 @@ void main() {
           title: 'Trending Now',
           children: [
             for (var i = 0; i < 5; i++)
-              SizedBox(
-                key: ValueKey('cell-$i'),
-                width: 146,
-                height: 180,
-              ),
+              SizedBox(key: ValueKey('cell-$i'), width: 146, height: 180),
           ],
         ),
       ),
@@ -107,19 +100,16 @@ void main() {
   });
 
   testWidgets('Skeleton shimmers without settling', (tester) async {
-    await tester.pumpWidget(
-      _app(const Skeleton(width: 100, height: 40)),
-    );
+    await tester.pumpWidget(_app(const Skeleton(width: 100, height: 40)));
     expect(find.byType(Skeleton), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pump(const Duration(milliseconds: 500));
   });
 
-  testWidgets('AmbientBackground paints statically around its child',
-      (tester) async {
-    await tester.pumpWidget(
-      _app(const AmbientBackground(child: Text('page'))),
-    );
+  testWidgets('AmbientBackground paints statically around its child', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_app(const AmbientBackground(child: Text('page'))));
     expect(find.text('page'), findsOneWidget);
     // Static: nothing scheduled, nothing animating.
     expect(tester.hasRunningAnimations, isFalse);

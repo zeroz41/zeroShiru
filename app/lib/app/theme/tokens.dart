@@ -242,39 +242,39 @@ abstract final class ShiruTokens {
   /// `--lift-shadow`: thin light rim + deep shadow + artwork-tinted bloom.
   /// [liftColor] comes from AniList `coverImage.color`, fallback [accent].
   static List<BoxShadow> liftShadow([Color? liftColor]) => [
-        const BoxShadow(
-          color: Color(0x38FFFFFF), // rgba(255,255,255,.22) rim
-          spreadRadius: 1.2, // .15rem
-        ),
-        const BoxShadow(
-          color: Color(0xBF000000), // rgba(0,0,0,.75)
-          offset: Offset(0, 9.2), // 1.2rem
-          blurRadius: 18.4, // 2.4rem
-        ),
-        BoxShadow(
-          color: liftColor ?? accent, // 0 0 3rem -.6rem bloom
-          blurRadius: 23,
-          spreadRadius: -4.6,
-        ),
-      ];
+    const BoxShadow(
+      color: Color(0x38FFFFFF), // rgba(255,255,255,.22) rim
+      spreadRadius: 1.2, // .15rem
+    ),
+    const BoxShadow(
+      color: Color(0xBF000000), // rgba(0,0,0,.75)
+      offset: Offset(0, 9.2), // 1.2rem
+      blurRadius: 18.4, // 2.4rem
+    ),
+    BoxShadow(
+      color: liftColor ?? accent, // 0 0 3rem -.6rem bloom
+      blurRadius: 23,
+      spreadRadius: -4.6,
+    ),
+  ];
 
   /// `--lift-shadow-soft`.
   static List<BoxShadow> liftShadowSoft([Color? liftColor]) => [
-        const BoxShadow(
-          color: Color(0x29FFFFFF), // rgba(255,255,255,.16) rim
-          spreadRadius: 0.77, // .1rem
-        ),
-        const BoxShadow(
-          color: Color(0x99000000), // rgba(0,0,0,.6)
-          offset: Offset(0, 4.6), // .6rem
-          blurRadius: 10.8, // 1.4rem
-        ),
-        BoxShadow(
-          color: liftColor ?? accent, // 0 0 2rem -.6rem bloom
-          blurRadius: 15.4,
-          spreadRadius: -4.6,
-        ),
-      ];
+    const BoxShadow(
+      color: Color(0x29FFFFFF), // rgba(255,255,255,.16) rim
+      spreadRadius: 0.77, // .1rem
+    ),
+    const BoxShadow(
+      color: Color(0x99000000), // rgba(0,0,0,.6)
+      offset: Offset(0, 4.6), // .6rem
+      blurRadius: 10.8, // 1.4rem
+    ),
+    BoxShadow(
+      color: liftColor ?? accent, // 0 0 2rem -.6rem bloom
+      blurRadius: 15.4,
+      spreadRadius: -4.6,
+    ),
+  ];
 
   /// Small card resting shadow: `0 .8rem 2rem rgba(0,0,0,.22)`.
   static const List<BoxShadow> cardShadow = [
@@ -287,11 +287,7 @@ abstract final class ShiruTokens {
 
   /// Sidebar: `1.2rem 0 3rem rgba(0,0,0,.32)`.
   static const List<BoxShadow> sidebarShadow = [
-    BoxShadow(
-      color: Color(0x52000000),
-      offset: Offset(9.2, 0),
-      blurRadius: 23,
-    ),
+    BoxShadow(color: Color(0x52000000), offset: Offset(9.2, 0), blurRadius: 23),
   ];
 
   /// Bottombar: `0 -1.2rem 3rem rgba(0,0,0,.35)`.

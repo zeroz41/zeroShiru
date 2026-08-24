@@ -18,10 +18,12 @@ Future<void> main() async {
     title: 'zeroShiru',
     backgroundColor: Colors.transparent,
   );
-  unawaited(windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.show();
-    await windowManager.focus();
-  }));
+  unawaited(
+    windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    }),
+  );
 
   runApp(const ProviderScope(child: ZeroShiruApp()));
 }

@@ -10,7 +10,12 @@ enum MediaStatus { finished, releasing, notYetReleased, cancelled, hiatus }
 enum ListStatus { current, planning, completed, dropped, paused, repeating }
 
 class MediaTitle {
-  const MediaTitle({this.romaji, this.english, this.native, this.userPreferred});
+  const MediaTitle({
+    this.romaji,
+    this.english,
+    this.native,
+    this.userPreferred,
+  });
 
   final String? romaji;
   final String? english;

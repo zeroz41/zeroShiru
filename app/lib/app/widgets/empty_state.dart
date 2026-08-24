@@ -18,8 +18,7 @@ class EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
-      constraints:
-          const BoxConstraints(minHeight: ShiruTokens.emptyMinHeight),
+      constraints: const BoxConstraints(minHeight: ShiruTokens.emptyMinHeight),
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

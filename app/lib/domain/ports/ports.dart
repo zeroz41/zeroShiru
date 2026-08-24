@@ -44,5 +44,7 @@ abstract interface class CredentialStore {
 abstract interface class TorrentEngine {
   Future<List<PlayerFile>> stream(String idOrMagnet);
   Future<void> unload();
-  Future<Map<String, ({int seeders, int leechers})>> scrape(List<String> hashes);
+  Future<Map<String, ({int seeders, int leechers})>> scrape(
+    List<String> hashes,
+  );
 }

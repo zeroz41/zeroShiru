@@ -73,10 +73,7 @@ class _TitledRailState extends State<TitledRail> {
       children: [
         Padding(
           padding: const EdgeInsets.only(bottom: ShiruTokens.space3),
-          child: _RailHeader(
-            title: widget.title,
-            onTap: widget.onTitleTap,
-          ),
+          child: _RailHeader(title: widget.title, onTap: widget.onTitleTap),
         ),
         HoverRegion(
           builder: (context, hovered) {
@@ -93,11 +90,8 @@ class _TitledRailState extends State<TitledRail> {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          for (var i = 0;
-                              i < widget.children.length;
-                              i++) ...[
-                            if (i > 0)
-                              SizedBox(width: widget.itemSpacing),
+                          for (var i = 0; i < widget.children.length; i++) ...[
+                            if (i > 0) SizedBox(width: widget.itemSpacing),
                             widget.children[i],
                           ],
                         ],
@@ -117,10 +111,7 @@ class _TitledRailState extends State<TitledRail> {
                             gradient: LinearGradient(
                               begin: Alignment.centerRight,
                               end: Alignment.centerLeft,
-                              colors: [
-                                ShiruTokens.dark,
-                                Color(0x0017191C),
-                              ],
+                              colors: [ShiruTokens.dark, Color(0x0017191C)],
                             ),
                           ),
                         ),
@@ -181,15 +172,11 @@ class _RailHeader extends StatelessWidget {
                 height: ShiruTokens.fontScale24 * 1.05 * 0.8,
                 margin: const EdgeInsets.only(right: ShiruTokens.remPx),
                 decoration: BoxDecoration(
-                  borderRadius:
-                      BorderRadius.circular(ShiruTokens.radiusPill),
+                  borderRadius: BorderRadius.circular(ShiruTokens.radiusPill),
                   gradient: const LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [
-                      ShiruTokens.accentLight,
-                      ShiruTokens.accent,
-                    ],
+                    colors: [ShiruTokens.accentLight, ShiruTokens.accent],
                   ),
                 ),
               ),
@@ -250,9 +237,7 @@ class _RailChevron extends StatelessWidget {
                   child: Icon(
                     icon,
                     size: 18,
-                    color: hovered
-                        ? ShiruTokens.highlight
-                        : ShiruTokens.text,
+                    color: hovered ? ShiruTokens.highlight : ShiruTokens.text,
                   ),
                 ),
               );
@@ -273,14 +258,13 @@ class _RailScrollBehavior extends ScrollBehavior {
     BuildContext context,
     Widget child,
     ScrollableDetails details,
-  ) =>
-      child;
+  ) => child;
 
   @override
   Set<PointerDeviceKind> get dragDevices => {
-        PointerDeviceKind.touch,
-        PointerDeviceKind.mouse,
-        PointerDeviceKind.trackpad,
-        PointerDeviceKind.stylus,
-      };
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.stylus,
+  };
 }

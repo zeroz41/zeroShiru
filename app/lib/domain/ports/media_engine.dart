@@ -1,6 +1,15 @@
 import '../models/torrent.dart';
 
-enum PlaybackPhase { idle, opening, ready, playing, paused, buffering, ended, failed }
+enum PlaybackPhase {
+  idle,
+  opening,
+  ready,
+  playing,
+  paused,
+  buffering,
+  ended,
+  failed,
+}
 
 enum SubtitleRendering { standard, learning, off }
 

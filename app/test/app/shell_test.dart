@@ -27,26 +27,28 @@ GoRouter _router(String initial) {
 }
 
 Widget _app(GoRouter router) {
-  return MaterialApp.router(
-    theme: buildShiruTheme(),
-    routerConfig: router,
-  );
+  return MaterialApp.router(theme: buildShiruTheme(), routerConfig: router);
 }
 
 /// Finds the nav item Semantics for [label] and reports its selected flag.
 bool _navSelected(WidgetTester tester, String label) {
   final semantics = tester
       .widgetList<Semantics>(find.byType(Semantics))
-      .where((s) =>
-          s.properties.label == label && s.properties.selected != null);
-  expect(semantics, hasLength(1),
-      reason: 'expected one nav item labelled $label');
+      .where(
+        (s) => s.properties.label == label && s.properties.selected != null,
+      );
+  expect(
+    semantics,
+    hasLength(1),
+    reason: 'expected one nav item labelled $label',
+  );
   return semantics.first.properties.selected!;
 }
 
 void main() {
-  testWidgets('desktop shell shows a 54px left rail with all nav items',
-      (tester) async {
+  testWidgets('desktop shell shows a 54px left rail with all nav items', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -62,10 +64,7 @@ void main() {
     // The rail is exactly the token width.
     final railBox = tester.renderObject<RenderBox>(
       find
-          .ancestor(
-            of: find.text('Home'),
-            matching: find.byType(Container),
-          )
+          .ancestor(of: find.text('Home'), matching: find.byType(Container))
           .last,
     );
     expect(railBox.size.width, ShiruTokens.sidebarWidth);
@@ -106,8 +105,9 @@ void main() {
     expect(_navSelected(tester, 'Downloads'), isTrue);
   });
 
-  testWidgets('below the 769px breakpoint the shell uses a bottom bar',
-      (tester) async {
+  testWidgets('below the 769px breakpoint the shell uses a bottom bar', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(500, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);

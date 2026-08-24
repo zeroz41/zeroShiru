@@ -30,8 +30,8 @@ class AppShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDesktop = MediaQuery.sizeOf(context).width >=
-        ShiruTokens.desktopBreakpoint;
+    final isDesktop =
+        MediaQuery.sizeOf(context).width >= ShiruTokens.desktopBreakpoint;
     final content = AmbientBackground(child: child);
 
     if (isDesktop) {
@@ -68,14 +68,9 @@ class _SideRail extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [
-            ShiruTokens.surfacePanelStrong,
-            ShiruTokens.surfaceShell,
-          ],
+          colors: [ShiruTokens.surfacePanelStrong, ShiruTokens.surfaceShell],
         ),
-        border: Border(
-          right: BorderSide(color: ShiruTokens.surfaceBorder),
-        ),
+        border: Border(right: BorderSide(color: ShiruTokens.surfaceBorder)),
         boxShadow: ShiruTokens.sidebarShadow,
       ),
       child: Column(
@@ -111,14 +106,9 @@ class _BottomBar extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.bottomCenter,
           end: Alignment.topCenter,
-          colors: [
-            ShiruTokens.surfacePanelStrong,
-            ShiruTokens.surfaceShell,
-          ],
+          colors: [ShiruTokens.surfacePanelStrong, ShiruTokens.surfaceShell],
         ),
-        border: Border(
-          top: BorderSide(color: ShiruTokens.surfaceBorder),
-        ),
+        border: Border(top: BorderSide(color: ShiruTokens.surfaceBorder)),
         boxShadow: ShiruTokens.bottombarShadow,
       ),
       child: Row(
@@ -238,8 +228,7 @@ class _NavItemState extends State<_NavItem> {
                               ShiruTokens.navPillGradBottom,
                             ],
                           ),
-                          border:
-                              Border.all(color: ShiruTokens.navPillRing),
+                          border: Border.all(color: ShiruTokens.navPillRing),
                           boxShadow: ShiruTokens.navPillGlow,
                         ),
                       ),

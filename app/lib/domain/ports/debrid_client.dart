@@ -6,7 +6,15 @@ enum DebridService { alldebrid, premiumize, realdebrid, torbox }
 /// Error vocabulary shared with the UI's outage notices. Mirrors the redo
 /// branch's kind contract: auth | network | timeout | not-cached |
 /// unavailable | rejected | service.
-enum DebridErrorKind { auth, network, timeout, notCached, unavailable, rejected, service }
+enum DebridErrorKind {
+  auth,
+  network,
+  timeout,
+  notCached,
+  unavailable,
+  rejected,
+  service,
+}
 
 class DebridException implements Exception {
   const DebridException(this.kind, this.message);

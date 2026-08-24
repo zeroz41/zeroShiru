@@ -45,8 +45,7 @@ class _SkeletonState extends State<Skeleton>
           child: AnimatedBuilder(
             animation: _controller,
             builder: (context, _) {
-              final t = ShiruTokens.skeletonCurve
-                  .transform(_controller.value);
+              final t = ShiruTokens.skeletonCurve.transform(_controller.value);
               // Sweep a highlight band across: -1 (off left) -> 2 (off
               // right) in gradient alignment space.
               final x = -1.0 + 3.0 * t;

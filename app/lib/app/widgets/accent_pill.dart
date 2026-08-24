@@ -55,10 +55,8 @@ class _AccentPillState extends State<AccentPill> {
           onTapCancel: () => setState(() => _pressed = false),
           child: AnimatedScale(
             scale: scale,
-            duration:
-                _pressed ? ShiruTokens.motionPress : ShiruTokens.motion,
-            curve:
-                _pressed ? ShiruTokens.easePress : ShiruTokens.easeSettle,
+            duration: _pressed ? ShiruTokens.motionPress : ShiruTokens.motion,
+            curve: _pressed ? ShiruTokens.easePress : ShiruTokens.easeSettle,
             child: Stack(
               children: [
                 // Pre-painted CTA glow, faded — never a transitioned shadow.
@@ -87,8 +85,7 @@ class _AccentPillState extends State<AccentPill> {
                     duration: ShiruTokens.motion,
                     curve: ShiruTokens.easeSettle,
                     child: _skin(
-                      color:
-                          isCta ? ShiruTokens.accentLight : _altBgHover,
+                      color: isCta ? ShiruTokens.accentLight : _altBgHover,
                       border: isCta ? null : _altBorder,
                     ),
                   ),

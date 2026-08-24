@@ -20,8 +20,7 @@ Future<T?> showSoftModal<T>({
     barrierLabel: 'Dismiss',
     barrierColor: Colors.transparent, // the vignette is our own layer
     transitionDuration: ShiruTokens.motionPanel,
-    pageBuilder: (context, animation, secondaryAnimation) =>
-        builder(context),
+    pageBuilder: (context, animation, secondaryAnimation) => builder(context),
     transitionBuilder: (context, animation, secondaryAnimation, child) {
       final t = ShiruTokens.easeSettle.transform(animation.value);
       return Stack(
@@ -29,10 +28,7 @@ Future<T?> showSoftModal<T>({
           // Vignette backdrop, faded with the route animation.
           Positioned.fill(
             child: IgnorePointer(
-              child: Opacity(
-                opacity: t,
-                child: const _VignetteBackdrop(),
-              ),
+              child: Opacity(opacity: t, child: const _VignetteBackdrop()),
             ),
           ),
           Opacity(
