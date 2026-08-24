@@ -125,4 +125,25 @@ void main() {
     expect(navCenter.dy, greaterThan(pageCenter.dy));
     expect(navCenter.dy, greaterThan(800 - ShiruTokens.sidebarWidth - 1));
   });
+
+  testWidgets('mobile More menu exposes useful shell utilities', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_app(_router('/home')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Updates'), findsOneWidget);
+    expect(find.text('Profile'), findsOneWidget);
+    expect(find.text('About & shortcuts'), findsOneWidget);
+
+    await tester.tap(find.text('Updates'));
+    await tester.pumpAndSettle();
+    expect(find.text('You’re all caught up'), findsOneWidget);
+  });
 }

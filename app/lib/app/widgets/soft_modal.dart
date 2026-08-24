@@ -14,12 +14,13 @@ Future<T?> showSoftModal<T>({
   required WidgetBuilder builder,
   bool barrierDismissible = true,
 }) {
+  final reduceMotion = MediaQuery.disableAnimationsOf(context);
   return showGeneralDialog<T>(
     context: context,
     barrierDismissible: barrierDismissible,
     barrierLabel: 'Dismiss',
     barrierColor: Colors.transparent, // the vignette is our own layer
-    transitionDuration: ShiruTokens.motionPanel,
+    transitionDuration: reduceMotion ? Duration.zero : ShiruTokens.motionPanel,
     pageBuilder: (context, animation, secondaryAnimation) => builder(context),
     transitionBuilder: (context, animation, secondaryAnimation, child) {
       final t = ShiruTokens.easeSettle.transform(animation.value);

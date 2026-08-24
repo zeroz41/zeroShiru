@@ -148,6 +148,74 @@ ThemeData buildShiruTheme() {
       ),
       behavior: SnackBarBehavior.floating,
     ),
+    menuTheme: MenuThemeData(
+      style: MenuStyle(
+        backgroundColor: const WidgetStatePropertyAll(ShiruTokens.darkLight),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        elevation: const WidgetStatePropertyAll(12),
+        shadowColor: const WidgetStatePropertyAll(Color(0xB3000000)),
+        side: const WidgetStatePropertyAll(
+          BorderSide(color: ShiruTokens.surfaceBorder),
+        ),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
+          ),
+        ),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(vertical: ShiruTokens.space2),
+        ),
+      ),
+    ),
+    menuButtonTheme: MenuButtonThemeData(
+      style: ButtonStyle(
+        foregroundColor: const WidgetStatePropertyAll(ShiruTokens.text),
+        overlayColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.pressed)
+              ? ShiruTokens.navPressWash
+              : ShiruTokens.navHoverWash,
+        ),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(
+            horizontal: ShiruTokens.space4,
+            vertical: ShiruTokens.space2,
+          ),
+        ),
+      ),
+    ),
+    chipTheme: ChipThemeData(
+      backgroundColor: ShiruTokens.darkVeryLight,
+      selectedColor: const Color(0x522F75E4),
+      disabledColor: const Color(0x4017191C),
+      checkmarkColor: ShiruTokens.accentVeryLight,
+      side: const BorderSide(color: ShiruTokens.surfaceBorder),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(ShiruTokens.radiusPill),
+      ),
+      labelStyle: textTheme.labelMedium,
+      secondaryLabelStyle: textTheme.labelMedium?.copyWith(
+        color: ShiruTokens.highlight,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: ShiruTokens.space1),
+    ),
+    segmentedButtonTheme: SegmentedButtonThemeData(
+      style: ButtonStyle(
+        foregroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? ShiruTokens.highlight
+              : ShiruTokens.textLight,
+        ),
+        backgroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? ShiruTokens.navPillGradTop
+              : ShiruTokens.darkVeryLight,
+        ),
+        side: const WidgetStatePropertyAll(
+          BorderSide(color: ShiruTokens.surfaceBorder),
+        ),
+        visualDensity: VisualDensity.compact,
+      ),
+    ),
     navigationRailTheme: const NavigationRailThemeData(
       backgroundColor: Colors.transparent,
       selectedIconTheme: IconThemeData(color: ShiruTokens.accentVeryLight),

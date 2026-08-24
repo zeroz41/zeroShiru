@@ -5,6 +5,7 @@ import '../domain/models/torrent.dart';
 import '../features/downloads/downloads_page.dart';
 import '../features/home/home_page.dart';
 import '../features/player/player_page.dart';
+import '../features/schedule/schedule_page.dart';
 import '../features/search/search_page.dart';
 import '../features/settings/settings_page.dart';
 import 'shell.dart';
@@ -32,6 +33,15 @@ final routerProvider = Provider<GoRouter>((ref) {
                 path: '/search',
                 pageBuilder: (context, state) =>
                     const NoTransitionPage(child: SearchPage()),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/schedule',
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: SchedulePage()),
               ),
             ],
           ),

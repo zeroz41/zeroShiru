@@ -82,6 +82,10 @@ void main() {
         season: MediaSeason.fall,
         year: 2023,
         formats: [MediaFormat.tv, MediaFormat.ona],
+        genres: [' Fantasy ', 'Adventure', 'Fantasy'],
+        excludedGenres: ['Hentai'],
+        tags: ['Time Skip'],
+        excludedTags: ['Gore'],
         excludedStatuses: [MediaStatus.cancelled],
       ),
     );
@@ -96,6 +100,10 @@ void main() {
     expect(variables['season'], 'FALL');
     expect(variables['year'], 2023);
     expect(variables['format'], ['TV', 'ONA']);
+    expect(variables['genre'], ['Fantasy', 'Adventure']);
+    expect(variables['genre_not'], ['Hentai']);
+    expect(variables['tag'], ['Time Skip']);
+    expect(variables['tag_not'], ['Gore']);
     expect(variables['status_not'], ['CANCELLED']);
     expect(variables['isAdult'], isFalse);
     expect(result.hasNextPage, isTrue);

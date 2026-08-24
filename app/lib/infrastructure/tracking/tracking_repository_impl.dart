@@ -6,6 +6,7 @@
 library;
 
 import '../../domain/models/media.dart';
+import '../../domain/models/tracking_account.dart';
 import '../../domain/ports/ports.dart';
 import '../network/transport.dart';
 import 'anilist_client.dart';
@@ -44,6 +45,35 @@ class TrackingRepositoryImpl implements TrackingRepository {
   final bool Function()? _offline;
 
   bool get _isOffline => _offline?.call() ?? false;
+
+  @override
+  Future<List<TrackingAccount>> accounts() async {
+    final now = _clock.now();
+    final aniList = await _auth.readAniList();
+    final myAnimeList = await _auth.readMal();
+    return [
+      if (aniList != null)
+        TrackingAccount(
+          service: TrackingAccountService.aniList,
+          displayName: aniList.viewerName ?? 'AniList account',
+          avatarUrl: aniList.viewerAvatar,
+          health: switch (aniList.health(now)) {
+            TokenHealth.valid => TrackingAccountHealth.connected,
+            TokenHealth.expiring => TrackingAccountHealth.attention,
+            TokenHealth.expired => TrackingAccountHealth.expired,
+          },
+        ),
+      if (myAnimeList != null)
+        TrackingAccount(
+          service: TrackingAccountService.myAnimeList,
+          displayName: myAnimeList.viewerName ?? 'MyAnimeList account',
+          avatarUrl: myAnimeList.viewerPicture,
+          health: myAnimeList.reauth || myAnimeList.needsRefresh(now)
+              ? TrackingAccountHealth.attention
+              : TrackingAccountHealth.connected,
+        ),
+    ];
+  }
 
   /// Latest decision [updateProgress] arrived at — observable seam for the
   /// UI (toasts) and tests; updateProgress itself returns void per the port.

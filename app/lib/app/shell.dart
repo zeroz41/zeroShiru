@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../application/library/providers.dart';
+import '../domain/models/tracking_account.dart';
 import 'theme/tokens.dart';
 import 'widgets/ambient_background.dart';
+import 'widgets/empty_state.dart';
 import 'widgets/hover_region.dart';
+import 'widgets/page_motion.dart';
+import 'widgets/soft_modal.dart';
 
 /// The navigation shell (design-map §1.12).
 ///
@@ -19,6 +25,7 @@ class AppShell extends StatelessWidget {
   static const destinations = [
     (path: '/home', icon: Icons.home_rounded, label: 'Home'),
     (path: '/search', icon: Icons.search_rounded, label: 'Search'),
+    (path: '/schedule', icon: Icons.calendar_month_rounded, label: 'Schedule'),
     (path: '/downloads', icon: Icons.download_rounded, label: 'Downloads'),
     (path: '/settings', icon: Icons.settings_rounded, label: 'Settings'),
   ];
@@ -32,7 +39,9 @@ class AppShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDesktop =
         MediaQuery.sizeOf(context).width >= ShiruTokens.desktopBreakpoint;
-    final content = AmbientBackground(child: child);
+    final content = AmbientBackground(
+      child: PageMotion(motionKey: location, child: child),
+    );
 
     if (isDesktop) {
       return Scaffold(
@@ -88,10 +97,26 @@ class _SideRail extends StatelessWidget {
             ),
           const Spacer(),
           Padding(
-            padding: const EdgeInsets.only(bottom: ShiruTokens.space3),
+            padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
+            child: _NavItem.action(
+              icon: Icons.notifications_none_rounded,
+              label: 'Updates',
+              onTap: () => _showShellPanel(context, const _NotificationPanel()),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
             child: _NavItem(
               destination: AppShell.destinations.last,
               active: selectedIndex == AppShell.destinations.length - 1,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: ShiruTokens.space3),
+            child: _NavItem.action(
+              icon: Icons.account_circle_outlined,
+              label: 'Profile',
+              onTap: () => _showShellPanel(context, const _ProfilePanel()),
             ),
           ),
         ],
@@ -122,11 +147,368 @@ class _BottomBar extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           for (var i = 0; i < AppShell.destinations.length; i++)
-            _NavItem(
-              destination: AppShell.destinations[i],
-              active: i == selectedIndex,
+            Expanded(
+              child: _NavItem(
+                destination: AppShell.destinations[i],
+                active: i == selectedIndex,
+                expanded: true,
+              ),
             ),
+          const Expanded(child: _MobileMoreMenu()),
         ],
+      ),
+    );
+  }
+}
+
+class _MobileMoreMenu extends StatelessWidget {
+  const _MobileMoreMenu();
+
+  @override
+  Widget build(BuildContext context) {
+    return MenuAnchor(
+      useRootOverlay: true,
+      animated: true,
+      alignmentOffset: const Offset(0, -ShiruTokens.space2),
+      menuChildren: [
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.notifications_none_rounded),
+          onPressed: () => _showShellPanel(context, const _NotificationPanel()),
+          child: const Text('Updates'),
+        ),
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.account_circle_outlined),
+          onPressed: () => _showShellPanel(context, const _ProfilePanel()),
+          child: const Text('Profile'),
+        ),
+        const Divider(),
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.info_outline_rounded),
+          onPressed: () => _showShellPanel(context, const _AboutPanel()),
+          child: const Text('About & shortcuts'),
+        ),
+      ],
+      builder: (context, controller, child) => _NavItem.action(
+        icon: controller.isOpen
+            ? Icons.close_rounded
+            : Icons.more_horiz_rounded,
+        label: 'More',
+        active: controller.isOpen,
+        expanded: true,
+        onTap: controller.isOpen ? controller.close : controller.open,
+      ),
+    );
+  }
+}
+
+Future<void> _showShellPanel(BuildContext context, Widget panel) {
+  return showSoftModal<void>(
+    context: context,
+    builder: (context) => SoftModal(maxWidth: 520, child: panel),
+  );
+}
+
+class _PanelHeader extends StatelessWidget {
+  const _PanelHeader({required this.icon, required this.title});
+
+  final IconData icon;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        DecoratedBox(
+          decoration: const BoxDecoration(
+            color: Color(0x292F75E4),
+            shape: BoxShape.circle,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(ShiruTokens.space2),
+            child: Icon(icon, color: ShiruTokens.accentVeryLight),
+          ),
+        ),
+        const SizedBox(width: ShiruTokens.space3),
+        Expanded(
+          child: Text(title, style: Theme.of(context).textTheme.headlineSmall),
+        ),
+        IconButton(
+          tooltip: 'Close',
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.close_rounded),
+        ),
+      ],
+    );
+  }
+}
+
+class _NotificationPanel extends StatelessWidget {
+  const _NotificationPanel();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _PanelHeader(icon: Icons.notifications_none_rounded, title: 'Updates'),
+        SizedBox(height: ShiruTokens.space3),
+        EmptyState(
+          icon: Icons.notifications_paused_outlined,
+          message: 'You’re all caught up',
+          detail: 'New episode and library activity will collect here without interrupting playback.',
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfilePanel extends ConsumerWidget {
+  const _ProfilePanel();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final accounts = ref.watch(trackingAccountsProvider);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _PanelHeader(
+          icon: Icons.account_circle_outlined,
+          title: 'Local profile',
+        ),
+        const SizedBox(height: ShiruTokens.space4),
+        ShiruAnimatedSwitcher(
+          child: accounts.when(
+            loading: () => const Padding(
+              key: ValueKey('profile-loading'),
+              padding: EdgeInsets.all(ShiruTokens.space5),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+            error: (_, _) => _AccountMessage(
+              key: const ValueKey('profile-error'),
+              icon: Icons.sync_problem_rounded,
+              message: 'Tracking accounts could not be read from this device.',
+              action: TextButton(
+                onPressed: () => ref.invalidate(trackingAccountsProvider),
+                child: const Text('Retry'),
+              ),
+            ),
+            data: (items) => items.isEmpty
+                ? const _AccountMessage(
+                    key: ValueKey('profile-empty'),
+                    icon: Icons.person_add_alt_1_rounded,
+                    message:
+                        'No AniList or MyAnimeList account is connected yet.',
+                  )
+                : Column(
+                    key: const ValueKey('profile-accounts'),
+                    children: [
+                      for (final account in items)
+                        Padding(
+                          padding: const EdgeInsets.only(
+                            bottom: ShiruTokens.space2,
+                          ),
+                          child: _TrackingAccountRow(account: account),
+                        ),
+                    ],
+                  ),
+          ),
+        ),
+        const SizedBox(height: ShiruTokens.space5),
+        FilledButton.icon(
+          onPressed: () {
+            Navigator.of(context).pop();
+            context.go('/settings');
+          },
+          icon: const Icon(Icons.tune_rounded),
+          label: const Text('Open device settings'),
+        ),
+      ],
+    );
+  }
+}
+
+class _AccountMessage extends StatelessWidget {
+  const _AccountMessage({
+    super.key,
+    required this.icon,
+    required this.message,
+    this.action,
+  });
+
+  final IconData icon;
+  final String message;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: ShiruTokens.surfacePanel,
+        borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
+        border: Border.all(color: ShiruTokens.surfaceBorder),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(ShiruTokens.space4),
+        child: Row(
+          children: [
+            Icon(icon, color: ShiruTokens.textLight),
+            const SizedBox(width: ShiruTokens.space3),
+            Expanded(
+              child: Text(
+                message,
+                style: Theme.of(context).textTheme.bodyMedium
+                    ?.copyWith(color: ShiruTokens.textLight, height: 1.4),
+              ),
+            ),
+            ?action,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TrackingAccountRow extends StatelessWidget {
+  const _TrackingAccountRow({required this.account});
+
+  final TrackingAccount account;
+
+  @override
+  Widget build(BuildContext context) {
+    final (service, color) = switch (account.service) {
+      TrackingAccountService.aniList => ('AniList', ShiruTokens.aniList),
+      TrackingAccountService.myAnimeList => (
+        'MyAnimeList',
+        ShiruTokens.myAnimeList,
+      ),
+    };
+    final (status, statusColor, statusIcon) = switch (account.health) {
+      TrackingAccountHealth.connected => (
+        'Connected',
+        ShiruTokens.completed,
+        Icons.check_circle_outline_rounded,
+      ),
+      TrackingAccountHealth.attention => (
+        'Reconnect soon',
+        ShiruTokens.warning,
+        Icons.schedule_rounded,
+      ),
+      TrackingAccountHealth.expired => (
+        'Reconnect required',
+        ShiruTokens.errorVeryLight,
+        Icons.error_outline_rounded,
+      ),
+    };
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: ShiruTokens.surfacePanel,
+        borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
+        border: Border.all(color: ShiruTokens.surfaceBorder),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(ShiruTokens.space3),
+        child: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: color,
+              foregroundImage: account.avatarUrl == null
+                  ? null
+                  : NetworkImage(account.avatarUrl!),
+              child: Text(
+                service.characters.first,
+                style: const TextStyle(
+                  color: ShiruTokens.highlight,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            const SizedBox(width: ShiruTokens.space3),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    account.displayName,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  Text(service, style: Theme.of(context).textTheme.bodySmall),
+                ],
+              ),
+            ),
+            Icon(statusIcon, size: 17, color: statusColor),
+            const SizedBox(width: ShiruTokens.space1),
+            Text(
+              status,
+              style: Theme.of(context).textTheme.labelMedium
+                  ?.copyWith(color: statusColor),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AboutPanel extends StatelessWidget {
+  const _AboutPanel();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _PanelHeader(
+          icon: Icons.play_circle_outline_rounded,
+          title: 'zeroShiru',
+        ),
+        const SizedBox(height: ShiruTokens.space4),
+        Text(
+          'Flutter rewrite preview · Pure Dart playback and services',
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+        const SizedBox(height: ShiruTokens.space5),
+        Text(
+          'Quick navigation',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: ShiruTokens.space2),
+        const Wrap(
+          spacing: ShiruTokens.space2,
+          runSpacing: ShiruTokens.space2,
+          children: [
+            _Shortcut(label: 'Search', keys: '/'),
+            _Shortcut(label: 'Back', keys: 'Esc'),
+            _Shortcut(label: 'Activate', keys: 'Enter'),
+            _Shortcut(label: 'Move focus', keys: 'Arrow keys'),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _Shortcut extends StatelessWidget {
+  const _Shortcut({required this.label, required this.keys});
+
+  final String label;
+  final String keys;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: ShiruTokens.darkVeryLight,
+        borderRadius: BorderRadius.circular(ShiruTokens.radiusBase),
+        border: Border.all(color: ShiruTokens.surfaceBorder),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: ShiruTokens.space3,
+          vertical: ShiruTokens.space2,
+        ),
+        child: Text('$label  ·  $keys'),
       ),
     );
   }
@@ -179,10 +561,28 @@ class _BrandMark extends StatelessWidget {
 }
 
 class _NavItem extends StatefulWidget {
-  const _NavItem({required this.destination, required this.active});
+  const _NavItem({
+    required this.destination,
+    required this.active,
+    this.expanded = false,
+  }) : icon = null,
+       label = null,
+       onTap = null;
 
-  final ({String path, IconData icon, String label}) destination;
+  const _NavItem.action({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.active = false,
+    this.expanded = false,
+  }) : destination = null;
+
+  final ({String path, IconData icon, String label})? destination;
+  final IconData? icon;
+  final String? label;
+  final VoidCallback? onTap;
   final bool active;
+  final bool expanded;
 
   @override
   State<_NavItem> createState() => _NavItemState();
@@ -194,6 +594,9 @@ class _NavItemState extends State<_NavItem> {
   @override
   Widget build(BuildContext context) {
     final d = widget.destination;
+    final icon = d?.icon ?? widget.icon!;
+    final label = d?.label ?? widget.label!;
+    final onTap = widget.onTap ?? () => context.go(d!.path);
     return HoverRegion(
       cursor: SystemMouseCursors.click,
       builder: (context, hovered) {
@@ -206,14 +609,16 @@ class _NavItemState extends State<_NavItem> {
         return Semantics(
           selected: widget.active,
           button: true,
-          label: d.label,
+          label: label,
           child: GestureDetector(
-            onTap: () => context.go(d.path),
+            onTap: onTap,
             onTapDown: (_) => setState(() => _pressed = true),
             onTapUp: (_) => setState(() => _pressed = false),
             onTapCancel: () => setState(() => _pressed = false),
             child: SizedBox(
-              width: ShiruTokens.sidebarWidth - ShiruTokens.space3,
+              width: widget.expanded
+                  ? double.infinity
+                  : ShiruTokens.sidebarWidth - ShiruTokens.space3,
               height: ShiruTokens.navLinkHeight,
               child: Stack(
                 children: [
@@ -273,20 +678,22 @@ class _NavItemState extends State<_NavItem> {
                           scale: _pressed ? 0.92 : (hovered ? 1.08 : 1.0),
                           duration: ShiruTokens.motionPress,
                           curve: ShiruTokens.easePress,
-                          child: Icon(d.icon, size: 20, color: iconColor),
+                          child: Icon(icon, size: 20, color: iconColor),
                         ),
                         const SizedBox(height: 2),
-                        Text(
-                          d.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.clip,
-                          style: TextStyle(
-                            fontFamily: ShiruTokens.fontFamily,
-                            fontSize: ShiruTokens.fontSize12,
-                            fontWeight: widget.active
-                                ? FontWeight.w700
-                                : FontWeight.w600,
-                            color: labelColor,
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            style: TextStyle(
+                              fontFamily: ShiruTokens.fontFamily,
+                              fontSize: ShiruTokens.fontSize12,
+                              fontWeight: widget.active
+                                  ? FontWeight.w700
+                                  : FontWeight.w600,
+                              color: labelColor,
+                            ),
                           ),
                         ),
                       ],

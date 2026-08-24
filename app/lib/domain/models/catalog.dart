@@ -25,6 +25,10 @@ class MediaBrowseQuery {
     this.formats = const [],
     this.statuses = const [],
     this.excludedStatuses = const [],
+    this.genres = const [],
+    this.excludedGenres = const [],
+    this.tags = const [],
+    this.excludedTags = const [],
     this.onList,
     this.includeAdult = false,
   });
@@ -38,6 +42,10 @@ class MediaBrowseQuery {
   final List<MediaFormat> formats;
   final List<MediaStatus> statuses;
   final List<MediaStatus> excludedStatuses;
+  final List<String> genres;
+  final List<String> excludedGenres;
+  final List<String> tags;
+  final List<String> excludedTags;
   final bool? onList;
   final bool includeAdult;
 }

@@ -19,6 +19,10 @@ class AnilistCatalogRepository implements CatalogRepository {
         sort: _sort(query.sort),
         season: _season(query.season),
         year: query.year,
+        genres: _nonEmptyList(query.genres),
+        genresExclude: _nonEmptyList(query.excludedGenres),
+        tags: _nonEmptyList(query.tags),
+        tagsExclude: _nonEmptyList(query.excludedTags),
         formats: _mapList(query.formats, _format),
         statuses: _mapList(query.statuses, _status),
         statusesExclude: _mapList(query.excludedStatuses, _status),
@@ -35,6 +39,15 @@ class AnilistCatalogRepository implements CatalogRepository {
   static String? _nonEmpty(String? value) {
     final trimmed = value?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  static List<String>? _nonEmptyList(List<String> values) {
+    final normalized = values
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    return normalized.isEmpty ? null : normalized;
   }
 
   static List<String>? _mapList<T>(

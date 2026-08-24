@@ -4,6 +4,7 @@ library;
 
 import '../models/media.dart';
 import '../models/settings.dart';
+import '../models/tracking_account.dart';
 import '../models/torrent.dart';
 
 export 'catalog_repository.dart';
@@ -21,6 +22,7 @@ abstract interface class SourceResolver {
 
 /// AniList/MAL behind one surface.
 abstract interface class TrackingRepository {
+  Future<List<TrackingAccount>> accounts();
   Future<Media?> mediaById(int id);
   Future<List<Media>> search(String query, {int page = 1});
   Future<List<Media>> userList(ListStatus status);
