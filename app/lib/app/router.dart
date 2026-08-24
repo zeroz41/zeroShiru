@@ -12,29 +12,45 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/home',
     routes: [
-      ShellRoute(
-        builder: (context, state, child) =>
-            AppShell(location: state.uri.path, child: child),
-        routes: [
-          GoRoute(
-            path: '/home',
-            pageBuilder: (context, state) =>
-                const NoTransitionPage(child: HomePage()),
+      StatefulShellRoute.indexedStack(
+        builder: (context, state, navigationShell) =>
+            AppShell(location: state.uri.path, child: navigationShell),
+        branches: [
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/home',
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: HomePage()),
+              ),
+            ],
           ),
-          GoRoute(
-            path: '/search',
-            pageBuilder: (context, state) =>
-                const NoTransitionPage(child: SearchPage()),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/search',
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: SearchPage()),
+              ),
+            ],
           ),
-          GoRoute(
-            path: '/downloads',
-            pageBuilder: (context, state) =>
-                const NoTransitionPage(child: DownloadsPage()),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/downloads',
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: DownloadsPage()),
+              ),
+            ],
           ),
-          GoRoute(
-            path: '/settings',
-            pageBuilder: (context, state) =>
-                const NoTransitionPage(child: SettingsPage()),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/settings',
+                pageBuilder: (context, state) =>
+                    const NoTransitionPage(child: SettingsPage()),
+              ),
+            ],
           ),
         ],
       ),

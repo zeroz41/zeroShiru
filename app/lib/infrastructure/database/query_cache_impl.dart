@@ -160,6 +160,10 @@ class SqliteQueryCache implements QueryCache {
   }
 
   Database _db(CacheStoreSpec store) => (store.shared ? _shared : _profile).db;
+
+  void dispose() {
+    _revalidated.close();
+  }
 }
 
 /// Structural equality over decoded JSON (maps compared by key, lists by

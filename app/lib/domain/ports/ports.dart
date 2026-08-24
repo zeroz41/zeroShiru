@@ -5,6 +5,7 @@ library;
 import '../models/media.dart';
 import '../models/torrent.dart';
 
+export 'catalog_repository.dart';
 export 'debrid_client.dart';
 export 'media_engine.dart';
 
