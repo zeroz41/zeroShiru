@@ -193,7 +193,7 @@ class _HeroSlide extends StatelessWidget {
                               ?.copyWith(
                                 fontSize: (constraints.maxWidth * 0.045).clamp(
                                   25,
-                                  49,
+                                  42,
                                 ),
                                 shadows: const [
                                   Shadow(

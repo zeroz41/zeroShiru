@@ -133,6 +133,18 @@ Use libmpv's render API into a Flutter external texture — not `--wid`, not a c
 - Linux: texture path reportedly skips `mpv_render_context_report_swap()` → judder on some hardware while standalone mpv is smooth. Verify on the actual NVIDIA/Wayland machine; patch via a narrow fork if upstream stalls.
 - Android: bitmap-subtitle (PGS) rendering and resize/orientation reports — release gates for mobile.
 
+The first Linux release probe selected the narrow-fork option. Flutter's UI was
+already on Impeller/OpenGL ES, but `media_kit_video` 2.0.1 silently selected its
+software pixel-buffer texture because the plugin assumed Flutter's EGL context
+would be current while GTK handled a platform-channel call. Flutter makes no
+such platform-thread guarantee. The vendored 2.0.1 patch creates a temporary
+OpenGL ES context from the realized `FlView` GTK window when necessary, lets GDK
+select the native display and driver, creates the existing isolated mpv EGL
+context, then releases the bootstrap context. It contains no GPU-vendor checks
+or session environment overrides. The NVIDIA/Wayland release probe now reports
+both Impeller OpenGLES and `VideoOutput: H/W rendering with isolated EGL
+context`; a real lack of EGL support may still take the documented fallback.
+
 The `MediaEngine` port keeps the rest of the app ignorant of media_kit, so a fork, replacement plugin, or platform-native adapter never touches screens.
 
 ## Configuration and diagnostics
@@ -272,7 +284,7 @@ Fewer than 15 direct general-purpose Dart dependencies before platform packages:
 # Decisions to record as ADRs
 
 1. Pure Dart / zero Rust (this document; supersedes the retain-Rust recommendation).
-2. media_kit pin/fork vs owned minimal plugin — decided by the Phase-3 gate evidence.
+2. media_kit pin/fork vs owned minimal plugin — narrow vendored Linux patch selected by the Phase-3 EGL gate; cadence/swap timing remains an acceptance gate.
 3. Declarative source-manifest format and security policy.
 4. SQLite schema, export/import, secret ownership.
 5. Standard-vs-learning subtitle modes.

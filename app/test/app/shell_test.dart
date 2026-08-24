@@ -46,7 +46,7 @@ bool _navSelected(WidgetTester tester, String label) {
 }
 
 void main() {
-  testWidgets('desktop shell shows a 54px left rail with all nav items', (
+  testWidgets('desktop shell shows the labelled left rail with all nav items', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1280, 800);

@@ -7,8 +7,8 @@ import 'widgets/hover_region.dart';
 
 /// The navigation shell (design-map §1.12).
 ///
-/// Breakpoint 769px: desktop = left rail (54px wide), mobile = bottom bar
-/// (54px tall). Surfaces: `linear-gradient(panel-strong → shell)`, hairline
+/// Breakpoint 769px: desktop = comfortable labelled rail, mobile = bottom bar.
+/// Surfaces: `linear-gradient(panel-strong → shell)`, hairline
 /// edge, pre-painted shadow. Pages render on top of [AmbientBackground].
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.location, required this.child});
@@ -78,7 +78,7 @@ class _SideRail extends StatelessWidget {
           const SizedBox(height: ShiruTokens.space3),
           const _BrandMark(),
           const SizedBox(height: ShiruTokens.space4),
-          for (var i = 0; i < AppShell.destinations.length; i++)
+          for (var i = 0; i < AppShell.destinations.length - 1; i++)
             Padding(
               padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
               child: _NavItem(
@@ -87,6 +87,13 @@ class _SideRail extends StatelessWidget {
               ),
             ),
           const Spacer(),
+          Padding(
+            padding: const EdgeInsets.only(bottom: ShiruTokens.space3),
+            child: _NavItem(
+              destination: AppShell.destinations.last,
+              active: selectedIndex == AppShell.destinations.length - 1,
+            ),
+          ),
         ],
       ),
     );
@@ -125,9 +132,7 @@ class _BottomBar extends StatelessWidget {
   }
 }
 
-/// Brand mark placeholder: 5rem square, radius 1.35rem,
-/// `linear-gradient(145deg, hsla(tertiary,.3), surface-highlight)`,
-/// inset light ring + drop shadow.
+/// The established zeroShiru mark, seated on the current shell surface.
 class _BrandMark extends StatelessWidget {
   const _BrandMark();
 
@@ -155,13 +160,17 @@ class _BrandMark extends StatelessWidget {
           ),
         ],
       ),
-      child: const Center(
-        child: Text(
-          'ゼ',
-          style: TextStyle(
-            fontSize: ShiruTokens.fontScale16,
-            fontWeight: FontWeight.w900,
-            color: ShiruTokens.accentVeryLight,
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Image.asset(
+          'assets/images/zeroshiru-mark.png',
+          fit: BoxFit.contain,
+          filterQuality: FilterQuality.high,
+          errorBuilder: (_, _, _) => const Center(
+            child: Icon(
+              Icons.play_arrow_rounded,
+              color: ShiruTokens.accentVeryLight,
+            ),
           ),
         ),
       ),
@@ -190,10 +199,10 @@ class _NavItemState extends State<_NavItem> {
       builder: (context, hovered) {
         final iconColor = widget.active
             ? ShiruTokens.accentVeryLight
-            : (hovered ? ShiruTokens.highlight : ShiruTokens.grayVeryDim);
+            : (hovered ? ShiruTokens.highlight : ShiruTokens.textMuted);
         final labelColor = widget.active
             ? ShiruTokens.highlight
-            : (hovered ? ShiruTokens.highlight : ShiruTokens.grayVeryDim);
+            : (hovered ? ShiruTokens.highlight : ShiruTokens.textMuted);
         return Semantics(
           selected: widget.active,
           button: true,
@@ -204,7 +213,7 @@ class _NavItemState extends State<_NavItem> {
             onTapUp: (_) => setState(() => _pressed = false),
             onTapCancel: () => setState(() => _pressed = false),
             child: SizedBox(
-              width: ShiruTokens.sidebarWidth - ShiruTokens.space2,
+              width: ShiruTokens.sidebarWidth - ShiruTokens.space3,
               height: ShiruTokens.navLinkHeight,
               child: Stack(
                 children: [

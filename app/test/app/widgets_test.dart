@@ -42,8 +42,7 @@ void main() {
       ),
     );
     expect(find.text('AIRING'), findsOneWidget);
-    // The airing ring animates forever; settle a bounded amount.
-    await tester.pump(const Duration(seconds: 4));
+    expect(tester.hasRunningAnimations, isFalse);
   });
 
   testWidgets('TitledRail renders its header and children', (tester) async {

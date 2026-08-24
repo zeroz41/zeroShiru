@@ -16,7 +16,14 @@ Surveyed from the `redo` branch (HEAD `d342051b`). Design pass reference: commit
 --default-html-font-size-1920: 62%;   /* ≥1920px  → 1rem = 9.92px */
 ```
 
-`--ui-scale` is a user setting (default 1). **Every `rem` below must be multiplied by 7.68 (or 8 / 9.92) to get logical pixels.** e.g. `font-scale-24` = 2.4rem = **18.4px**; small-card poster width 19rem = **146px**; sidebar 7rem = **54px**.
+`--ui-scale` is a user setting (default 1). **Every legacy `rem` below must be multiplied by 7.68 (or 8 / 9.92) to get logical pixels.** e.g. `font-scale-24` = 2.4rem = **18.4px**; small-card poster width 19rem = **146px**; sidebar 7rem = **54px**.
+
+The Flutter implementation treats these as the reference measurements, not a
+constraint against platform readability. Its current refinement pass widens the
+labelled rail to 68 logical pixels, raises the compact type/control floor, and
+uses a restrained AIRING chip without the repeating poster outline. Colors,
+surface hierarchy, spacing rhythm, and interaction semantics remain mapped to
+this document.
 
 ### 1.2 Color palette (default-dark theme)
 

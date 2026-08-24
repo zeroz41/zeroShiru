@@ -44,6 +44,8 @@ void main() {
 
       expect(find.text('Interface'), findsOneWidget);
       expect(find.text('Player'), findsOneWidget);
+      expect(find.text('Sources'), findsOneWidget);
+      expect(find.text('Downloads'), findsOneWidget);
       expect(find.text('Debrid'), findsOneWidget);
       await tester.ensureVisible(find.byKey(const ValueKey('debrid-api-key')));
       await tester.enterText(

@@ -1,10 +1,10 @@
 import 'package:flutter/widgets.dart';
 
-/// Design tokens ported from the Svelte app's CSS custom properties.
+/// Design tokens grounded in the Svelte app's CSS custom properties.
 ///
-/// All rem values from the old stylesheets are converted at the base scale of
-/// **7.68 px per rem** (`--default-html-font-size: 48%`), the <1600px tier.
-/// See docs/porting/design-map.md §1.1.
+/// Legacy rem values use the base **7.68 px per rem** conversion. Interactive
+/// geometry and type have a small Flutter-native readability pass; the exact
+/// source measurements remain in docs/porting/design-map.md.
 abstract final class ShiruTokens {
   // ---------------------------------------------------------------------------
   // rem conversion
@@ -167,8 +167,8 @@ abstract final class ShiruTokens {
   // Fixed geometry
   // ---------------------------------------------------------------------------
 
-  /// Sidebar width (7rem) — also the mobile bottombar height.
-  static const double sidebarWidth = 54;
+  /// Comfortable desktop rail width — also the mobile bottombar height.
+  static const double sidebarWidth = 68;
 
   /// Sidebar expanded-on-hover width (22rem).
   static const double sidebarExpandedWidth = 169;
@@ -176,16 +176,16 @@ abstract final class ShiruTokens {
   /// Breakpoint: >=769px = desktop left rail, <769px = mobile bottom bar.
   static const double desktopBreakpoint = 769;
 
-  /// Nav button 3.1rem, nav link height 5.5rem.
+  /// Compact navigation geometry with enough room for readable labels.
   static const double navButtonSize = 23.8;
-  static const double navLinkHeight = 42.2;
+  static const double navLinkHeight = 50;
 
-  /// Brand mark 5rem square.
-  static const double brandMarkSize = 38.4;
+  /// Brand mark.
+  static const double brandMarkSize = 44;
 
-  /// Button height 3.2rem, horizontal padding 1.5rem.
-  static const double buttonHeight = 24.6;
-  static const double buttonPaddingX = 11.5;
+  /// Controls keep a compact desktop density without becoming fiddly.
+  static const double buttonHeight = 34;
+  static const double buttonPaddingX = 15;
 
   // ---------------------------------------------------------------------------
   // Type ladder (rem → px @7.68), Nunito
@@ -194,15 +194,15 @@ abstract final class ShiruTokens {
   static const String fontFamily = 'Nunito';
   static const String fontFamilyStats = 'Roboto'; // subtitles / player stats
 
-  static const double fontSize12 = 9.2; // 1.2rem — nav labels
-  static const double fontScale14 = 10.8;
-  static const double fontScale16 = 12.3;
-  static const double fontScale18 = 13.8;
-  static const double fontScale20 = 15.4;
-  static const double fontScale24 = 18.4; // rail titles
-  static const double fontScale34 = 26.1;
-  static const double fontScale40 = 30.7; // details H1
-  static const double fontScale50 = 38.4;
+  static const double fontSize12 = 11;
+  static const double fontScale14 = 13;
+  static const double fontScale16 = 15;
+  static const double fontScale18 = 17;
+  static const double fontScale20 = 19;
+  static const double fontScale24 = 21; // rail titles
+  static const double fontScale34 = 28;
+  static const double fontScale40 = 34; // details H1
+  static const double fontScale50 = 42;
 
   // ---------------------------------------------------------------------------
   // Motion — five durations, two curves. NEVER invent per-widget timings.

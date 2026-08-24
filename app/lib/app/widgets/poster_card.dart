@@ -13,7 +13,7 @@ import 'hover_region.dart';
 ///   transitioned.
 /// - Press: settles back down, shadow at .4 opacity.
 /// - Focus: accent ring, offset.
-/// - Airing: pulsing ring + green AIRING badge.
+/// - Airing: a quiet green status badge; no animated outlines between cards.
 class PosterCard extends StatefulWidget {
   const PosterCard({
     super.key,
@@ -87,14 +87,6 @@ class _PosterCardState extends State<PosterCard> {
                 child: Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    if (widget.airing)
-                      const Positioned.fill(
-                        left: -10,
-                        top: -10,
-                        right: -10,
-                        bottom: -10,
-                        child: _AiringRing(),
-                      ),
                     Positioned.fill(
                       child: AnimatedSlide(
                         // -.5rem rise expressed as a fraction of the
@@ -260,53 +252,6 @@ class _PosterCardState extends State<PosterCard> {
   }
 }
 
-/// Pulsing "airing" ring: 3.5s infinite, scale .955→1.01, opacity .9→0.
-class _AiringRing extends StatefulWidget {
-  const _AiringRing();
-
-  @override
-  State<_AiringRing> createState() => _AiringRingState();
-}
-
-class _AiringRingState extends State<_AiringRing>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 3500),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, child) {
-          final t = _controller.value;
-          return Opacity(
-            opacity: 0.9 * (1 - t),
-            child: Transform.scale(
-              scale: 0.955 + (1.01 - 0.955) * t,
-              child: child,
-            ),
-          );
-        },
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(ShiruTokens.radiusCard + 10),
-            border: Border.all(color: ShiruTokens.greenLight, width: 1.5),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _AiringBadge extends StatelessWidget {
   const _AiringBadge();
 
@@ -314,21 +259,34 @@ class _AiringBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: ShiruTokens.green,
-        borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
+        color: const Color(0xE6192B20),
+        border: Border.all(color: const Color(0x8A69D454)),
+        borderRadius: BorderRadius.circular(ShiruTokens.radiusPill),
       ),
       child: const Padding(
-        // .35rem .9rem
-        padding: EdgeInsets.symmetric(horizontal: 6.9, vertical: 2.7),
-        child: Text(
-          'AIRING',
-          style: TextStyle(
-            fontFamily: ShiruTokens.fontFamily,
-            fontSize: ShiruTokens.remPx, // 1rem
-            fontWeight: FontWeight.w700,
-            color: ShiruTokens.highlight,
-            letterSpacing: 0.5,
-          ),
+        padding: EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: ShiruTokens.completed,
+                shape: BoxShape.circle,
+              ),
+              child: SizedBox.square(dimension: 5),
+            ),
+            SizedBox(width: 4),
+            Text(
+              'AIRING',
+              style: TextStyle(
+                fontFamily: ShiruTokens.fontFamily,
+                fontSize: 8,
+                fontWeight: FontWeight.w800,
+                color: ShiruTokens.highlight,
+                letterSpacing: 0.6,
+              ),
+            ),
+          ],
         ),
       ),
     );

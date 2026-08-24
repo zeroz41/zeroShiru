@@ -193,6 +193,143 @@ class _SettingsBody extends ConsumerWidget {
                       ],
                     ),
                     const SizedBox(height: ShiruTokens.space4),
+                    _SettingsCard(
+                      title: 'Sources',
+                      icon: Icons.travel_explore_rounded,
+                      children: [
+                        _DropdownRow<String>(
+                          label: 'Preferred quality',
+                          description: 'Ranks matching releases first when resolving an episode.',
+                          value: settings.rssQuality,
+                          items: const {
+                            '720': '720p',
+                            '1080': '1080p',
+                            '2160': '2160p',
+                          },
+                          onChanged: (value) => unawaited(
+                            controller.persist(
+                              (current) => current.copyWith(rssQuality: value),
+                            ),
+                          ),
+                        ),
+                        _DropdownRow<String>(
+                          label: 'Release order',
+                          description: 'How equally suitable torrent releases are ranked.',
+                          value: settings.torrentSort,
+                          items: const {
+                            'seeders': 'Seeders',
+                            'quality': 'Quality',
+                            'size': 'File size',
+                          },
+                          onChanged: (value) => unawaited(
+                            controller.persist(
+                              (current) => current.copyWith(torrentSort: value),
+                            ),
+                          ),
+                        ),
+                        _SwitchRow(
+                          label: 'Automatically inspect availability',
+                          description: 'Checks candidate health before showing source choices.',
+                          value: settings.torrentAutoScrape,
+                          onChanged: (value) => unawaited(
+                            controller.persist(
+                              (current) =>
+                                  current.copyWith(torrentAutoScrape: value),
+                            ),
+                          ),
+                        ),
+                        _SwitchRow(
+                          label: 'Autoplay the best release',
+                          description: 'Starts the highest-ranked source without an extra prompt.',
+                          value: settings.rssAutoplay,
+                          onChanged: (value) => unawaited(
+                            controller.persist(
+                              (current) => current.copyWith(rssAutoplay: value),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: ShiruTokens.space4),
+                    _SettingsCard(
+                      title: 'Downloads',
+                      icon: Icons.download_for_offline_outlined,
+                      subtitle: 'Local torrent transfers only. Direct debrid streams do not write media files here.',
+                      children: [
+                        _DropdownRow<int>(
+                          label: 'Download rate limit',
+                          description: 'Maximum local torrent download speed per session.',
+                          value: settings.torrentSpeedBytes,
+                          items: _rateOptions(settings.torrentSpeedBytes),
+                          onChanged: (value) => unawaited(
+                            controller.persist(
+                              (current) =>
+                                  current.copyWith(torrentSpeedBytes: value),
+                            ),
+                          ),
+                        ),
+                        _DropdownRow<int>(
+                          label: 'Peer connections',
+                          description:
+                              'Upper bound for concurrent torrent peers.',
+                          value: settings.maxConnections,
+                          items: _numberOptions(settings.maxConnections, const [
+                            25,
+                            50,
+                            100,
+                            200,
+                          ]),
+                          onChanged: (value) => unawaited(
+                            controller.persist(
+                              (current) =>
+                                  current.copyWith(maxConnections: value),
+                            ),
+                          ),
+                        ),
+                        _DropdownRow<int>(
+                          label: 'Retained sessions',
+                          description:
+                              'Maximum number of transfers kept for seeding.',
+                          value: settings.seedingLimit,
+                          items: _numberOptions(settings.seedingLimit, const [
+                            1,
+                            3,
+                            5,
+                            10,
+                          ]),
+                          onChanged: (value) => unawaited(
+                            controller.persist(
+                              (current) =>
+                                  current.copyWith(seedingLimit: value),
+                            ),
+                          ),
+                        ),
+                        _SwitchRow(
+                          label: 'Download while streaming',
+                          description: 'Retains pieces fetched ahead of the player during a session.',
+                          value: settings.torrentStreamedDownload,
+                          onChanged: (value) => unawaited(
+                            controller.persist(
+                              (current) => current.copyWith(
+                                torrentStreamedDownload: value,
+                              ),
+                            ),
+                          ),
+                        ),
+                        _SwitchRow(
+                          label: 'Keep downloaded files',
+                          description: 'Preserves completed local files after playback ends.',
+                          value: settings.torrentPersist,
+                          onChanged: (value) => unawaited(
+                            controller.persist(
+                              (current) =>
+                                  current.copyWith(torrentPersist: value),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: ShiruTokens.space4),
                     _DebridCard(settings: settings),
                   ],
                 ),
@@ -611,3 +748,15 @@ String _serviceTitle(DebridService service) => switch (service) {
   DebridService.realdebrid => 'Real-Debrid',
   DebridService.torbox => 'TorBox',
 };
+
+Map<int, String> _rateOptions(int current) {
+  const mib = 1024 * 1024;
+  final values = {current, 2 * mib, 5 * mib, 10 * mib, 25 * mib}.toList()
+    ..sort();
+  return {for (final value in values) value: '${value ~/ mib} MiB/s'};
+}
+
+Map<int, String> _numberOptions(int current, List<int> defaults) {
+  final values = {current, ...defaults}.toList()..sort();
+  return {for (final value in values) value: '$value'};
+}
