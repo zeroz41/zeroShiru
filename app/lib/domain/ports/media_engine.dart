@@ -89,6 +89,8 @@ class PlaybackSnapshot {
     this.selectedSecondarySubtitle,
     this.chapters = const [],
     this.subtitleRendering = SubtitleRendering.standard,
+    this.primarySubtitleDelay = Duration.zero,
+    this.secondarySubtitleDelay = Duration.zero,
     this.error,
   });
 
@@ -109,6 +111,8 @@ class PlaybackSnapshot {
   final String? selectedSecondarySubtitle;
   final List<Chapter> chapters;
   final SubtitleRendering subtitleRendering;
+  final Duration primarySubtitleDelay;
+  final Duration secondarySubtitleDelay;
   final Object? error;
 }
 
@@ -162,6 +166,17 @@ class ResumePoint {
   final Duration position;
 }
 
+/// Per-open track preferences. The adapter applies a preference only when a
+/// matching track exists, leaving libmpv's container/default choice intact
+/// otherwise.
+class PlaybackPreferences {
+  const PlaybackPreferences({this.audioLanguage, this.subtitleLanguage});
+
+  /// BCP 47 or ISO 639 language code (for example `ja`, `jpn`, `en-US`).
+  final String? audioLanguage;
+  final String? subtitleLanguage;
+}
+
 /// The one seam between the app and any video backend (libmpv/media_kit on
 /// desktop and mobile, platform players on TVs, external mpv as fallback).
 /// No screen may import a media plugin directly.
@@ -171,7 +186,11 @@ abstract interface class MediaEngine {
   Stream<SubtitleCue> get secondaryCues;
   Stream<PlayerMetrics> get metrics;
 
-  Future<void> open(PlayerFile source, {ResumePoint? resume});
+  Future<void> open(
+    PlayerFile source, {
+    ResumePoint? resume,
+    PlaybackPreferences? preferences,
+  });
   Future<void> play();
   Future<void> pause();
   Future<void> seek(Duration position);
@@ -180,5 +199,9 @@ abstract interface class MediaEngine {
   Future<void> selectAudio(String? trackId);
   Future<void> selectSubtitle(String? trackId, {bool secondary = false});
   Future<void> setSubtitleRendering(SubtitleRendering mode);
+  Future<void> setSubtitleDelay(Duration delay, {bool secondary = false});
+
+  /// Loads and selects an external text/bitmap subtitle supported by libmpv.
+  Future<void> addSubtitle(String source, {String? title, String? language});
   Future<void> dispose();
 }

@@ -24,6 +24,35 @@ final credentialStoreProvider = Provider<CredentialStore>((ref) {
   throw StateError('CredentialStore was not installed at bootstrap');
 });
 
+/// Optional because episode enrichment must never make the numbered episode
+/// list disappear. Bootstrap installs the live mapping adapter; tests and
+/// offline starts naturally receive the local fallback.
+final episodeRepositoryProvider = Provider<EpisodeRepository?>((ref) => null);
+
+final episodeMetadataProvider = FutureProvider.family<List<EpisodeInfo>, Media>(
+  (ref, media) async {
+    final repository = ref.watch(episodeRepositoryProvider);
+    if (repository != null) {
+      try {
+        final episodes = await repository.episodes(media);
+        if (episodes.isNotEmpty) return episodes;
+      } catch (_) {
+        // Titles and thumbnails are enhancement data, never a playback gate.
+      }
+    }
+    return fallbackEpisodeMetadata(media);
+  },
+);
+
+List<EpisodeInfo> fallbackEpisodeMetadata(Media media) => [
+  for (var episode = 1; episode <= (media.maxEpisode ?? 1); episode++)
+    EpisodeInfo(
+      number: episode,
+      imageUrl: media.bannerImage ?? media.coverImage,
+      durationMinutes: media.duration,
+    ),
+];
+
 final homeFeedProvider = FutureProvider<HomeFeed>((ref) {
   return loadHomeFeed(ref.watch(catalogRepositoryProvider));
 });

@@ -4,20 +4,28 @@ library;
 
 import '../models/media.dart';
 import '../models/settings.dart';
+import '../models/source_extension.dart';
 import '../models/tracking_account.dart';
 import '../models/torrent.dart';
 
 export 'catalog_repository.dart';
 export 'debrid_client.dart';
+export 'episode_repository.dart';
 export 'media_engine.dart';
 
 /// Runs source searches (declarative manifests) and merges results.
 abstract interface class SourceResolver {
-  Future<List<TorrentResult>> search(
-    TorrentQuery query, {
-    bool movie = false,
-    bool batch = false,
-  });
+  Future<SourceCatalog> catalog();
+  Future<SourceCatalog> install(String source);
+  Future<SourceCatalog> remove(String source);
+  Future<SourceCatalog> setEnabled(String id, bool enabled);
+  Future<SourceCatalog> updateSettings(
+    String id,
+    Map<String, Object?> settings,
+  );
+  Future<bool> validate(String id);
+
+  Stream<SourceSearchBatch> search(TorrentQuery query, {bool movie = false});
 }
 
 /// AniList/MAL behind one surface.

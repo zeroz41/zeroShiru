@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/tokens.dart';
 import '../../application/settings/providers.dart';
+import '../../application/sources/providers.dart';
 import '../../domain/models/debrid_route.dart';
 import '../../domain/models/settings.dart';
+import '../../domain/models/source_extension.dart';
 import '../../domain/ports/debrid_client.dart';
 
 class SettingsPage extends ConsumerWidget {
@@ -164,6 +166,14 @@ class _SettingsBody extends ConsumerWidget {
                           items: const {
                             'jpn': 'Japanese',
                             'eng': 'English',
+                            'es': 'Spanish',
+                            'pt': 'Portuguese',
+                            'de': 'German',
+                            'fr': 'French',
+                            'it': 'Italian',
+                            'ko': 'Korean',
+                            'zh': 'Chinese',
+                            'ru': 'Russian',
                             'und': 'Container default',
                           },
                           onChanged: (value) => unawaited(
@@ -181,6 +191,22 @@ class _SettingsBody extends ConsumerWidget {
                           items: const {
                             'eng': 'English',
                             'jpn': 'Japanese',
+                            'es': 'Spanish',
+                            'pt': 'Portuguese',
+                            'de': 'German',
+                            'fr': 'French',
+                            'it': 'Italian',
+                            'ko': 'Korean',
+                            'zh': 'Chinese',
+                            'ru': 'Russian',
+                            'ar': 'Arabic',
+                            'hi': 'Hindi',
+                            'id': 'Indonesian',
+                            'pl': 'Polish',
+                            'th': 'Thai',
+                            'tr': 'Turkish',
+                            'uk': 'Ukrainian',
+                            'vi': 'Vietnamese',
                             'und': 'Container default',
                           },
                           onChanged: (value) => unawaited(
@@ -250,6 +276,8 @@ class _SettingsBody extends ConsumerWidget {
                         ),
                       ],
                     ),
+                    const SizedBox(height: ShiruTokens.space4),
+                    const _ExtensionsCard(),
                     const SizedBox(height: ShiruTokens.space4),
                     _SettingsCard(
                       title: 'Downloads',
@@ -340,6 +368,399 @@ class _SettingsBody extends ConsumerWidget {
       ],
     );
   }
+}
+
+class _ExtensionsCard extends ConsumerStatefulWidget {
+  const _ExtensionsCard();
+
+  @override
+  ConsumerState<_ExtensionsCard> createState() => _ExtensionsCardState();
+}
+
+class _ExtensionsCardState extends ConsumerState<_ExtensionsCard> {
+  final _source = TextEditingController();
+  bool _installing = false;
+  String? _message;
+  bool _error = false;
+
+  @override
+  void dispose() {
+    _source.dispose();
+    super.dispose();
+  }
+
+  Future<void> _install() async {
+    if (_installing || _source.text.trim().isEmpty) return;
+    setState(() {
+      _installing = true;
+      _message = null;
+    });
+    try {
+      await ref.read(sourceCatalogProvider.notifier).install(_source.text);
+      if (!mounted) return;
+      _source.clear();
+      setState(() {
+        _message = 'Extension catalog installed. Supported sources are ready.';
+        _error = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _message = '$error'.replaceFirst('Bad state: ', '');
+        _error = true;
+      });
+    } finally {
+      if (mounted) setState(() => _installing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final catalog = ref.watch(sourceCatalogProvider);
+    return _SettingsCard(
+      title: 'Extensions',
+      icon: Icons.extension_outlined,
+      subtitle: 'Install Shiru JSON catalogs. Known source IDs run through native Dart adapters; extension scripts are never executed.',
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: ShiruTokens.space3),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final field = TextField(
+                key: const ValueKey('extension-source'),
+                controller: _source,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(
+                  labelText: 'Catalog source',
+                  hintText: 'gh:Spithskia/Shiru-Extensions',
+                  prefixIcon: Icon(Icons.add_link_rounded),
+                ),
+                onSubmitted: (_) => unawaited(_install()),
+              );
+              final button = FilledButton.icon(
+                key: const ValueKey('install-extension'),
+                onPressed: _installing ? null : _install,
+                icon: _installing
+                    ? const SizedBox.square(
+                        dimension: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.download_rounded),
+                label: const Text('Install'),
+              );
+              if (constraints.maxWidth < 580) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    field,
+                    const SizedBox(height: ShiruTokens.space2),
+                    button,
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: field),
+                  const SizedBox(width: ShiruTokens.space3),
+                  button,
+                ],
+              );
+            },
+          ),
+        ),
+        if (_message != null)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: ShiruTokens.space2),
+              child: Text(
+                _message!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _error
+                      ? ShiruTokens.errorVeryLight
+                      : ShiruTokens.completed,
+                ),
+              ),
+            ),
+          ),
+        catalog.when(
+          loading: () => const LinearProgressIndicator(minHeight: 2),
+          error: (error, _) => Align(
+            alignment: Alignment.centerLeft,
+            child: Text('Extensions could not be loaded: $error'),
+          ),
+          data: (value) => value.extensions.isEmpty
+              ? const _EmptyExtensions()
+              : Column(
+                  children: [
+                    for (final extension in value.extensions)
+                      _ExtensionTile(extension: extension),
+                    if (value.roots.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: ShiruTokens.space3),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Wrap(
+                            spacing: ShiruTokens.space2,
+                            runSpacing: ShiruTokens.space2,
+                            children: [
+                              for (final root in value.roots)
+                                InputChip(
+                                  label: Text(root),
+                                  avatar: const Icon(
+                                    Icons.account_tree_outlined,
+                                    size: 16,
+                                  ),
+                                  onDeleted: () => unawaited(
+                                    ref
+                                        .read(sourceCatalogProvider.notifier)
+                                        .remove(root),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmptyExtensions extends StatelessWidget {
+  const _EmptyExtensions();
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.centerLeft,
+    child: Text(
+      'No catalogs installed. Add a gh: source to restore release search.',
+      style: Theme.of(context).textTheme.bodyMedium
+          ?.copyWith(color: ShiruTokens.textLight),
+    ),
+  );
+}
+
+class _ExtensionTile extends ConsumerStatefulWidget {
+  const _ExtensionTile({required this.extension});
+
+  final SourceExtension extension;
+
+  @override
+  ConsumerState<_ExtensionTile> createState() => _ExtensionTileState();
+}
+
+class _ExtensionTileState extends ConsumerState<_ExtensionTile> {
+  bool _checking = false;
+  bool? _healthy;
+
+  Future<void> _validate() async {
+    setState(() => _checking = true);
+    final result = await ref
+        .read(sourceCatalogProvider.notifier)
+        .validate(widget.extension.id);
+    if (mounted) {
+      setState(() {
+        _checking = false;
+        _healthy = result;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final extension = widget.extension;
+    return Container(
+      margin: const EdgeInsets.only(top: ShiruTokens.space2),
+      decoration: BoxDecoration(
+        color: ShiruTokens.darkVeryLight,
+        borderRadius: BorderRadius.circular(ShiruTokens.radiusBase),
+        border: Border.all(color: ShiruTokens.surfaceBorder),
+      ),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: ShiruTokens.space3),
+        childrenPadding: const EdgeInsets.fromLTRB(
+          ShiruTokens.space3,
+          0,
+          ShiruTokens.space3,
+          ShiruTokens.space3,
+        ),
+        leading: Icon(
+          extension.supported ? Icons.hub_outlined : Icons.code_off_rounded,
+          color: extension.supported
+              ? ShiruTokens.accentVeryLight
+              : ShiruTokens.warning,
+        ),
+        title: Row(
+          children: [
+            Flexible(child: Text(extension.name)),
+            const SizedBox(width: ShiruTokens.space2),
+            _SmallBadge(label: 'v${extension.version}'),
+            if (extension.deprecated) ...[
+              const SizedBox(width: ShiruTokens.space1),
+              const _SmallBadge(label: 'Deprecated', warning: true),
+            ],
+            if (!extension.supported) ...[
+              const SizedBox(width: ShiruTokens.space1),
+              const _SmallBadge(
+                label: 'Native adapter required',
+                warning: true,
+              ),
+            ],
+          ],
+        ),
+        subtitle: Text(
+          [extension.speed, extension.accuracy].whereType<String>().join(' · '),
+        ),
+        trailing: Switch(
+          value: extension.enabled,
+          onChanged: extension.supported
+              ? (value) => unawaited(
+                  ref
+                      .read(sourceCatalogProvider.notifier)
+                      .setEnabled(extension.id, value),
+                )
+              : null,
+        ),
+        children: [
+          if (extension.description case final description?)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                description.replaceAll(RegExp(r'<[^>]+>'), ''),
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: ShiruTokens.textLight),
+              ),
+            ),
+          for (final field in extension.fields)
+            _ExtensionField(extension: extension, field: field),
+          const SizedBox(height: ShiruTokens.space2),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: extension.supported && !_checking ? _validate : null,
+              icon: _checking
+                  ? const SizedBox.square(
+                      dimension: 13,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      _healthy == null
+                          ? Icons.monitor_heart_outlined
+                          : _healthy!
+                          ? Icons.check_circle_outline_rounded
+                          : Icons.error_outline_rounded,
+                    ),
+              label: Text(
+                _healthy == null
+                    ? 'Test source'
+                    : _healthy!
+                    ? 'Source online'
+                    : 'Source unavailable',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExtensionField extends ConsumerWidget {
+  const _ExtensionField({required this.extension, required this.field});
+
+  final SourceExtension extension;
+  final ExtensionSettingField field;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final values = Map<String, Object?>.of(extension.settings);
+    Future<void> save(Object? value) {
+      values[field.key] = value;
+      return ref
+          .read(sourceCatalogProvider.notifier)
+          .updateSettings(extension.id, values);
+    }
+
+    if (field.type == ExtensionSettingType.multiselect) {
+      final selected = _selectedStrings(values[field.key]);
+      return ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: Text(field.label),
+        subtitle: Text(
+          selected.isEmpty
+              ? field.description ?? 'Any language'
+              : '${selected.length} selected',
+        ),
+        trailing: PopupMenuButton<String>(
+          tooltip: 'Configure ${field.label}',
+          onSelected: (value) {
+            selected.contains(value)
+                ? selected.remove(value)
+                : selected.add(value);
+            unawaited(save(selected.toList()));
+          },
+          itemBuilder: (context) => [
+            for (final option in field.options)
+              CheckedPopupMenuItem(
+                value: option.value,
+                checked: selected.contains(option.value),
+                child: Text(option.label),
+              ),
+          ],
+        ),
+      );
+    }
+    if (field.type == ExtensionSettingType.toggle) {
+      return SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: Text(field.label),
+        subtitle: field.description == null ? null : Text(field.description!),
+        value: values[field.key] == true,
+        onChanged: (value) => unawaited(save(value)),
+      );
+    }
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: Text(field.label),
+      subtitle: field.description == null ? null : Text(field.description!),
+      trailing: DropdownButton<String>(
+        value: values[field.key] as String?,
+        hint: const Text('Any'),
+        items: [
+          for (final option in field.options)
+            DropdownMenuItem(value: option.value, child: Text(option.label)),
+        ],
+        onChanged: (value) => unawaited(save(value)),
+      ),
+    );
+  }
+}
+
+Set<String> _selectedStrings(Object? raw) =>
+    raw is List ? raw.whereType<String>().toSet() : <String>{};
+
+class _SmallBadge extends StatelessWidget {
+  const _SmallBadge({required this.label, this.warning = false});
+
+  final String label;
+  final bool warning;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    decoration: BoxDecoration(
+      color: warning ? const Color(0x2233AE17) : ShiruTokens.surfaceHighlight,
+      borderRadius: BorderRadius.circular(ShiruTokens.radiusPill),
+      border: Border.all(
+        color: warning ? ShiruTokens.warning : ShiruTokens.surfaceBorder,
+      ),
+    ),
+    child: Text(label, style: Theme.of(context).textTheme.labelSmall),
+  );
 }
 
 class _DebridCard extends ConsumerStatefulWidget {

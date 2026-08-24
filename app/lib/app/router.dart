@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../domain/models/torrent.dart';
+import '../application/playback/request.dart';
 import '../features/downloads/downloads_page.dart';
 import '../features/home/home_page.dart';
 import '../features/player/player_page.dart';
@@ -67,11 +68,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/player',
-        builder: (context, state) => PlayerPage(
-          initialSource: state.extra is PlayerFile
-              ? state.extra! as PlayerFile
-              : null,
-        ),
+        builder: (context, state) {
+          final extra = state.extra;
+          return PlayerPage(
+            initialSource: extra is PlayerFile ? extra : null,
+            initialLaunch: extra is PlaybackLaunch ? extra : null,
+          );
+        },
       ),
     ],
   );

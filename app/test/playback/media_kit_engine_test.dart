@@ -98,6 +98,39 @@ void main() {
       expect(normalizeTrackLanguage(null), isNull);
     });
 
+    test('prefers an exact region then falls back to the language family', () {
+      const tracks = [
+        kit.AudioTrack('1', 'European', 'pt-PT'),
+        kit.AudioTrack('2', 'Brazilian', 'por_BR'),
+      ];
+
+      expect(
+        preferredKitTrack(tracks, 'pt-BR', (track) => track.language)?.id,
+        '2',
+      );
+      expect(
+        preferredKitTrack(tracks, 'pt-AO', (track) => track.language)?.id,
+        '1',
+      );
+      expect(
+        preferredKitTrack(tracks, 'und', (track) => track.language),
+        isNull,
+      );
+    });
+
+    test('sidecar subtitles enforce both transport and format boundaries', () {
+      expect(isAllowedSubtitleSource('file:///tmp/dialogue.ass'), isTrue);
+      expect(
+        isAllowedSubtitleSource('https://cdn.example/subtitle.vtt?sig=secret'),
+        isTrue,
+      );
+      expect(
+        isAllowedSubtitleSource('http://cdn.example/subtitle.srt'),
+        isFalse,
+      );
+      expect(isAllowedSubtitleSource('file:///tmp/subtitle.exe'), isFalse);
+    });
+
     test('turns formatted subtitle payloads into plain text', () {
       expect(plainSubtitleText(r'{\an8}<i>Hello</i>\Nworld'), 'Hello\nworld');
     });

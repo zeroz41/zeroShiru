@@ -32,6 +32,27 @@ class AiringEpisode {
   final DateTime airingAt;
 }
 
+/// Provider-neutral episode presentation metadata used by the details list.
+/// Playback identity remains the integer [number]; every other field is an
+/// optional enhancement and may fall back to the parent media artwork.
+class EpisodeInfo {
+  const EpisodeInfo({
+    required this.number,
+    this.title,
+    this.summary,
+    this.imageUrl,
+    this.durationMinutes,
+    this.airDate,
+  });
+
+  final int number;
+  final String? title;
+  final String? summary;
+  final String? imageUrl;
+  final int? durationMinutes;
+  final DateTime? airDate;
+}
+
 class ListEntry {
   const ListEntry({
     required this.status,

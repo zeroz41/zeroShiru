@@ -38,37 +38,6 @@ const int probeRetryDelayMs = 1500;
 /// a streaming body at all.
 const int probeBytes = 262144;
 
-/// The streaming face of the HTTP seam. [HttpTransport.send] buffers a whole
-/// body, which a probe must never do against an open-ended range — this is the
-/// same request vocabulary with a body that arrives in chunks and a connection
-/// that can be torn down mid-stream.
-abstract interface class StreamingTransport {
-  Future<StreamedResponse> open(HttpRequest request);
-}
-
-/// A response whose body is still arriving. [cancel] tears the connection down;
-/// it is deliberately a synchronous callback so no caller can ever await the
-/// far end letting go — awaiting the release of an open-ended range against a
-/// real CDN has twice stranded every debrid start at readyState=0 while every
-/// mocked suite stayed green.
-class StreamedResponse {
-  const StreamedResponse({
-    required this.status,
-    this.headers = const {},
-    required this.body,
-    required this.cancel,
-  });
-
-  final int status;
-
-  /// Lowercased keys, like [HttpResponse].
-  final Map<String, String> headers;
-  final Stream<List<int>> body;
-  final void Function() cancel;
-
-  bool get ok => status >= 200 && status < 300;
-}
-
 /// What a probe decided about a link.
 class ProbeVerdict {
   const ProbeVerdict({

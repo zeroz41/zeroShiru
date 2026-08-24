@@ -58,6 +58,19 @@ flutter run -d linux
 Replace `linux` with a device ID printed by `flutter devices`, such as
 `windows`, `macos`, or an Android emulator/device ID.
 
+## Source extensions
+
+Open **Settings → Extensions** and install a Shiru catalog such as
+`gh:Spithskia/Shiru-Extensions`. The app reads the repository's declarative
+`index.json` metadata and runs recognized source IDs through native Dart
+adapters. It never downloads or executes extension JavaScript.
+
+The bundled adapter registry supports Nyaa, Sukebei, SeaDex, AnimeTosho
+Archive/New, nekoBT, and TsukiHime. Other legacy catalogs can be inspected and
+installed, but an unknown source stays disabled and is labelled **Native adapter
+required** until it is ported or rewritten using a future declarative source
+schema.
+
 ## Validate a change
 
 The same fast checks run in CI:
@@ -78,6 +91,15 @@ flutter test test/features/schedule_page_test.dart
 Tests are hermetic by default. Live tracking, debrid, and torrent tests must be
 explicit, secret-gated suites when those lanes are added; ordinary unit/widget
 tests must never consume service quotas or join a swarm.
+
+The TorBox smoke test is opt-in and read-only: it validates the account and
+checks cached availability for public-domain sample hashes. It does not add or
+resolve a torrent:
+
+```bash
+ZEROSHIRU_LIVE_TORBOX_KEY='…' \
+  flutter test test/debrid/live_torbox_test.dart
+```
 
 ## Release builds
 

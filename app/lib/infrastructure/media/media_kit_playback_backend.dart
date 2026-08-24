@@ -7,7 +7,7 @@ import '../../domain/ports/media_engine.dart';
 import 'media_kit_engine.dart';
 
 class MediaKitPlaybackBackend implements PlaybackBackend {
-  MediaKitPlaybackBackend()
+  MediaKitPlaybackBackend({PlaybackPreferences Function()? preferences})
     : _player = Player(
         configuration: const PlayerConfiguration(
           title: 'zeroShiru',
@@ -16,7 +16,7 @@ class MediaKitPlaybackBackend implements PlaybackBackend {
           protocolWhitelist: ['file', 'tcp', 'tls', 'http', 'https', 'crypto'],
         ),
       ) {
-    _engine = MediaKitEngine(_player);
+    _engine = MediaKitEngine(_player, defaultPreferences: preferences);
     _video = VideoController(_player);
   }
 

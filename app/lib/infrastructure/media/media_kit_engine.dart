@@ -13,10 +13,24 @@ const _bitmapSubtitleCodecs = {
   'pgs',
   'xsub',
 };
+const _sidecarSubtitleExtensions = {
+  'ass',
+  'idx',
+  'srt',
+  'ssa',
+  'sub',
+  'sup',
+  'txt',
+  'vtt',
+};
 
 /// The libmpv/media_kit implementation of the app's media capability port.
 class MediaKitEngine implements MediaEngine {
-  MediaKitEngine(this._player) {
+  MediaKitEngine(
+    this._player, {
+    PlaybackPreferences Function()? defaultPreferences,
+  }) : _defaultPreferences =
+           defaultPreferences ?? (() => const PlaybackPreferences()) {
     final stream = _player.stream;
     _subscriptions.addAll([
       stream.playing.listen(_onPlaying),
@@ -37,6 +51,7 @@ class MediaKitEngine implements MediaEngine {
   }
 
   final kit.Player _player;
+  final PlaybackPreferences Function() _defaultPreferences;
   final _states = StreamController<PlaybackSnapshot>.broadcast(sync: true);
   final _primaryCues = StreamController<SubtitleCue>.broadcast(sync: true);
   final _secondaryCues = StreamController<SubtitleCue>.broadcast(sync: true);
@@ -47,6 +62,8 @@ class MediaKitEngine implements MediaEngine {
   SubtitleRendering _subtitleRendering = SubtitleRendering.standard;
   PlaybackFailure? _failure;
   String? _selectedSecondary;
+  Duration _primarySubtitleDelay = Duration.zero;
+  Duration _secondarySubtitleDelay = Duration.zero;
   Timer? _metricTimer;
   var _generation = 0;
   var _disposed = false;
@@ -65,7 +82,11 @@ class MediaKitEngine implements MediaEngine {
   Stream<PlayerMetrics> get metrics => _metrics.stream;
 
   @override
-  Future<void> open(PlayerFile source, {ResumePoint? resume}) async {
+  Future<void> open(
+    PlayerFile source, {
+    ResumePoint? resume,
+    PlaybackPreferences? preferences,
+  }) async {
     _ensureAlive();
     if (!isAllowedPlaybackSource(source.url)) {
       final failure = PlaybackFailure(
@@ -83,6 +104,8 @@ class MediaKitEngine implements MediaEngine {
     _phase = PlaybackPhase.opening;
     _failure = null;
     _selectedSecondary = null;
+    _primarySubtitleDelay = Duration.zero;
+    _secondarySubtitleDelay = Duration.zero;
     _emit();
 
     try {
@@ -94,6 +117,9 @@ class MediaKitEngine implements MediaEngine {
         ),
         play: false,
       );
+      if (_disposed || generation != _generation) return;
+      await _applyTrackPreferences(preferences ?? _defaultPreferences());
+      await _applySubtitleState();
       if (_disposed || generation != _generation) return;
       _phase = PlaybackPhase.ready;
       _emit();
@@ -233,12 +259,97 @@ class MediaKitEngine implements MediaEngine {
   Future<void> setSubtitleRendering(SubtitleRendering mode) async {
     _ensureAlive();
     _subtitleRendering = mode;
-    final visible = mode == SubtitleRendering.standard ? 'yes' : 'no';
+    await _applySubtitleVisibility();
+    _emit();
+  }
+
+  Future<void> _applySubtitleVisibility() async {
+    final visible = _subtitleRendering == SubtitleRendering.standard
+        ? 'yes'
+        : 'no';
     await Future.wait([
       _setNativeProperty('sub-visibility', visible),
       _setNativeProperty('secondary-sub-visibility', visible),
     ]);
+  }
+
+  Future<void> _applySubtitleState() async {
+    await Future.wait([
+      _applySubtitleVisibility(),
+      _setNativeProperty('sub-delay', '0'),
+      _setNativeProperty('secondary-sub-delay', '0'),
+    ]);
+  }
+
+  @override
+  Future<void> setSubtitleDelay(
+    Duration delay, {
+    bool secondary = false,
+  }) async {
+    _ensureAlive();
+    final seconds = delay.inMicroseconds / Duration.microsecondsPerSecond;
+    final changed = await _setNativeProperty(
+      secondary ? 'secondary-sub-delay' : 'sub-delay',
+      seconds.toStringAsFixed(3),
+    );
+    if (!changed) {
+      throw const PlaybackFailure(
+        PlaybackFailureKind.unsupported,
+        'Subtitle timing is unavailable on this player.',
+      );
+    }
+    if (secondary) {
+      _secondarySubtitleDelay = delay;
+    } else {
+      _primarySubtitleDelay = delay;
+    }
     _emit();
+  }
+
+  @override
+  Future<void> addSubtitle(
+    String source, {
+    String? title,
+    String? language,
+  }) async {
+    _ensureAlive();
+    if (!isAllowedSubtitleSource(source)) {
+      throw const PlaybackFailure(
+        PlaybackFailureKind.unsafeSource,
+        'That subtitle source is unsupported or insecure.',
+      );
+    }
+    await _command(
+      () => _player.setSubtitleTrack(
+        kit.SubtitleTrack.uri(
+          source,
+          title: title,
+          language: normalizeTrackLanguage(language),
+        ),
+      ),
+      'The subtitle file could not be loaded.',
+    );
+  }
+
+  Future<void> _applyTrackPreferences(PlaybackPreferences preferences) async {
+    final audio = preferredKitTrack(
+      _player.state.tracks.audio,
+      preferences.audioLanguage,
+      (track) => track.language,
+    );
+    final subtitle = preferredKitTrack(
+      _player.state.tracks.subtitle,
+      preferences.subtitleLanguage,
+      (track) => track.language,
+    );
+    // Preference failure should never make an otherwise playable file fail to
+    // open. libmpv's own default remains the safe fallback.
+    try {
+      if (audio != null) await _player.setAudioTrack(audio);
+    } catch (_) {}
+    try {
+      if (subtitle != null) await _player.setSubtitleTrack(subtitle);
+    } catch (_) {}
   }
 
   void _onPlaying(bool playing) {
@@ -319,6 +430,8 @@ class MediaKitEngine implements MediaEngine {
         phase: _phase,
         selectedSecondary: _selectedSecondary,
         subtitleRendering: _subtitleRendering,
+        primarySubtitleDelay: _primarySubtitleDelay,
+        secondarySubtitleDelay: _secondarySubtitleDelay,
         error: _failure,
       ),
     );
@@ -446,6 +559,8 @@ PlaybackSnapshot mapMediaKitState(
   required PlaybackPhase phase,
   String? selectedSecondary,
   SubtitleRendering subtitleRendering = SubtitleRendering.standard,
+  Duration primarySubtitleDelay = Duration.zero,
+  Duration secondarySubtitleDelay = Duration.zero,
   Object? error,
 }) {
   final effectivePhase = switch ((
@@ -484,6 +599,8 @@ PlaybackSnapshot mapMediaKitState(
     selectedPrimarySubtitle: selectedKitTrackId(state.track.subtitle.id),
     selectedSecondarySubtitle: selectedSecondary,
     subtitleRendering: subtitleRendering,
+    primarySubtitleDelay: primarySubtitleDelay,
+    secondarySubtitleDelay: secondarySubtitleDelay,
     error: error,
   );
 }
@@ -522,21 +639,51 @@ String? normalizeTrackLanguage(String? raw) {
   final normalized = source.replaceAll('_', '-').toLowerCase();
   const iso639 = {
     'ara': 'ar',
+    'arm': 'hy',
+    'hye': 'hy',
+    'baq': 'eu',
+    'eus': 'eu',
+    'ben': 'bn',
+    'bul': 'bg',
+    'cat': 'ca',
     'chi': 'zh',
     'zho': 'zh',
+    'cze': 'cs',
+    'ces': 'cs',
+    'dan': 'da',
     'dut': 'nl',
     'nld': 'nl',
     'eng': 'en',
+    'fin': 'fi',
     'fre': 'fr',
     'fra': 'fr',
     'ger': 'de',
     'deu': 'de',
+    'gre': 'el',
+    'ell': 'el',
+    'heb': 'he',
+    'hin': 'hi',
+    'hun': 'hu',
+    'ice': 'is',
+    'isl': 'is',
+    'ind': 'id',
     'ita': 'it',
     'jpn': 'ja',
     'kor': 'ko',
+    'may': 'ms',
+    'msa': 'ms',
+    'nor': 'no',
+    'pol': 'pl',
     'por': 'pt',
+    'rum': 'ro',
+    'ron': 'ro',
     'rus': 'ru',
     'spa': 'es',
+    'swe': 'sv',
+    'tha': 'th',
+    'tur': 'tr',
+    'ukr': 'uk',
+    'vie': 'vi',
   };
   final parts = normalized.split('-');
   parts[0] = iso639[parts[0]] ?? parts[0];
@@ -544,6 +691,25 @@ String? normalizeTrackLanguage(String? raw) {
     parts[1] = parts[1].toUpperCase();
   }
   return parts.join('-');
+}
+
+T? preferredKitTrack<T>(
+  Iterable<T> tracks,
+  String? preferredLanguage,
+  String? Function(T track) languageOf,
+) {
+  final preferred = normalizeTrackLanguage(preferredLanguage);
+  if (preferred == null) return null;
+  final base = preferred.split('-').first;
+  T? baseMatch;
+  for (final track in tracks) {
+    final language = normalizeTrackLanguage(languageOf(track));
+    if (language == preferred) return track;
+    if (baseMatch == null && language?.split('-').first == base) {
+      baseMatch = track;
+    }
+  }
+  return baseMatch;
 }
 
 String plainSubtitleText(String raw) => raw
@@ -566,6 +732,18 @@ bool isAllowedPlaybackSource(String source) {
     default:
       return false;
   }
+}
+
+bool isAllowedSubtitleSource(String source) {
+  if (!isAllowedPlaybackSource(source)) return false;
+  final uri = Uri.tryParse(source);
+  if (uri == null) return false;
+  final name = uri.pathSegments.isEmpty ? '' : uri.pathSegments.last;
+  final dot = name.lastIndexOf('.');
+  if (dot < 0 || dot == name.length - 1) return false;
+  return _sidecarSubtitleExtensions.contains(
+    name.substring(dot + 1).toLowerCase(),
+  );
 }
 
 String? _originalLanguage(String? raw) {

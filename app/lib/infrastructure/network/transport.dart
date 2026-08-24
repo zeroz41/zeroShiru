@@ -83,6 +83,29 @@ abstract interface class HttpTransport {
   Future<HttpResponse> send(HttpRequest request);
 }
 
+/// Streaming form of the HTTP seam for proving a direct media URL without
+/// buffering the full response. [StreamedResponse.cancel] must synchronously
+/// tear down an open-ended range request.
+abstract interface class StreamingTransport {
+  Future<StreamedResponse> open(HttpRequest request);
+}
+
+class StreamedResponse {
+  const StreamedResponse({
+    required this.status,
+    this.headers = const {},
+    required this.body,
+    required this.cancel,
+  });
+
+  final int status;
+  final Map<String, String> headers;
+  final Stream<List<int>> body;
+  final void Function() cancel;
+
+  bool get ok => status >= 200 && status < 300;
+}
+
 /// Injectable clock so time-based policy (quiet-service state, limiter
 /// windows, TTLs) is testable without wall time.
 abstract interface class Clock {

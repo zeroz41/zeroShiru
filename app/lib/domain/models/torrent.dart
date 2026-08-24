@@ -54,6 +54,9 @@ class TorrentQuery {
     this.tvdbEid,
     this.imdbId,
     this.tmdbId,
+    this.idMal,
+    this.season,
+    this.absoluteEpisode,
   });
 
   final int anilistId;
@@ -70,6 +73,36 @@ class TorrentQuery {
   final int? tvdbEid;
   final String? imdbId;
   final int? tmdbId;
+  final int? idMal;
+  final int? season;
+  final int? absoluteEpisode;
+
+  TorrentQuery copyWith({
+    int? anidbAid,
+    int? anidbEid,
+    int? tvdbAid,
+    int? tvdbEid,
+    String? imdbId,
+    int? tmdbId,
+    int? season,
+    int? absoluteEpisode,
+  }) => TorrentQuery(
+    anilistId: anilistId,
+    titles: titles,
+    episode: episode,
+    episodeCount: episodeCount,
+    resolution: resolution,
+    exclusions: exclusions,
+    anidbAid: anidbAid ?? this.anidbAid,
+    anidbEid: anidbEid ?? this.anidbEid,
+    tvdbAid: tvdbAid ?? this.tvdbAid,
+    tvdbEid: tvdbEid ?? this.tvdbEid,
+    imdbId: imdbId ?? this.imdbId,
+    tmdbId: tmdbId ?? this.tmdbId,
+    idMal: idMal,
+    season: season ?? this.season,
+    absoluteEpisode: absoluteEpisode ?? this.absoluteEpisode,
+  );
 }
 
 /// The universal playable-file shape, produced by both the torrent engine and

@@ -10,6 +10,7 @@ import 'app/app.dart';
 import 'application/library/providers.dart';
 import 'application/playback/providers.dart';
 import 'application/settings/providers.dart';
+import 'application/sources/providers.dart';
 import 'infrastructure/bootstrap/app_services.dart';
 
 Future<void> main() async {
@@ -45,10 +46,15 @@ Future<void> main() async {
       child: ProviderScope(
         overrides: [
           catalogRepositoryProvider.overrideWithValue(services.catalog),
+          episodeRepositoryProvider.overrideWithValue(services.episodes),
           trackingRepositoryProvider.overrideWithValue(services.tracking),
           settingsRepositoryProvider.overrideWithValue(services.settings),
+          sourceResolverProvider.overrideWithValue(services.sources),
           credentialStoreProvider.overrideWithValue(services.credentials),
           playbackBackendProvider.overrideWithValue(services.playback),
+          playbackProbeTransportProvider.overrideWithValue(
+            services.playbackProbe,
+          ),
           debridClientsProvider.overrideWithValue(services.debrid),
         ],
         child: const ZeroShiruApp(),

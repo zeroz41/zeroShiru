@@ -11,6 +11,28 @@
 /// episode 4 and picking 24 played 18.
 library;
 
+import '../../domain/models/media.dart';
+import '../../domain/ports/debrid_client.dart';
+
+/// Everything the player needs to turn an episode click into a direct stream.
+///
+/// The magnet is deliberately kept out of route URLs and widget labels. It can
+/// contain tracker parameters, while the eventual debrid URL is a bearer
+/// credential; both therefore travel only as in-memory route state.
+class PlaybackLaunch {
+  const PlaybackLaunch({
+    required this.media,
+    required this.episode,
+    required this.magnet,
+    required this.service,
+  });
+
+  final Media media;
+  final int episode;
+  final String magnet;
+  final DebridService service;
+}
+
 /// The episode the user asked for, and which show they asked it of.
 class PlayRequest {
   const PlayRequest({required this.episode, this.mediaId});
