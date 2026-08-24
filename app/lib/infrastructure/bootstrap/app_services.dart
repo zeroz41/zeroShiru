@@ -1,9 +1,11 @@
 import 'package:path_provider/path_provider.dart';
 
+import '../../application/playback/backend.dart';
 import '../../domain/ports/ports.dart';
 import '../database/database.dart';
 import '../database/query_cache_impl.dart';
 import '../database/settings_repository_impl.dart';
+import '../media/media_kit_playback_backend.dart';
 import '../network/http_transport_impl.dart';
 import '../platform/credential_store_impl.dart';
 import '../platform/log_sink.dart';
@@ -20,6 +22,7 @@ class AppServices {
     required this.tracking,
     required this.settings,
     required this.credentials,
+    required this.playback,
     required this.log,
     required this._profileDatabase,
     required this._sharedDatabase,
@@ -31,6 +34,7 @@ class AppServices {
   final TrackingRepository tracking;
   final SettingsRepository settings;
   final CredentialStore credentials;
+  final PlaybackBackend playback;
   final FileLogSink log;
 
   final AppDatabase _profileDatabase;
@@ -50,12 +54,14 @@ class AppServices {
     final auth = TrackingAuthStore(credentials);
     final anilist = AnilistClient(transport: transport, cache: queryCache);
     final mal = MalClient(transport: transport);
+    final playback = MediaKitPlaybackBackend();
 
     return AppServices._(
       catalog: AnilistCatalogRepository(anilist),
       tracking: TrackingRepositoryImpl(anilist: anilist, mal: mal, auth: auth),
       settings: SqliteSettingsRepository(databases.profile),
       credentials: credentials,
+      playback: playback,
       log: FileLogSink(support.path),
       profileDatabase: databases.profile,
       sharedDatabase: databases.shared,
@@ -64,14 +70,18 @@ class AppServices {
     );
   }
 
-  void close() {
-    if (settings case final SqliteSettingsRepository repository) {
-      repository.dispose();
+  Future<void> close() async {
+    try {
+      await playback.dispose();
+    } finally {
+      if (settings case final SqliteSettingsRepository repository) {
+        repository.dispose();
+      }
+      _queryCache.dispose();
+      _transport.close();
+      _profileDatabase.close();
+      _sharedDatabase.close();
+      log.close();
     }
-    _queryCache.dispose();
-    _transport.close();
-    _profileDatabase.close();
-    _sharedDatabase.close();
-    log.close();
   }
 }

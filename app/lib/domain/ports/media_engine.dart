@@ -15,6 +15,22 @@ enum SubtitleRendering { standard, learning, off }
 
 enum TrackKind { video, audio, subtitle }
 
+enum PlaybackFailureKind { unsafeSource, opening, backend, unsupported }
+
+/// A redacted player failure that is safe to surface or persist.
+///
+/// Backend exception strings are deliberately not retained because they may
+/// contain a signed CDN URL (a bearer credential).
+class PlaybackFailure implements Exception {
+  const PlaybackFailure(this.kind, this.message);
+
+  final PlaybackFailureKind kind;
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class MediaTrack {
   const MediaTrack({
     required this.id,

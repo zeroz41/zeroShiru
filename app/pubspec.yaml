@@ -16,9 +16,9 @@ dependencies:
   go_router: ^17.5.0
   http: ^1.6.0
   intl: ^0.20.3
-  media_kit: ^1.2.6
-  media_kit_libs_video: ^1.0.7
-  media_kit_video: ^2.0.1
+  media_kit: 1.2.6
+  media_kit_libs_video: 1.0.7
+  media_kit_video: 2.0.1
   path: ^1.9.1
   path_provider: ^2.1.6
   sqlite3: ^3.5.2

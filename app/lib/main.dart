@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app/app.dart';
 import 'application/library/providers.dart';
+import 'application/playback/providers.dart';
 import 'infrastructure/bootstrap/app_services.dart';
 
 Future<void> main() async {
@@ -46,6 +47,7 @@ Future<void> main() async {
           trackingRepositoryProvider.overrideWithValue(services.tracking),
           settingsRepositoryProvider.overrideWithValue(services.settings),
           credentialStoreProvider.overrideWithValue(services.credentials),
+          playbackBackendProvider.overrideWithValue(services.playback),
         ],
         child: const ZeroShiruApp(),
       ),
@@ -75,7 +77,7 @@ class _ServiceHost extends StatefulWidget {
 class _ServiceHostState extends State<_ServiceHost> {
   @override
   void dispose() {
-    widget.services.close();
+    unawaited(widget.services.close());
     super.dispose();
   }
 
