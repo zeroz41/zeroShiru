@@ -3,6 +3,14 @@ import 'package:flutter/material.dart';
 import '../theme/tokens.dart';
 import 'hover_region.dart';
 
+class PosterCardMetadata {
+  const PosterCardMetadata(this.label, {this.icon, this.color});
+
+  final String label;
+  final IconData? icon;
+  final Color? color;
+}
+
 /// The "soft poster" SmallCard (design-map §1.7).
 ///
 /// - Container: aspect 152/296, padding, hairline border, panel gradient,
@@ -23,6 +31,7 @@ class PosterCard extends StatefulWidget {
     this.onTap,
     this.bloomColor,
     this.airing = false,
+    this.metadata = const [],
     this.width = ShiruTokens.cardWidth,
   }) : assert(
          image == null || imageBuilder == null,
@@ -46,6 +55,10 @@ class PosterCard extends StatefulWidget {
 
   /// Shows the pulsing ring + green AIRING badge.
   final bool airing;
+
+  /// Quiet, glanceable facts shown below the title. Keep this to two short
+  /// items so poster rails remain easy to scan.
+  final List<PosterCardMetadata> metadata;
 
   final double width;
 
@@ -202,6 +215,10 @@ class _PosterCardState extends State<PosterCard> {
                     ),
                   ),
                 ),
+                if (widget.metadata.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  _MetadataRow(items: widget.metadata),
+                ],
               ],
             ),
           ),
@@ -249,6 +266,63 @@ class _PosterCardState extends State<PosterCard> {
       );
     }
     return const ColoredBox(color: ShiruTokens.darkVeryLight);
+  }
+}
+
+class _MetadataRow extends StatelessWidget {
+  const _MetadataRow({required this.items});
+
+  final List<PosterCardMetadata> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = items.take(2).toList(growable: false);
+    return SizedBox(
+      height: 16,
+      child: Row(
+        children: [
+          Expanded(child: _MetadataItem(item: visible.first)),
+          if (visible.length > 1) ...[
+            const SizedBox(width: ShiruTokens.space2),
+            Flexible(child: _MetadataItem(item: visible.last)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _MetadataItem extends StatelessWidget {
+  const _MetadataItem({required this.item});
+
+  final PosterCardMetadata item;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = item.color ?? ShiruTokens.textMuted;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (item.icon != null) ...[
+          Icon(item.icon, size: 12, color: color),
+          const SizedBox(width: 3),
+        ],
+        Flexible(
+          child: Text(
+            item.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: ShiruTokens.fontFamilyStats,
+              fontSize: ShiruTokens.fontSize12,
+              fontWeight: FontWeight.w500,
+              color: color,
+              height: 1,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 

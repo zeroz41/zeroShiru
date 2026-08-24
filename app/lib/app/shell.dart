@@ -13,10 +13,11 @@ import 'widgets/soft_modal.dart';
 
 /// The navigation shell (design-map §1.12).
 ///
-/// Breakpoint 769px: desktop = comfortable labelled rail, mobile = bottom bar.
+/// Breakpoint 769px: desktop = user-controlled compact/labelled rail, mobile
+/// = four primary destinations plus an overflow menu.
 /// Surfaces: `linear-gradient(panel-strong → shell)`, hairline
 /// edge, pre-painted shadow. Pages render on top of [AmbientBackground].
-class AppShell extends StatelessWidget {
+class AppShell extends StatefulWidget {
   const AppShell({super.key, required this.location, required this.child});
 
   final String location;
@@ -30,8 +31,17 @@ class AppShell extends StatelessWidget {
     (path: '/settings', icon: Icons.settings_rounded, label: 'Settings'),
   ];
 
+  @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> {
+  bool _railExpanded = false;
+
   int get _selectedIndex {
-    final i = destinations.indexWhere((d) => location.startsWith(d.path));
+    final i = AppShell.destinations.indexWhere(
+      (d) => widget.location.startsWith(d.path),
+    );
     return i < 0 ? 0 : i;
   }
 
@@ -40,14 +50,18 @@ class AppShell extends StatelessWidget {
     final isDesktop =
         MediaQuery.sizeOf(context).width >= ShiruTokens.desktopBreakpoint;
     final content = AmbientBackground(
-      child: PageMotion(motionKey: location, child: child),
+      child: PageMotion(motionKey: widget.location, child: widget.child),
     );
 
     if (isDesktop) {
       return Scaffold(
         body: Row(
           children: [
-            _SideRail(selectedIndex: _selectedIndex),
+            _SideRail(
+              selectedIndex: _selectedIndex,
+              expanded: _railExpanded,
+              onToggle: () => setState(() => _railExpanded = !_railExpanded),
+            ),
             Expanded(child: content),
           ],
         ),
@@ -65,14 +79,26 @@ class AppShell extends StatelessWidget {
 }
 
 class _SideRail extends StatelessWidget {
-  const _SideRail({required this.selectedIndex});
+  const _SideRail({
+    required this.selectedIndex,
+    required this.expanded,
+    required this.onToggle,
+  });
 
   final int selectedIndex;
+  final bool expanded;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: ShiruTokens.sidebarWidth,
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return AnimatedContainer(
+      key: const ValueKey('desktop-navigation-rail'),
+      width: expanded
+          ? ShiruTokens.sidebarExpandedWidth
+          : ShiruTokens.sidebarWidth,
+      duration: reduceMotion ? Duration.zero : ShiruTokens.motionPanel,
+      curve: ShiruTokens.easeSettle,
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
@@ -82,44 +108,117 @@ class _SideRail extends StatelessWidget {
         border: Border(right: BorderSide(color: ShiruTokens.surfaceBorder)),
         boxShadow: ShiruTokens.sidebarShadow,
       ),
-      child: Column(
-        children: [
-          const SizedBox(height: ShiruTokens.space3),
-          const _BrandMark(),
-          const SizedBox(height: ShiruTokens.space4),
-          for (var i = 0; i < AppShell.destinations.length - 1; i++)
+      child: ClipRect(
+        child: Column(
+          children: [
+            const SizedBox(height: ShiruTokens.space3),
+            _RailHeader(expanded: expanded, onToggle: onToggle),
+            const SizedBox(height: ShiruTokens.space4),
+            for (var i = 0; i < AppShell.destinations.length - 1; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
+                child: _NavItem(
+                  destination: AppShell.destinations[i],
+                  active: i == selectedIndex,
+                  expanded: true,
+                  inline: expanded,
+                  showLabel: expanded,
+                ),
+              ),
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
+              child: _NavItem.action(
+                icon: Icons.notifications_none_rounded,
+                label: 'Updates',
+                expanded: true,
+                inline: expanded,
+                showLabel: expanded,
+                onTap: () =>
+                    _showShellPanel(context, const _NotificationPanel()),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
               child: _NavItem(
-                destination: AppShell.destinations[i],
-                active: i == selectedIndex,
+                destination: AppShell.destinations.last,
+                active: selectedIndex == AppShell.destinations.length - 1,
+                expanded: true,
+                inline: expanded,
+                showLabel: expanded,
               ),
             ),
-          const Spacer(),
-          Padding(
-            padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
-            child: _NavItem.action(
-              icon: Icons.notifications_none_rounded,
-              label: 'Updates',
-              onTap: () => _showShellPanel(context, const _NotificationPanel()),
+            Padding(
+              padding: const EdgeInsets.only(bottom: ShiruTokens.space3),
+              child: _NavItem.action(
+                icon: Icons.account_circle_outlined,
+                label: 'Profile',
+                expanded: true,
+                inline: expanded,
+                showLabel: expanded,
+                onTap: () => _showShellPanel(context, const _ProfilePanel()),
+              ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
-            child: _NavItem(
-              destination: AppShell.destinations.last,
-              active: selectedIndex == AppShell.destinations.length - 1,
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: ShiruTokens.space3),
-            child: _NavItem.action(
-              icon: Icons.account_circle_outlined,
-              label: 'Profile',
-              onTap: () => _showShellPanel(context, const _ProfilePanel()),
-            ),
-          ),
-        ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RailHeader extends StatelessWidget {
+  const _RailHeader({required this.expanded, required this.onToggle});
+
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return SizedBox(
+      height: ShiruTokens.brandMarkSize,
+      child: AnimatedSwitcher(
+        duration: reduceMotion ? Duration.zero : ShiruTokens.motion,
+        switchInCurve: ShiruTokens.easeSettle,
+        switchOutCurve: ShiruTokens.easePress,
+        child: expanded
+            ? Padding(
+                key: const ValueKey('expanded-rail-header'),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: ShiruTokens.space2,
+                ),
+                child: Row(
+                  children: [
+                    const _BrandMark(size: 36),
+                    const SizedBox(width: ShiruTokens.space2),
+                    const Expanded(
+                      child: Text(
+                        'zeroShiru',
+                        maxLines: 1,
+                        overflow: TextOverflow.fade,
+                        softWrap: false,
+                        style: TextStyle(
+                          color: ShiruTokens.highlight,
+                          fontWeight: FontWeight.w800,
+                          fontSize: ShiruTokens.fontScale16,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      key: const ValueKey('desktop-menu-toggle'),
+                      tooltip: 'Collapse navigation',
+                      onPressed: onToggle,
+                      icon: const Icon(Icons.menu_open_rounded),
+                    ),
+                  ],
+                ),
+              )
+            : IconButton(
+                key: const ValueKey('desktop-menu-toggle'),
+                tooltip: 'Expand navigation',
+                onPressed: onToggle,
+                icon: const Icon(Icons.menu_rounded),
+              ),
       ),
     );
   }
@@ -146,7 +245,7 @@ class _BottomBar extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          for (var i = 0; i < AppShell.destinations.length; i++)
+          for (var i = 0; i < AppShell.destinations.length - 1; i++)
             Expanded(
               child: _NavItem(
                 destination: AppShell.destinations[i],
@@ -154,7 +253,11 @@ class _BottomBar extends StatelessWidget {
                 expanded: true,
               ),
             ),
-          const Expanded(child: _MobileMoreMenu()),
+          Expanded(
+            child: _MobileMoreMenu(
+              active: selectedIndex == AppShell.destinations.length - 1,
+            ),
+          ),
         ],
       ),
     );
@@ -162,7 +265,9 @@ class _BottomBar extends StatelessWidget {
 }
 
 class _MobileMoreMenu extends StatelessWidget {
-  const _MobileMoreMenu();
+  const _MobileMoreMenu({required this.active});
+
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
@@ -171,6 +276,12 @@ class _MobileMoreMenu extends StatelessWidget {
       animated: true,
       alignmentOffset: const Offset(0, -ShiruTokens.space2),
       menuChildren: [
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.settings_rounded),
+          onPressed: () => context.go('/settings'),
+          child: const Text('Settings'),
+        ),
+        const Divider(),
         MenuItemButton(
           leadingIcon: const Icon(Icons.notifications_none_rounded),
           onPressed: () => _showShellPanel(context, const _NotificationPanel()),
@@ -193,7 +304,7 @@ class _MobileMoreMenu extends StatelessWidget {
             ? Icons.close_rounded
             : Icons.more_horiz_rounded,
         label: 'More',
-        active: controller.isOpen,
+        active: controller.isOpen || active,
         expanded: true,
         onTap: controller.isOpen ? controller.close : controller.open,
       ),
@@ -516,13 +627,15 @@ class _Shortcut extends StatelessWidget {
 
 /// The established zeroShiru mark, seated on the current shell surface.
 class _BrandMark extends StatelessWidget {
-  const _BrandMark();
+  const _BrandMark({this.size = ShiruTokens.brandMarkSize});
+
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: ShiruTokens.brandMarkSize,
-      height: ShiruTokens.brandMarkSize,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(ShiruTokens.radiusBrand),
         gradient: const LinearGradient(
@@ -565,6 +678,8 @@ class _NavItem extends StatefulWidget {
     required this.destination,
     required this.active,
     this.expanded = false,
+    this.inline = false,
+    this.showLabel = true,
   }) : icon = null,
        label = null,
        onTap = null;
@@ -575,6 +690,8 @@ class _NavItem extends StatefulWidget {
     required this.onTap,
     this.active = false,
     this.expanded = false,
+    this.inline = false,
+    this.showLabel = true,
   }) : destination = null;
 
   final ({String path, IconData icon, String label})? destination;
@@ -583,6 +700,8 @@ class _NavItem extends StatefulWidget {
   final VoidCallback? onTap;
   final bool active;
   final bool expanded;
+  final bool inline;
+  final bool showLabel;
 
   @override
   State<_NavItem> createState() => _NavItemState();
@@ -597,7 +716,7 @@ class _NavItemState extends State<_NavItem> {
     final icon = d?.icon ?? widget.icon!;
     final label = d?.label ?? widget.label!;
     final onTap = widget.onTap ?? () => context.go(d!.path);
-    return HoverRegion(
+    final item = HoverRegion(
       cursor: SystemMouseCursors.click,
       builder: (context, hovered) {
         final iconColor = widget.active
@@ -670,33 +789,78 @@ class _NavItemState extends State<_NavItem> {
                       ),
                     ),
                   ),
-                  Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        AnimatedScale(
-                          scale: _pressed ? 0.92 : (hovered ? 1.08 : 1.0),
-                          duration: ShiruTokens.motionPress,
-                          curve: ShiruTokens.easePress,
-                          child: Icon(icon, size: 20, color: iconColor),
-                        ),
-                        const SizedBox(height: 2),
-                        FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            label,
-                            maxLines: 1,
-                            style: TextStyle(
-                              fontFamily: ShiruTokens.fontFamily,
-                              fontSize: ShiruTokens.fontSize12,
-                              fontWeight: widget.active
-                                  ? FontWeight.w700
-                                  : FontWeight.w600,
-                              color: labelColor,
+                  Positioned.fill(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: widget.inline ? ShiruTokens.space4 : 0,
+                      ),
+                      child: widget.inline
+                          ? Row(
+                              children: [
+                                AnimatedScale(
+                                  scale: _pressed
+                                      ? 0.92
+                                      : (hovered ? 1.08 : 1.0),
+                                  duration: ShiruTokens.motionPress,
+                                  curve: ShiruTokens.easePress,
+                                  child: Icon(icon, size: 20, color: iconColor),
+                                ),
+                                const SizedBox(width: ShiruTokens.space3),
+                                Expanded(
+                                  child: Text(
+                                    label,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.fade,
+                                    softWrap: false,
+                                    style: TextStyle(
+                                      fontFamily: ShiruTokens.fontFamily,
+                                      fontSize: ShiruTokens.fontScale14,
+                                      fontWeight: widget.active
+                                          ? FontWeight.w700
+                                          : FontWeight.w600,
+                                      color: labelColor,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            )
+                          : Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  AnimatedScale(
+                                    scale: _pressed
+                                        ? 0.92
+                                        : (hovered ? 1.08 : 1.0),
+                                    duration: ShiruTokens.motionPress,
+                                    curve: ShiruTokens.easePress,
+                                    child: Icon(
+                                      icon,
+                                      size: 20,
+                                      color: iconColor,
+                                    ),
+                                  ),
+                                  if (widget.showLabel) ...[
+                                    const SizedBox(height: 2),
+                                    FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Text(
+                                        label,
+                                        maxLines: 1,
+                                        style: TextStyle(
+                                          fontFamily: ShiruTokens.fontFamily,
+                                          fontSize: ShiruTokens.fontSize12,
+                                          fontWeight: widget.active
+                                              ? FontWeight.w700
+                                              : FontWeight.w600,
+                                          color: labelColor,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
                             ),
-                          ),
-                        ),
-                      ],
                     ),
                   ),
                 ],
@@ -706,5 +870,8 @@ class _NavItemState extends State<_NavItem> {
         );
       },
     );
+    return widget.showLabel
+        ? item
+        : Tooltip(message: label, preferBelow: false, child: item);
   }
 }

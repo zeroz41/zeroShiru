@@ -42,12 +42,14 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Interface'), findsOneWidget);
+      expect(find.text('Interface'), findsWidgets);
       expect(find.text('Player'), findsOneWidget);
       expect(find.text('Sources'), findsOneWidget);
       expect(find.text('Extensions'), findsOneWidget);
       expect(find.text('Downloads'), findsOneWidget);
       expect(find.text('Debrid'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('settings-section-debrid')));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const ValueKey('debrid-api-key')));
       await tester.enterText(
         find.byKey(const ValueKey('debrid-api-key')),
@@ -73,6 +75,10 @@ void main() {
   testWidgets('a stored service key is joined into settings from credentials', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(1100, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
     final repository = _SettingsRepository(
       const Settings(debridService: DebridService.premiumize),
     );
@@ -94,11 +100,47 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const ValueKey('settings-section-debrid')));
+    await tester.pumpAndSettle();
     final field = tester.widget<TextField>(
       find.byKey(const ValueKey('debrid-api-key')),
     );
     expect(field.controller?.text, 'from-keyring');
     expect(field.obscureText, isTrue);
+  });
+
+  testWidgets('compact settings use a category picker', (tester) async {
+    tester.view.physicalSize = const Size(500, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(
+            _SettingsRepository(const Settings()),
+          ),
+          credentialStoreProvider.overrideWithValue(_Credentials()),
+          debridClientsProvider.overrideWithValue(const {}),
+        ],
+        child: MaterialApp(
+          theme: buildShiruTheme(),
+          home: const Scaffold(body: SettingsPage()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('settings-section-picker')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('settings-section-picker')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Debrid').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Service'), findsOneWidget);
   });
 }
 

@@ -170,7 +170,7 @@ abstract final class ShiruTokens {
   /// Comfortable desktop rail width — also the mobile bottombar height.
   static const double sidebarWidth = 68;
 
-  /// Sidebar expanded-on-hover width (22rem).
+  /// User-expanded sidebar width (22rem).
   static const double sidebarExpandedWidth = 169;
 
   /// Breakpoint: >=769px = desktop left rail, <769px = mobile bottom bar.

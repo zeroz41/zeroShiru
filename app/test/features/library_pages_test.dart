@@ -88,6 +88,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 20));
 
     expect(find.text('Seasonal Show'), findsWidgets);
+    expect(find.text('84%'), findsWidgets);
     expect(find.text('Trending this season'), findsOneWidget);
     expect(catalog.queries, hasLength(2));
 

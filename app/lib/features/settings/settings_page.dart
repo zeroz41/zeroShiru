@@ -28,343 +28,618 @@ class SettingsPage extends ConsumerWidget {
   }
 }
 
-class _SettingsBody extends ConsumerWidget {
+enum _SettingsSection {
+  interface,
+  player,
+  sources,
+  extensions,
+  downloads,
+  debrid,
+}
+
+extension on _SettingsSection {
+  String get label => switch (this) {
+    _SettingsSection.interface => 'Interface',
+    _SettingsSection.player => 'Player',
+    _SettingsSection.sources => 'Sources',
+    _SettingsSection.extensions => 'Extensions',
+    _SettingsSection.downloads => 'Downloads',
+    _SettingsSection.debrid => 'Debrid',
+  };
+
+  String get description => switch (this) {
+    _SettingsSection.interface => 'Titles, posters, and language',
+    _SettingsSection.player => 'Playback behavior and tracks',
+    _SettingsSection.sources => 'Quality and release ranking',
+    _SettingsSection.extensions => 'Installed source catalogs',
+    _SettingsSection.downloads => 'Transfers and local retention',
+    _SettingsSection.debrid => 'Direct-link streaming',
+  };
+
+  IconData get icon => switch (this) {
+    _SettingsSection.interface => Icons.palette_outlined,
+    _SettingsSection.player => Icons.play_circle_outline_rounded,
+    _SettingsSection.sources => Icons.travel_explore_rounded,
+    _SettingsSection.extensions => Icons.extension_outlined,
+    _SettingsSection.downloads => Icons.download_for_offline_outlined,
+    _SettingsSection.debrid => Icons.cloud_outlined,
+  };
+}
+
+class _SettingsBody extends ConsumerStatefulWidget {
   const _SettingsBody({required this.settings});
 
   final Settings settings;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_SettingsBody> createState() => _SettingsBodyState();
+}
+
+class _SettingsBodyState extends ConsumerState<_SettingsBody> {
+  _SettingsSection _selected = _SettingsSection.interface;
+
+  Settings get settings => widget.settings;
+
+  @override
+  Widget build(BuildContext context) {
     final controller = ref.read(settingsControllerProvider.notifier);
-    return CustomScrollView(
-      key: const PageStorageKey('settings-scroll'),
-      slivers: [
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(
-            ShiruTokens.space6,
-            ShiruTokens.space7,
-            ShiruTokens.space6,
-            ShiruTokens.space3,
-          ),
-          sliver: SliverToBoxAdapter(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 980),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Settings',
-                    style: Theme.of(context).textTheme.displayMedium,
-                  ),
-                  const SizedBox(height: ShiruTokens.space2),
-                  Text(
-                    'Playback, library, and account preferences for this device.',
-                    style: Theme.of(context).textTheme.bodyLarge
-                        ?.copyWith(color: ShiruTokens.textLight),
-                  ),
-                ],
+    final pages = <Widget>[
+      _SettingsCard(
+        title: 'Interface',
+        icon: Icons.palette_outlined,
+        children: [
+          _DropdownRow<String>(
+            label: 'Title language',
+            description: 'Which AniList title is preferred throughout the app.',
+            value: settings.titleLanguage,
+            items: const {
+              'romaji': 'Romaji',
+              'english': 'English',
+              'native': 'Native',
+            },
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(titleLanguage: value),
               ),
             ),
           ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(
-            ShiruTokens.space6,
-            ShiruTokens.space3,
-            ShiruTokens.space6,
-            ShiruTokens.space7,
+          _DropdownRow<String>(
+            label: 'Poster size',
+            description: 'Controls how many titles fit in library rails.',
+            value: settings.cardSize,
+            items: const {
+              'small': 'Small',
+              'medium': 'Medium',
+              'large': 'Large',
+            },
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(cardSize: value),
+              ),
+            ),
           ),
-          sliver: SliverToBoxAdapter(
+          _SwitchRow(
+            label: 'Prefer dubbed releases',
+            description: 'Ranks dubbed source results ahead when available.',
+            value: settings.preferDubs,
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(preferDubs: value),
+              ),
+            ),
+          ),
+        ],
+      ),
+      _SettingsCard(
+        title: 'Player',
+        icon: Icons.play_circle_outline_rounded,
+        children: [
+          _SwitchRow(
+            label: 'Autoplay',
+            description: 'Begin playback after a source is ready.',
+            value: settings.playerAutoplay,
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(playerAutoplay: value),
+              ),
+            ),
+          ),
+          _SwitchRow(
+            label: 'Pause when focus is lost',
+            description: 'Pause when zeroShiru is no longer the active window.',
+            value: settings.playerPauseOnLostFocus,
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(playerPauseOnLostFocus: value),
+              ),
+            ),
+          ),
+          _DropdownRow<String>(
+            label: 'Audio language',
+            description: 'Preferred embedded audio track language.',
+            value: settings.audioLanguage,
+            items: const {
+              'jpn': 'Japanese',
+              'eng': 'English',
+              'es': 'Spanish',
+              'pt': 'Portuguese',
+              'de': 'German',
+              'fr': 'French',
+              'it': 'Italian',
+              'ko': 'Korean',
+              'zh': 'Chinese',
+              'ru': 'Russian',
+              'und': 'Container default',
+            },
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(audioLanguage: value),
+              ),
+            ),
+          ),
+          _DropdownRow<String>(
+            label: 'Subtitle language',
+            description: 'Preferred embedded subtitle track language.',
+            value: settings.subtitleLanguage,
+            items: const {
+              'eng': 'English',
+              'jpn': 'Japanese',
+              'es': 'Spanish',
+              'pt': 'Portuguese',
+              'de': 'German',
+              'fr': 'French',
+              'it': 'Italian',
+              'ko': 'Korean',
+              'zh': 'Chinese',
+              'ru': 'Russian',
+              'ar': 'Arabic',
+              'hi': 'Hindi',
+              'id': 'Indonesian',
+              'pl': 'Polish',
+              'th': 'Thai',
+              'tr': 'Turkish',
+              'uk': 'Ukrainian',
+              'vi': 'Vietnamese',
+              'und': 'Container default',
+            },
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(subtitleLanguage: value),
+              ),
+            ),
+          ),
+        ],
+      ),
+      _SettingsCard(
+        title: 'Sources',
+        icon: Icons.travel_explore_rounded,
+        children: [
+          _DropdownRow<String>(
+            label: 'Preferred quality',
+            description:
+                'Ranks matching releases first when resolving an episode.',
+            value: settings.rssQuality,
+            items: const {'720': '720p', '1080': '1080p', '2160': '2160p'},
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(rssQuality: value),
+              ),
+            ),
+          ),
+          _DropdownRow<String>(
+            label: 'Release order',
+            description: 'How equally suitable torrent releases are ranked.',
+            value: settings.torrentSort,
+            items: const {
+              'seeders': 'Seeders',
+              'quality': 'Quality',
+              'size': 'File size',
+            },
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(torrentSort: value),
+              ),
+            ),
+          ),
+          _SwitchRow(
+            label: 'Automatically inspect availability',
+            description:
+                'Checks candidate health before showing source choices.',
+            value: settings.torrentAutoScrape,
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(torrentAutoScrape: value),
+              ),
+            ),
+          ),
+          _SwitchRow(
+            label: 'Autoplay the best release',
+            description:
+                'Starts the highest-ranked source without an extra prompt.',
+            value: settings.rssAutoplay,
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(rssAutoplay: value),
+              ),
+            ),
+          ),
+        ],
+      ),
+      const _ExtensionsCard(),
+      _SettingsCard(
+        title: 'Downloads',
+        icon: Icons.download_for_offline_outlined,
+        subtitle: 'Local torrent transfers only. Direct debrid streams do not write media files here.',
+        children: [
+          _DropdownRow<int>(
+            label: 'Download rate limit',
+            description: 'Maximum local torrent download speed per session.',
+            value: settings.torrentSpeedBytes,
+            items: _rateOptions(settings.torrentSpeedBytes),
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(torrentSpeedBytes: value),
+              ),
+            ),
+          ),
+          _DropdownRow<int>(
+            label: 'Peer connections',
+            description: 'Upper bound for concurrent torrent peers.',
+            value: settings.maxConnections,
+            items: _numberOptions(settings.maxConnections, const [
+              25,
+              50,
+              100,
+              200,
+            ]),
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(maxConnections: value),
+              ),
+            ),
+          ),
+          _DropdownRow<int>(
+            label: 'Retained sessions',
+            description: 'Maximum number of transfers kept for seeding.',
+            value: settings.seedingLimit,
+            items: _numberOptions(settings.seedingLimit, const [1, 3, 5, 10]),
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(seedingLimit: value),
+              ),
+            ),
+          ),
+          _SwitchRow(
+            label: 'Download while streaming',
+            description:
+                'Retains pieces fetched ahead of the player during a session.',
+            value: settings.torrentStreamedDownload,
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(torrentStreamedDownload: value),
+              ),
+            ),
+          ),
+          _SwitchRow(
+            label: 'Keep downloaded files',
+            description: 'Preserves completed local files after playback ends.',
+            value: settings.torrentPersist,
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(torrentPersist: value),
+              ),
+            ),
+          ),
+        ],
+      ),
+      _DebridCard(settings: settings),
+    ];
+
+    return SafeArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _SettingsHeader(),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 760;
+                final content = _SettingsPages(
+                  selected: _selected,
+                  pages: pages,
+                );
+                if (compact) {
+                  return Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          ShiruTokens.space5,
+                          0,
+                          ShiruTokens.space5,
+                          ShiruTokens.space3,
+                        ),
+                        child: _CompactSettingsMenu(
+                          selected: _selected,
+                          onSelected: _select,
+                        ),
+                      ),
+                      Expanded(child: content),
+                    ],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _SettingsMenu(selected: _selected, onSelected: _select),
+                    const VerticalDivider(width: 1),
+                    Expanded(child: content),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _select(_SettingsSection section) {
+    if (section == _selected) return;
+    setState(() => _selected = section);
+  }
+}
+
+class _SettingsHeader extends StatelessWidget {
+  const _SettingsHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        ShiruTokens.space6,
+        ShiruTokens.space6,
+        ShiruTokens.space6,
+        ShiruTokens.space5,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Settings', style: Theme.of(context).textTheme.displayMedium),
+          const SizedBox(height: ShiruTokens.space2),
+          Text(
+            'Playback, library, and account preferences for this device.',
+            style: Theme.of(context).textTheme.bodyLarge
+                ?.copyWith(color: ShiruTokens.textLight),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsMenu extends StatelessWidget {
+  const _SettingsMenu({required this.selected, required this.onSelected});
+
+  final _SettingsSection selected;
+  final ValueChanged<_SettingsSection> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 224,
+      color: const Color(0x45121416),
+      padding: const EdgeInsets.fromLTRB(
+        ShiruTokens.space4,
+        ShiruTokens.space5,
+        ShiruTokens.space4,
+        ShiruTokens.space5,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: ShiruTokens.space3),
+            child: Text(
+              'PREFERENCES',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: ShiruTokens.textMuted,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+          const SizedBox(height: ShiruTokens.space3),
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                for (final section in _SettingsSection.values)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
+                    child: _SettingsMenuItem(
+                      section: section,
+                      selected: section == selected,
+                      onTap: () => onSelected(section),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(ShiruTokens.space3),
+            child: Text(
+              'Changes save automatically on this device.',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: ShiruTokens.textMuted, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsMenuItem extends StatelessWidget {
+  const _SettingsMenuItem({
+    required this.section,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _SettingsSection section;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      selected: selected,
+      button: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: ValueKey('settings-section-${section.name}'),
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
+          child: AnimatedContainer(
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : ShiruTokens.motionQuick,
+            curve: ShiruTokens.easeSettle,
+            padding: const EdgeInsets.symmetric(
+              horizontal: ShiruTokens.space3,
+              vertical: ShiruTokens.space3,
+            ),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
+              color: selected ? ShiruTokens.navPillGradTop : Colors.transparent,
+              border: Border.all(
+                color: selected ? ShiruTokens.navPillRing : Colors.transparent,
+              ),
+              boxShadow: selected ? ShiruTokens.navPillGlow : null,
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  section.icon,
+                  size: 20,
+                  color: selected
+                      ? ShiruTokens.accentVeryLight
+                      : ShiruTokens.textMuted,
+                ),
+                const SizedBox(width: ShiruTokens.space3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        section.label,
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          color: selected
+                              ? ShiruTokens.highlight
+                              : ShiruTokens.text,
+                          fontWeight: selected
+                              ? FontWeight.w800
+                              : FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        section.description,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelSmall,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CompactSettingsMenu extends StatelessWidget {
+  const _CompactSettingsMenu({
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final _SettingsSection selected;
+  final ValueChanged<_SettingsSection> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: ShiruTokens.surfacePanelStrong,
+        border: Border.all(color: ShiruTokens.surfaceBorder),
+        borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: ShiruTokens.space3),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<_SettingsSection>(
+            key: const ValueKey('settings-section-picker'),
+            value: selected,
+            isExpanded: true,
+            borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
+            dropdownColor: ShiruTokens.darkLight,
+            icon: const Icon(Icons.expand_more_rounded),
+            items: [
+              for (final section in _SettingsSection.values)
+                DropdownMenuItem(
+                  value: section,
+                  child: Row(
+                    children: [
+                      Icon(section.icon, size: 19),
+                      const SizedBox(width: ShiruTokens.space3),
+                      Text(section.label),
+                    ],
+                  ),
+                ),
+            ],
+            onChanged: (value) {
+              if (value != null) onSelected(value);
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsPages extends StatelessWidget {
+  const _SettingsPages({required this.selected, required this.pages});
+
+  final _SettingsSection selected;
+  final List<Widget> pages;
+
+  @override
+  Widget build(BuildContext context) {
+    return IndexedStack(
+      index: selected.index,
+      children: [
+        for (var i = 0; i < pages.length; i++)
+          SingleChildScrollView(
+            key: PageStorageKey('settings-${_SettingsSection.values[i].name}'),
+            padding: const EdgeInsets.fromLTRB(
+              ShiruTokens.space5,
+              ShiruTokens.space3,
+              ShiruTokens.space5,
+              ShiruTokens.space7,
+            ),
             child: Align(
               alignment: Alignment.topLeft,
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 980),
-                child: Column(
-                  children: [
-                    _SettingsCard(
-                      title: 'Interface',
-                      icon: Icons.palette_outlined,
-                      children: [
-                        _DropdownRow<String>(
-                          label: 'Title language',
-                          description: 'Which AniList title is preferred throughout the app.',
-                          value: settings.titleLanguage,
-                          items: const {
-                            'romaji': 'Romaji',
-                            'english': 'English',
-                            'native': 'Native',
-                          },
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) =>
-                                  current.copyWith(titleLanguage: value),
-                            ),
-                          ),
-                        ),
-                        _DropdownRow<String>(
-                          label: 'Poster size',
-                          description:
-                              'Controls how many titles fit in library rails.',
-                          value: settings.cardSize,
-                          items: const {
-                            'small': 'Small',
-                            'medium': 'Medium',
-                            'large': 'Large',
-                          },
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) => current.copyWith(cardSize: value),
-                            ),
-                          ),
-                        ),
-                        _SwitchRow(
-                          label: 'Prefer dubbed releases',
-                          description: 'Ranks dubbed source results ahead when available.',
-                          value: settings.preferDubs,
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) => current.copyWith(preferDubs: value),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: ShiruTokens.space4),
-                    _SettingsCard(
-                      title: 'Player',
-                      icon: Icons.play_circle_outline_rounded,
-                      children: [
-                        _SwitchRow(
-                          label: 'Autoplay',
-                          description:
-                              'Begin playback after a source is ready.',
-                          value: settings.playerAutoplay,
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) =>
-                                  current.copyWith(playerAutoplay: value),
-                            ),
-                          ),
-                        ),
-                        _SwitchRow(
-                          label: 'Pause when focus is lost',
-                          description: 'Pause when zeroShiru is no longer the active window.',
-                          value: settings.playerPauseOnLostFocus,
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) => current.copyWith(
-                                playerPauseOnLostFocus: value,
-                              ),
-                            ),
-                          ),
-                        ),
-                        _DropdownRow<String>(
-                          label: 'Audio language',
-                          description:
-                              'Preferred embedded audio track language.',
-                          value: settings.audioLanguage,
-                          items: const {
-                            'jpn': 'Japanese',
-                            'eng': 'English',
-                            'es': 'Spanish',
-                            'pt': 'Portuguese',
-                            'de': 'German',
-                            'fr': 'French',
-                            'it': 'Italian',
-                            'ko': 'Korean',
-                            'zh': 'Chinese',
-                            'ru': 'Russian',
-                            'und': 'Container default',
-                          },
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) =>
-                                  current.copyWith(audioLanguage: value),
-                            ),
-                          ),
-                        ),
-                        _DropdownRow<String>(
-                          label: 'Subtitle language',
-                          description:
-                              'Preferred embedded subtitle track language.',
-                          value: settings.subtitleLanguage,
-                          items: const {
-                            'eng': 'English',
-                            'jpn': 'Japanese',
-                            'es': 'Spanish',
-                            'pt': 'Portuguese',
-                            'de': 'German',
-                            'fr': 'French',
-                            'it': 'Italian',
-                            'ko': 'Korean',
-                            'zh': 'Chinese',
-                            'ru': 'Russian',
-                            'ar': 'Arabic',
-                            'hi': 'Hindi',
-                            'id': 'Indonesian',
-                            'pl': 'Polish',
-                            'th': 'Thai',
-                            'tr': 'Turkish',
-                            'uk': 'Ukrainian',
-                            'vi': 'Vietnamese',
-                            'und': 'Container default',
-                          },
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) =>
-                                  current.copyWith(subtitleLanguage: value),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: ShiruTokens.space4),
-                    _SettingsCard(
-                      title: 'Sources',
-                      icon: Icons.travel_explore_rounded,
-                      children: [
-                        _DropdownRow<String>(
-                          label: 'Preferred quality',
-                          description: 'Ranks matching releases first when resolving an episode.',
-                          value: settings.rssQuality,
-                          items: const {
-                            '720': '720p',
-                            '1080': '1080p',
-                            '2160': '2160p',
-                          },
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) => current.copyWith(rssQuality: value),
-                            ),
-                          ),
-                        ),
-                        _DropdownRow<String>(
-                          label: 'Release order',
-                          description: 'How equally suitable torrent releases are ranked.',
-                          value: settings.torrentSort,
-                          items: const {
-                            'seeders': 'Seeders',
-                            'quality': 'Quality',
-                            'size': 'File size',
-                          },
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) => current.copyWith(torrentSort: value),
-                            ),
-                          ),
-                        ),
-                        _SwitchRow(
-                          label: 'Automatically inspect availability',
-                          description: 'Checks candidate health before showing source choices.',
-                          value: settings.torrentAutoScrape,
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) =>
-                                  current.copyWith(torrentAutoScrape: value),
-                            ),
-                          ),
-                        ),
-                        _SwitchRow(
-                          label: 'Autoplay the best release',
-                          description: 'Starts the highest-ranked source without an extra prompt.',
-                          value: settings.rssAutoplay,
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) => current.copyWith(rssAutoplay: value),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: ShiruTokens.space4),
-                    const _ExtensionsCard(),
-                    const SizedBox(height: ShiruTokens.space4),
-                    _SettingsCard(
-                      title: 'Downloads',
-                      icon: Icons.download_for_offline_outlined,
-                      subtitle: 'Local torrent transfers only. Direct debrid streams do not write media files here.',
-                      children: [
-                        _DropdownRow<int>(
-                          label: 'Download rate limit',
-                          description: 'Maximum local torrent download speed per session.',
-                          value: settings.torrentSpeedBytes,
-                          items: _rateOptions(settings.torrentSpeedBytes),
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) =>
-                                  current.copyWith(torrentSpeedBytes: value),
-                            ),
-                          ),
-                        ),
-                        _DropdownRow<int>(
-                          label: 'Peer connections',
-                          description:
-                              'Upper bound for concurrent torrent peers.',
-                          value: settings.maxConnections,
-                          items: _numberOptions(settings.maxConnections, const [
-                            25,
-                            50,
-                            100,
-                            200,
-                          ]),
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) =>
-                                  current.copyWith(maxConnections: value),
-                            ),
-                          ),
-                        ),
-                        _DropdownRow<int>(
-                          label: 'Retained sessions',
-                          description:
-                              'Maximum number of transfers kept for seeding.',
-                          value: settings.seedingLimit,
-                          items: _numberOptions(settings.seedingLimit, const [
-                            1,
-                            3,
-                            5,
-                            10,
-                          ]),
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) =>
-                                  current.copyWith(seedingLimit: value),
-                            ),
-                          ),
-                        ),
-                        _SwitchRow(
-                          label: 'Download while streaming',
-                          description: 'Retains pieces fetched ahead of the player during a session.',
-                          value: settings.torrentStreamedDownload,
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) => current.copyWith(
-                                torrentStreamedDownload: value,
-                              ),
-                            ),
-                          ),
-                        ),
-                        _SwitchRow(
-                          label: 'Keep downloaded files',
-                          description: 'Preserves completed local files after playback ends.',
-                          value: settings.torrentPersist,
-                          onChanged: (value) => unawaited(
-                            controller.persist(
-                              (current) =>
-                                  current.copyWith(torrentPersist: value),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: ShiruTokens.space4),
-                    _DebridCard(settings: settings),
-                  ],
-                ),
+                constraints: const BoxConstraints(maxWidth: 880),
+                child: pages[i],
               ),
             ),
           ),
-        ),
       ],
     );
   }
@@ -1115,25 +1390,38 @@ class _SettingRow extends StatelessWidget {
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: ShiruTokens.surfaceBorder)),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final copy = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: ShiruTokens.space1),
+              Text(
+                description,
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: ShiruTokens.textLight),
+              ),
+            ],
+          );
+          if (constraints.maxWidth < 560) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(label, style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: ShiruTokens.space1),
-                Text(
-                  description,
-                  style: Theme.of(context).textTheme.bodySmall
-                      ?.copyWith(color: ShiruTokens.textLight),
-                ),
+                copy,
+                const SizedBox(height: ShiruTokens.space2),
+                Align(alignment: Alignment.centerRight, child: control),
               ],
-            ),
-          ),
-          const SizedBox(width: ShiruTokens.space4),
-          Flexible(child: control),
-        ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: copy),
+              const SizedBox(width: ShiruTokens.space4),
+              Flexible(child: control),
+            ],
+          );
+        },
       ),
     );
   }

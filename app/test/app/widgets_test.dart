@@ -45,6 +45,28 @@ void main() {
     expect(tester.hasRunningAnimations, isFalse);
   });
 
+  testWidgets('PosterCard presents compact metadata below the title', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        const Center(
+          child: PosterCard(
+            title: 'A scored series',
+            metadata: [
+              PosterCardMetadata('2026 · TV'),
+              PosterCardMetadata('84%', icon: Icons.star_rounded),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('2026 · TV'), findsOneWidget);
+    expect(find.text('84%'), findsOneWidget);
+    expect(find.byIcon(Icons.star_rounded), findsOneWidget);
+  });
+
   testWidgets('TitledRail renders its header and children', (tester) async {
     await tester.pumpWidget(
       _app(

@@ -25,11 +25,40 @@ class MediaPoster extends StatelessWidget {
       image: cover == null ? null : CachedNetworkImageProvider(cover),
       bloomColor: parseMediaColor(media.coverColor),
       airing: media.status == MediaStatus.releasing,
+      metadata: _metadata(media),
       width: width,
       onTap: onTap,
     );
   }
 }
+
+List<PosterCardMetadata> _metadata(Media media) {
+  final identity = [
+    if (media.seasonYear != null) '${media.seasonYear}',
+    if (media.format != null && media.format != MediaFormat.unknown)
+      _formatLabel(media.format!),
+  ].join(' · ');
+  return [
+    if (identity.isNotEmpty) PosterCardMetadata(identity),
+    if (media.averageScore != null)
+      PosterCardMetadata(
+        '${media.averageScore}%',
+        icon: Icons.star_rounded,
+        color: ShiruTokens.warning,
+      ),
+  ];
+}
+
+String _formatLabel(MediaFormat format) => switch (format) {
+  MediaFormat.tv => 'TV',
+  MediaFormat.tvShort => 'TV Short',
+  MediaFormat.movie => 'Movie',
+  MediaFormat.special => 'Special',
+  MediaFormat.ova => 'OVA',
+  MediaFormat.ona => 'ONA',
+  MediaFormat.music => 'Music',
+  MediaFormat.unknown => '',
+};
 
 Color? parseMediaColor(String? value) {
   if (value == null) return null;

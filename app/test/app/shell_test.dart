@@ -46,7 +46,7 @@ bool _navSelected(WidgetTester tester, String label) {
 }
 
 void main() {
-  testWidgets('desktop shell shows the labelled left rail with all nav items', (
+  testWidgets('desktop shell expands from an efficient icon rail', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1280, 800);
@@ -56,18 +56,30 @@ void main() {
     await tester.pumpWidget(_app(_router('/home')));
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const ValueKey('desktop-menu-toggle')), findsOneWidget);
+    expect(find.text('Home'), findsNothing);
+    expect(find.text('page:Home'), findsOneWidget);
+
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('desktop-navigation-rail')))
+          .width,
+      ShiruTokens.sidebarWidth,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('desktop-menu-toggle')));
+    await tester.pumpAndSettle();
+
     for (final d in AppShell.destinations) {
       expect(find.text(d.label), findsOneWidget);
     }
-    expect(find.text('page:Home'), findsOneWidget);
-
-    // The rail is exactly the token width.
-    final railBox = tester.renderObject<RenderBox>(
-      find
-          .ancestor(of: find.text('Home'), matching: find.byType(Container))
-          .last,
+    expect(find.text('zeroShiru'), findsOneWidget);
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('desktop-navigation-rail')))
+          .width,
+      ShiruTokens.sidebarExpandedWidth,
     );
-    expect(railBox.size.width, ShiruTokens.sidebarWidth);
   });
 
   testWidgets('active nav item follows the location', (tester) async {
@@ -98,6 +110,8 @@ void main() {
     await tester.pumpWidget(_app(_router('/home')));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const ValueKey('desktop-menu-toggle')));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Downloads'));
     await tester.pumpAndSettle();
 
@@ -115,9 +129,11 @@ void main() {
     await tester.pumpWidget(_app(_router('/home')));
     await tester.pumpAndSettle();
 
-    for (final d in AppShell.destinations) {
+    for (final d in AppShell.destinations.take(4)) {
       expect(find.text(d.label), findsOneWidget);
     }
+    expect(find.text('Settings'), findsNothing);
+    expect(find.text('More'), findsOneWidget);
 
     // Nav sits below the page content (bottom bar, not a left rail).
     final navCenter = tester.getCenter(find.text('Home'));
@@ -140,6 +156,7 @@ void main() {
 
     expect(find.text('Updates'), findsOneWidget);
     expect(find.text('Profile'), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
     expect(find.text('About & shortcuts'), findsOneWidget);
 
     await tester.tap(find.text('Updates'));
