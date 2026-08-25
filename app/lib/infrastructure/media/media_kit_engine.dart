@@ -66,6 +66,8 @@ class MediaKitEngine implements MediaEngine {
   Duration _secondarySubtitleDelay = Duration.zero;
   Timer? _metricTimer;
   var _generation = 0;
+  var _primaryCueRequest = 0;
+  var _secondaryCueRequest = 0;
   var _disposed = false;
   var _pollingMetrics = false;
 
@@ -386,15 +388,23 @@ class MediaKitEngine implements MediaEngine {
 
   void _onSubtitle(List<String> text) {
     if (_disposed) return;
+    final primaryRequest = ++_primaryCueRequest;
+    final secondaryRequest = ++_secondaryCueRequest;
     if (text.isNotEmpty) {
-      unawaited(_emitCue(text.first, secondary: false));
+      unawaited(
+        _emitCue(text.first, secondary: false, request: primaryRequest),
+      );
     }
     if (text.length > 1) {
-      unawaited(_emitCue(text[1], secondary: true));
+      unawaited(_emitCue(text[1], secondary: true, request: secondaryRequest));
     }
   }
 
-  Future<void> _emitCue(String raw, {required bool secondary}) async {
+  Future<void> _emitCue(
+    String raw, {
+    required bool secondary,
+    required int request,
+  }) async {
     final plain = plainSubtitleText(raw);
     final trackId = secondary
         ? _selectedSecondary
@@ -404,7 +414,12 @@ class MediaKitEngine implements MediaEngine {
     final prefix = secondary ? 'secondary-sub' : 'sub';
     final startSeconds = _toDouble(await _nativeProperty('$prefix-start'));
     final endSeconds = _toDouble(await _nativeProperty('$prefix-end'));
-    if (_disposed || generation != _generation) return;
+    final currentRequest = secondary
+        ? _secondaryCueRequest
+        : _primaryCueRequest;
+    if (_disposed || generation != _generation || request != currentRequest) {
+      return;
+    }
     final cue = SubtitleCue(
       generation: generation,
       trackId: trackId,

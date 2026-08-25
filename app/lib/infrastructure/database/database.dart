@@ -1,10 +1,11 @@
 /// SQLite persistence for the Flutter host.
 ///
-/// Two databases, mirroring the redo branch's IndexedDB split: a per-profile
+/// Application data mirrors the redo branch's IndexedDB split: a per-profile
 /// database (user-owned stores, settings kv) and a shared database (query
-/// caches every profile benefits from). Paths are passed in by the caller —
-/// production hands in the path_provider application-support directory,
-/// tests hand in nothing and use [AppDatabase.inMemory].
+/// caches every profile benefits from). A third rebuildable file holds the
+/// optional language dictionary. Paths are passed in by the caller — production
+/// hands in the path_provider application-support directory, tests hand in
+/// nothing and use [AppDatabase.inMemory].
 library;
 
 import 'dart:io';
@@ -112,6 +113,10 @@ abstract final class DatabasePaths {
 
   static String shared(String supportDirectory) =>
       p.join(supportDirectory, 'db', 'shared.db');
+
+  /// Rebuildable, profile-independent language dictionary cache.
+  static String learning(String supportDirectory) =>
+      p.join(supportDirectory, 'db', 'learning.db');
 }
 
 /// Opens the per-profile and shared databases under [supportDirectory]

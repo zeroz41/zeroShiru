@@ -7,6 +7,7 @@ environment:
   sdk: ^3.13.1
 
 dependencies:
+  archive: ^4.0.7
   cached_network_image: ^3.4.1
   crypto: ^3.0.7
   flutter:
@@ -26,6 +27,7 @@ dependencies:
   path_provider: ^2.1.6
   sqlite3: ^3.5.2
   sqlite3_flutter_libs: ^0.6.0+eol
+  tiny_segmenter_dart: ^1.0.1
   window_manager: ^0.5.2
 
 dev_dependencies:

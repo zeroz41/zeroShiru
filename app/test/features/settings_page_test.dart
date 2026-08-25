@@ -44,6 +44,7 @@ void main() {
 
       expect(find.text('Interface'), findsWidgets);
       expect(find.text('Player'), findsOneWidget);
+      expect(find.text('Learning'), findsOneWidget);
       expect(find.text('Sources'), findsOneWidget);
       expect(find.text('Extensions'), findsOneWidget);
       expect(find.text('Downloads'), findsOneWidget);

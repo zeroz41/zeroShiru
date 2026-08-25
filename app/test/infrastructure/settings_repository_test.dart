@@ -94,6 +94,14 @@ void main() {
         externalPlayerPath: '/usr/bin/mpv',
         audioLanguage: 'eng',
         subtitleLanguage: 'spa',
+        learningTranslationLanguage: 'de',
+        learningAutoSelectTracks: false,
+        learningShowJapanese: false,
+        learningShowFurigana: false,
+        learningShowRomaji: true,
+        learningShowTranslation: false,
+        learningPauseOnLookup: true,
+        learningSubtitleScale: 1.2,
         rssQuality: '720',
         rssAutoplay: false,
         torrentSort: 'size',
@@ -131,6 +139,9 @@ void main() {
       expect(settings.titleLanguage, 'romaji');
       expect(settings.volume, 1.0);
       expect(settings.playerAutocompleteThreshold, 85);
+      expect(settings.learningTranslationLanguage, 'eng');
+      expect(settings.learningShowFurigana, isTrue);
+      expect(settings.learningShowRomaji, isFalse);
       expect(settings.debridService, isNull);
       expect(settings.debridMode, DebridMode.prefer);
       expect(settings.torrentSpeedBytes, 5 * 1024 * 1024);
@@ -142,10 +153,14 @@ void main() {
         'volume': 'loud',
         'debridService': 'notaservice',
         'maxConnections': 25.0,
+        'learningTranslationLanguage': 'klingon',
+        'learningSubtitleScale': 99,
       });
       expect(settings.volume, 1.0);
       expect(settings.debridService, isNull);
       expect(settings.maxConnections, 25);
+      expect(settings.learningTranslationLanguage, 'eng');
+      expect(settings.learningSubtitleScale, 1.0);
     });
 
     test('copyWith can clear debridService with an explicit null', () {

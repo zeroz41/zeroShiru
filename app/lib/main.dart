@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app/app.dart';
 import 'application/library/providers.dart';
+import 'application/learning/providers.dart';
 import 'application/playback/providers.dart';
 import 'application/settings/providers.dart';
 import 'application/sources/providers.dart';
@@ -52,6 +53,7 @@ Future<void> main() async {
           sourceResolverProvider.overrideWithValue(services.sources),
           credentialStoreProvider.overrideWithValue(services.credentials),
           playbackBackendProvider.overrideWithValue(services.playback),
+          languageLearningToolsProvider.overrideWithValue(services.learning),
           playbackProbeTransportProvider.overrideWithValue(
             services.playbackProbe,
           ),

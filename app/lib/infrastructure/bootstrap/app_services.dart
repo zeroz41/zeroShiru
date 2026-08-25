@@ -6,6 +6,7 @@ import '../database/database.dart';
 import '../database/query_cache_impl.dart';
 import '../database/settings_repository_impl.dart';
 import '../debrid/debrid_client_impl.dart';
+import '../learning/local_japanese_learning_tools.dart';
 import '../media/media_kit_playback_backend.dart';
 import '../network/http_transport_impl.dart';
 import '../network/http_streaming_transport.dart';
@@ -33,6 +34,7 @@ class AppServices {
     required this.log,
     required this.playbackProbe,
     required this.sources,
+    required this.learning,
     required this._profileDatabase,
     required this._sharedDatabase,
     required this._queryCache,
@@ -49,6 +51,7 @@ class AppServices {
   final FileLogSink log;
   final IoStreamingTransport playbackProbe;
   final SourceResolver sources;
+  final LanguageLearningTools learning;
 
   final AppDatabase _profileDatabase;
   final AppDatabase _sharedDatabase;
@@ -66,6 +69,13 @@ class AppServices {
     final playbackProbe = IoStreamingTransport();
     final credentials = SecureCredentialStore();
     final settings = SqliteSettingsRepository(databases.profile);
+    final learning = LocalJapaneseLearningTools(
+      databasePath: DatabasePaths.learning(support.path),
+      transport: GuardedHttpTransport(
+        transport,
+        maxBodyBytes: 64 * 1024 * 1024,
+      ),
+    );
     final sources = NativeSourceResolver(
       transport: GuardedHttpTransport(transport),
       settings: settings,
@@ -98,6 +108,7 @@ class AppServices {
       log: FileLogSink(support.path),
       playbackProbe: playbackProbe,
       sources: sources,
+      learning: learning,
       profileDatabase: databases.profile,
       sharedDatabase: databases.shared,
       queryCache: queryCache,
@@ -109,6 +120,7 @@ class AppServices {
     try {
       await playback.dispose();
     } finally {
+      await learning.dispose();
       if (settings case final SqliteSettingsRepository repository) {
         repository.dispose();
       }

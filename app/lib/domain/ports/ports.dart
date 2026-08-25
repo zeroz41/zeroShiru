@@ -11,6 +11,7 @@ import '../models/torrent.dart';
 export 'catalog_repository.dart';
 export 'debrid_client.dart';
 export 'episode_repository.dart';
+export 'language_learning.dart';
 export 'media_engine.dart';
 
 /// Runs source searches (declarative manifests) and merges results.

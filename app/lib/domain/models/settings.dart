@@ -24,6 +24,15 @@ class Settings {
     this.externalPlayerPath = '',
     this.audioLanguage = 'jpn',
     this.subtitleLanguage = 'eng',
+    // Language learning (only used by the explicit Learning subtitle mode)
+    this.learningTranslationLanguage = 'eng',
+    this.learningAutoSelectTracks = true,
+    this.learningShowJapanese = true,
+    this.learningShowFurigana = true,
+    this.learningShowRomaji = false,
+    this.learningShowTranslation = true,
+    this.learningPauseOnLookup = false,
+    this.learningSubtitleScale = 1.0,
     // Sources
     this.rssQuality = '1080',
     this.rssAutoplay = true,
@@ -63,6 +72,18 @@ class Settings {
   final String externalPlayerPath;
   final String audioLanguage;
   final String subtitleLanguage;
+
+  /// Language-learning preferences never change standard subtitle rendering.
+  /// They become active only after the user explicitly chooses Learning in
+  /// the player's subtitle panel.
+  final String learningTranslationLanguage;
+  final bool learningAutoSelectTracks;
+  final bool learningShowJapanese;
+  final bool learningShowFurigana;
+  final bool learningShowRomaji;
+  final bool learningShowTranslation;
+  final bool learningPauseOnLookup;
+  final double learningSubtitleScale;
 
   final String rssQuality;
   final bool rssAutoplay;
@@ -109,6 +130,14 @@ class Settings {
     String? externalPlayerPath,
     String? audioLanguage,
     String? subtitleLanguage,
+    String? learningTranslationLanguage,
+    bool? learningAutoSelectTracks,
+    bool? learningShowJapanese,
+    bool? learningShowFurigana,
+    bool? learningShowRomaji,
+    bool? learningShowTranslation,
+    bool? learningPauseOnLookup,
+    double? learningSubtitleScale,
     String? rssQuality,
     bool? rssAutoplay,
     String? torrentSort,
@@ -143,6 +172,19 @@ class Settings {
       externalPlayerPath: externalPlayerPath ?? this.externalPlayerPath,
       audioLanguage: audioLanguage ?? this.audioLanguage,
       subtitleLanguage: subtitleLanguage ?? this.subtitleLanguage,
+      learningTranslationLanguage:
+          learningTranslationLanguage ?? this.learningTranslationLanguage,
+      learningAutoSelectTracks:
+          learningAutoSelectTracks ?? this.learningAutoSelectTracks,
+      learningShowJapanese: learningShowJapanese ?? this.learningShowJapanese,
+      learningShowFurigana: learningShowFurigana ?? this.learningShowFurigana,
+      learningShowRomaji: learningShowRomaji ?? this.learningShowRomaji,
+      learningShowTranslation:
+          learningShowTranslation ?? this.learningShowTranslation,
+      learningPauseOnLookup:
+          learningPauseOnLookup ?? this.learningPauseOnLookup,
+      learningSubtitleScale:
+          learningSubtitleScale ?? this.learningSubtitleScale,
       rssQuality: rssQuality ?? this.rssQuality,
       rssAutoplay: rssAutoplay ?? this.rssAutoplay,
       torrentSort: torrentSort ?? this.torrentSort,

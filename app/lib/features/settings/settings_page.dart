@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/tokens.dart';
+import '../../application/learning/providers.dart';
 import '../../application/settings/providers.dart';
 import '../../application/sources/providers.dart';
 import '../../domain/models/debrid_route.dart';
 import '../../domain/models/settings.dart';
 import '../../domain/models/source_extension.dart';
 import '../../domain/ports/debrid_client.dart';
+import '../../domain/ports/language_learning.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -31,6 +33,7 @@ class SettingsPage extends ConsumerWidget {
 enum _SettingsSection {
   interface,
   player,
+  learning,
   sources,
   extensions,
   downloads,
@@ -41,6 +44,7 @@ extension on _SettingsSection {
   String get label => switch (this) {
     _SettingsSection.interface => 'Interface',
     _SettingsSection.player => 'Player',
+    _SettingsSection.learning => 'Learning',
     _SettingsSection.sources => 'Sources',
     _SettingsSection.extensions => 'Extensions',
     _SettingsSection.downloads => 'Downloads',
@@ -50,6 +54,7 @@ extension on _SettingsSection {
   String get description => switch (this) {
     _SettingsSection.interface => 'Titles, posters, and language',
     _SettingsSection.player => 'Playback behavior and tracks',
+    _SettingsSection.learning => 'Interactive Japanese subtitles',
     _SettingsSection.sources => 'Quality and release ranking',
     _SettingsSection.extensions => 'Installed source catalogs',
     _SettingsSection.downloads => 'Transfers and local retention',
@@ -59,6 +64,7 @@ extension on _SettingsSection {
   IconData get icon => switch (this) {
     _SettingsSection.interface => Icons.palette_outlined,
     _SettingsSection.player => Icons.play_circle_outline_rounded,
+    _SettingsSection.learning => Icons.school_outlined,
     _SettingsSection.sources => Icons.travel_explore_rounded,
     _SettingsSection.extensions => Icons.extension_outlined,
     _SettingsSection.downloads => Icons.download_for_offline_outlined,
@@ -210,6 +216,7 @@ class _SettingsBodyState extends ConsumerState<_SettingsBody> {
           ),
         ],
       ),
+      _LearningSettingsCard(settings: settings),
       _SettingsCard(
         title: 'Sources',
         icon: Icons.travel_explore_rounded,
@@ -641,6 +648,311 @@ class _SettingsPages extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+class _LearningSettingsCard extends ConsumerStatefulWidget {
+  const _LearningSettingsCard({required this.settings});
+
+  final Settings settings;
+
+  @override
+  ConsumerState<_LearningSettingsCard> createState() =>
+      _LearningSettingsCardState();
+}
+
+class _LearningSettingsCardState extends ConsumerState<_LearningSettingsCard> {
+  bool _working = false;
+  String? _message;
+
+  Future<void> _install() async {
+    if (_working) return;
+    setState(() {
+      _working = true;
+      _message = null;
+    });
+    try {
+      await ref
+          .read(languageLearningToolsProvider)
+          .installJapaneseEnglishDictionary();
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _message = 'JMdict could not be installed. Check your connection and try again.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _remove() async {
+    if (_working) return;
+    setState(() {
+      _working = true;
+      _message = null;
+    });
+    try {
+      await ref
+          .read(languageLearningToolsProvider)
+          .removeJapaneseEnglishDictionary();
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _message =
+              'JMdict could not be removed. Close playback and try again.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = widget.settings;
+    final controller = ref.read(settingsControllerProvider.notifier);
+    final status =
+        ref.watch(learningDictionaryStatusProvider).value ??
+        ref.read(languageLearningToolsProvider).dictionaryStatus;
+    return _SettingsCard(
+      title: 'Language learning',
+      icon: Icons.school_outlined,
+      subtitle: 'An opt-in subtitle workspace. Standard playback and authored ASS styling remain unchanged.',
+      children: [
+        _DropdownRow<String>(
+          label: 'Translation language',
+          description: 'The second text subtitle track paired with the original Japanese line.',
+          value: settings.learningTranslationLanguage,
+          items: const {
+            'eng': 'English',
+            'es': 'Spanish',
+            'pt': 'Portuguese',
+            'de': 'German',
+            'fr': 'French',
+            'it': 'Italian',
+            'ko': 'Korean',
+            'zh': 'Chinese',
+            'ru': 'Russian',
+            'ar': 'Arabic',
+            'hi': 'Hindi',
+            'id': 'Indonesian',
+            'pl': 'Polish',
+            'th': 'Thai',
+            'tr': 'Turkish',
+            'uk': 'Ukrainian',
+            'vi': 'Vietnamese',
+          },
+          onChanged: (value) => unawaited(
+            controller.persist(
+              (current) => current.copyWith(learningTranslationLanguage: value),
+            ),
+          ),
+        ),
+        _SwitchRow(
+          label: 'Pair Japanese tracks automatically',
+          description: 'When Learning is selected, use Japanese audio and text with the chosen translation track.',
+          value: settings.learningAutoSelectTracks,
+          onChanged: (value) => unawaited(
+            controller.persist(
+              (current) => current.copyWith(learningAutoSelectTracks: value),
+            ),
+          ),
+        ),
+        _SwitchRow(
+          label: 'Show Japanese text',
+          description: 'Keep the original kanji and kana line visible.',
+          value: settings.learningShowJapanese,
+          onChanged: (value) => unawaited(
+            controller.persist(
+              (current) => current.copyWith(learningShowJapanese: value),
+            ),
+          ),
+        ),
+        _SwitchRow(
+          label: 'Show furigana',
+          description: 'Place each word’s kana reading above its kanji.',
+          value: settings.learningShowFurigana,
+          onChanged: (value) => unawaited(
+            controller.persist(
+              (current) => current.copyWith(learningShowFurigana: value),
+            ),
+          ),
+        ),
+        _SwitchRow(
+          label: 'Show romaji',
+          description: 'Add a compact romanized reading below each word.',
+          value: settings.learningShowRomaji,
+          onChanged: (value) => unawaited(
+            controller.persist(
+              (current) => current.copyWith(learningShowRomaji: value),
+            ),
+          ),
+        ),
+        _SwitchRow(
+          label: 'Show translation',
+          description: 'Display the aligned secondary subtitle line.',
+          value: settings.learningShowTranslation,
+          onChanged: (value) => unawaited(
+            controller.persist(
+              (current) => current.copyWith(learningShowTranslation: value),
+            ),
+          ),
+        ),
+        _SwitchRow(
+          label: 'Pause on word lookup',
+          description: 'Freeze playback the first time a word is hovered or tapped in each line.',
+          value: settings.learningPauseOnLookup,
+          onChanged: (value) => unawaited(
+            controller.persist(
+              (current) => current.copyWith(learningPauseOnLookup: value),
+            ),
+          ),
+        ),
+        _DropdownRow<double>(
+          label: 'Study text size',
+          description: 'Scales only the interactive learning overlay.',
+          value: settings.learningSubtitleScale,
+          items: {
+            0.85: 'Compact',
+            1.0: 'Comfortable',
+            1.2: 'Large',
+            1.4: 'Extra large',
+          },
+          onChanged: (value) => unawaited(
+            controller.persist(
+              (current) => current.copyWith(learningSubtitleScale: value),
+            ),
+          ),
+        ),
+        const SizedBox(height: ShiruTokens.space3),
+        _DictionaryPanel(
+          status: status,
+          working: _working,
+          message: _message,
+          onInstall: _install,
+          onRemove: _remove,
+        ),
+      ],
+    );
+  }
+}
+
+class _DictionaryPanel extends StatelessWidget {
+  const _DictionaryPanel({
+    required this.status,
+    required this.working,
+    required this.message,
+    required this.onInstall,
+    required this.onRemove,
+  });
+
+  final LearningDictionaryStatus status;
+  final bool working;
+  final String? message;
+  final VoidCallback onInstall;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final busy =
+        working ||
+        status.phase == LearningDictionaryPhase.downloading ||
+        status.phase == LearningDictionaryPhase.importing;
+    final installed = status.installed;
+    final statusText = switch (status.phase) {
+      LearningDictionaryPhase.missing => 'Not installed',
+      LearningDictionaryPhase.downloading => 'Downloading…',
+      LearningDictionaryPhase.importing => 'Building local index…',
+      LearningDictionaryPhase.ready =>
+        '${status.entryCount} local entries${status.version == null ? '' : ' · ${status.version}'}',
+      LearningDictionaryPhase.failed => status.message ?? 'Install failed',
+    };
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: ShiruTokens.darkVeryLight,
+        border: Border.all(color: ShiruTokens.surfaceBorder),
+        borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(ShiruTokens.space4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  installed
+                      ? Icons.offline_pin_outlined
+                      : Icons.menu_book_outlined,
+                  color: installed
+                      ? ShiruTokens.completed
+                      : ShiruTokens.accentVeryLight,
+                ),
+                const SizedBox(width: ShiruTokens.space3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'JMdict Japanese–English',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      Text(
+                        statusText,
+                        key: const ValueKey('learning-dictionary-status'),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: status.phase == LearningDictionaryPhase.failed
+                              ? ShiruTokens.errorVeryLight
+                              : ShiruTokens.textLight,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (busy)
+                  const SizedBox.square(
+                    dimension: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else if (installed) ...[
+                  IconButton(
+                    key: const ValueKey('update-learning-dictionary'),
+                    tooltip: 'Update dictionary',
+                    onPressed: onInstall,
+                    icon: const Icon(Icons.sync_rounded),
+                  ),
+                  OutlinedButton(
+                    key: const ValueKey('remove-learning-dictionary'),
+                    onPressed: onRemove,
+                    child: const Text('Remove'),
+                  ),
+                ] else
+                  FilledButton.icon(
+                    key: const ValueKey('install-learning-dictionary'),
+                    onPressed: onInstall,
+                    icon: const Icon(Icons.download_rounded),
+                    label: const Text('Install'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: ShiruTokens.space2),
+            Text(
+              'Downloaded once, searched entirely offline, and stored in the app cache. Definitions come from EDRDG JMdict; no subtitle text is sent to a server.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            if (message != null) ...[
+              const SizedBox(height: ShiruTokens.space2),
+              Text(
+                message!,
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: ShiruTokens.errorVeryLight),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

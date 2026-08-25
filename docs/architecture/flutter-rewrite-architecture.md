@@ -199,15 +199,23 @@ AniList (GraphQL) and MyAnimeList (REST) clients in Dart, preserving the existin
 
 **Standard mode — fidelity first.** libmpv/libass renders subtitles into the video output: embedded/external ASS with fonts and typesetting, SRT, PGS where the platform build supports it, primary + `secondary-sid`. This deletes the entire JASSUB/WASM/Canvas pipeline and most of the old subtitle scheduler.
 
-**Learning mode — interaction first.** Keep the track selected/decoded but set `sub-visibility=no`; observe `sub-text`, `sub-start/end`, `secondary-sub-text` and render the cue as Flutter `RichText` where each token is a tappable span (pause, highlight, reading, base form, glosses, sentence translation). This trades exact ASS positioning for interaction; the user can switch modes at any time. Bitmap tracks show an explicit "interactive text unavailable" state.
+**Learning mode — interaction first.** Keep the track selected/decoded but set `sub-visibility=no`; observe `sub-text`, `sub-start/end`, `secondary-sub-text` and render the cue as native Flutter token widgets (pause, highlight, reading, base form, glosses, sentence translation). This trades exact ASS positioning for interaction; the user can switch modes at any time. Bitmap tracks show an explicit "interactive text unavailable" state.
 
 ## Cue identity and stale-result safety
 
 Every cue carries `player_generation + track_id + start_ms + end_ms + normalized_text_hash`. Async results (tokenization, dictionary, translation) apply only if the identity still matches; generation increments on every open; outstanding work is cancelled on seek/track-change/dispose. Tokenization and dictionary results are cacheable by normalized text + tokenizer/dictionary version.
 
-## Japanese pipeline (post-rewrite feature)
+## Japanese pipeline
 
-Tokenize in a Dart isolate behind a replaceable `JapaneseTokenizer` port (a Dart-native tokenizer or vendored dictionary-driven segmenter — no native runtime), query a local SQLite index built from JMdict (CC BY-SA 4.0: keep attribution, source version, and a reproducible import job), render furigana/highlights in Flutter. The rewrite itself only guarantees the cue seam; learning ships later without touching the player.
+Segment short cues in a persistent isolate with the pure-Dart TinySegmenter
+model, then enrich likely word spans against a local SQLite index built from
+the English JMdict Yomitan release. Conservative inflection candidates are
+never presented as facts: a
+candidate must exist in the installed dictionary before its base form, reading,
+part of speech, or definition is shown. The large archive import runs in an
+isolate and records its source revision and entry count. Keep the TinySegmenter
+BSD notice and the JMdict/EDRDG attribution and license with distributions.
+See [the feature design](../features/language-learning.md).
 
 ## Language model
 

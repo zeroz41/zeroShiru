@@ -18,7 +18,7 @@ packages:
     source: hosted
     version: "13.3.0"
   archive:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: archive
       sha256: ace891da0862b0e4cabbb064ee3fd87b2728b898949fdb366d83fe98342c9f19
@@ -948,6 +948,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.6.18"
+  tiny_segmenter_dart:
+    dependency: "direct main"
+    description:
+      name: tiny_segmenter_dart
+      sha256: "4009922630323ccdf9169b107ab20c91c8836409d1b9ff0c85a21afd0a3f1ced"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.1"
   typed_data:
     dependency: transitive
     description:

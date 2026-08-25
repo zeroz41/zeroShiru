@@ -11,6 +11,7 @@ import 'package:zeroshiru/application/playback/backend.dart';
 import 'package:zeroshiru/application/playback/providers.dart';
 import 'package:zeroshiru/application/playback/request.dart';
 import 'package:zeroshiru/application/library/providers.dart';
+import 'package:zeroshiru/application/learning/providers.dart';
 import 'package:zeroshiru/application/settings/providers.dart';
 import 'package:zeroshiru/domain/models/availability.dart';
 import 'package:zeroshiru/domain/models/media.dart';
@@ -138,7 +139,14 @@ class _FakeBackend implements PlaybackBackend {
 }
 
 Widget _app(Widget page, _FakeBackend backend) => ProviderScope(
-  overrides: [playbackBackendProvider.overrideWithValue(backend)],
+  overrides: [
+    playbackBackendProvider.overrideWithValue(backend),
+    settingsRepositoryProvider.overrideWithValue(
+      _SettingsRepository(const Settings()),
+    ),
+    credentialStoreProvider.overrideWithValue(_Credentials()),
+    languageLearningToolsProvider.overrideWithValue(_FakeLearningTools()),
+  ],
   child: MaterialApp(theme: buildShiruTheme(), home: page),
 );
 
@@ -233,7 +241,14 @@ void main() {
     addTearDown(router.dispose);
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [playbackBackendProvider.overrideWithValue(backend)],
+        overrides: [
+          playbackBackendProvider.overrideWithValue(backend),
+          settingsRepositoryProvider.overrideWithValue(
+            _SettingsRepository(const Settings()),
+          ),
+          credentialStoreProvider.overrideWithValue(_Credentials()),
+          languageLearningToolsProvider.overrideWithValue(_FakeLearningTools()),
+        ],
         child: MaterialApp.router(
           theme: buildShiruTheme(),
           routerConfig: router,
@@ -388,6 +403,10 @@ void main() {
         generation: 1,
         phase: PlaybackPhase.playing,
         duration: Duration(minutes: 24),
+        audioTracks: [
+          MediaTrack(id: 'audio-en', kind: TrackKind.audio, language: 'en'),
+          MediaTrack(id: 'audio-ja', kind: TrackKind.audio, language: 'ja'),
+        ],
         subtitleTracks: [
           MediaTrack(
             id: 'sub-en',
@@ -403,6 +422,7 @@ void main() {
             codec: 'ass',
           ),
         ],
+        selectedAudio: 'audio-en',
         selectedPrimarySubtitle: 'sub-en',
       ),
     );
@@ -422,6 +442,9 @@ void main() {
     await tester.tap(find.text('Learning'));
     await tester.pump();
     expect(engine.calls, contains('render:learning'));
+    expect(engine.calls, contains('audio:audio-ja'));
+    expect(engine.calls, contains('subtitle:sub-ja:false'));
+    expect(engine.calls, contains('subtitle:sub-en:true'));
 
     await tester.tap(find.byTooltip('Later by 0.1 seconds').first);
     await tester.pump();
@@ -432,9 +455,13 @@ void main() {
     expect(find.text('Subtitles & languages'), findsNothing);
   });
 
-  testWidgets('learning mode displays current primary and secondary cues', (
+  testWidgets('learning mode renders native tokens and local definitions', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(420, 320);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
     final engine = _FakeEngine();
     final backend = _FakeBackend(engine);
     const source = PlayerFile(
@@ -454,30 +481,43 @@ void main() {
         position: Duration(seconds: 12),
         duration: Duration(minutes: 24),
         subtitleRendering: SubtitleRendering.learning,
+        subtitleTracks: [
+          MediaTrack(id: 'sub-ja', kind: TrackKind.subtitle, language: 'ja'),
+          MediaTrack(id: 'sub-en', kind: TrackKind.subtitle, language: 'en'),
+        ],
+        selectedPrimarySubtitle: 'sub-ja',
+        selectedSecondarySubtitle: 'sub-en',
       ),
     );
     engine.cues.add(
       const SubtitleCue(
         generation: 1,
-        trackId: 'sub-en',
+        trackId: 'sub-ja',
         start: Duration(seconds: 10),
         end: Duration(seconds: 15),
-        plainText: 'Primary dialogue',
+        plainText: '日本語を勉強する',
       ),
     );
     engine.secondCues.add(
       const SubtitleCue(
         generation: 1,
-        trackId: 'sub-ja',
+        trackId: 'sub-en',
         start: Duration(seconds: 10),
         end: Duration(seconds: 15),
-        plainText: 'Secondary dialogue',
+        plainText: 'Study Japanese',
       ),
     );
     await tester.pump();
+    await tester.pump();
 
-    expect(find.text('Primary dialogue'), findsOneWidget);
-    expect(find.text('Secondary dialogue'), findsOneWidget);
+    expect(find.text('日本語'), findsOneWidget);
+    expect(find.text('にほんご'), findsOneWidget);
+    expect(find.text('Study Japanese'), findsOneWidget);
+
+    await tester.tap(find.text('日本語'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('Japanese language'), findsOneWidget);
   });
 
   testWidgets(
@@ -574,6 +614,67 @@ class _SettingsRepository implements SettingsRepository {
 
   @override
   Future<void> write<T>(String key, T value) async {}
+}
+
+class _FakeLearningTools implements LanguageLearningTools {
+  @override
+  LearningDictionaryStatus get dictionaryStatus =>
+      const LearningDictionaryStatus(
+        phase: LearningDictionaryPhase.ready,
+        title: 'JMdict English',
+        entryCount: 1,
+      );
+
+  @override
+  Stream<LearningDictionaryStatus> get dictionaryStatuses =>
+      const Stream.empty();
+
+  @override
+  Future<List<LearningToken>> tokenizeJapanese(String text) async => const [
+    LearningToken(
+      surface: '日本語',
+      start: 0,
+      end: 3,
+      baseForm: '日本語',
+      reading: 'にほんご',
+      romanization: 'nihongo',
+      partOfSpeech: 'noun',
+      containsKanji: true,
+    ),
+    LearningToken(surface: 'を', start: 3, end: 4),
+    LearningToken(
+      surface: '勉強する',
+      start: 4,
+      end: 8,
+      baseForm: '勉強する',
+      reading: 'べんきょうする',
+      romanization: 'benkyousuru',
+      partOfSpeech: 'verb',
+      containsKanji: true,
+    ),
+  ];
+
+  @override
+  Future<List<LearningDefinition>> lookup(
+    LearningToken token, {
+    int limit = 6,
+  }) async => const [
+    LearningDefinition(
+      term: '日本語',
+      reading: 'にほんご',
+      definitions: ['Japanese language'],
+      partsOfSpeech: ['noun'],
+    ),
+  ];
+
+  @override
+  Future<void> installJapaneseEnglishDictionary() async {}
+
+  @override
+  Future<void> removeJapaneseEnglishDictionary() async {}
+
+  @override
+  Future<void> dispose() async {}
 }
 
 class _Credentials implements CredentialStore {

@@ -30,6 +30,14 @@ extension SettingsJson on Settings {
     'externalPlayerPath': externalPlayerPath,
     'audioLanguage': audioLanguage,
     'subtitleLanguage': subtitleLanguage,
+    'learningTranslationLanguage': learningTranslationLanguage,
+    'learningAutoSelectTracks': learningAutoSelectTracks,
+    'learningShowJapanese': learningShowJapanese,
+    'learningShowFurigana': learningShowFurigana,
+    'learningShowRomaji': learningShowRomaji,
+    'learningShowTranslation': learningShowTranslation,
+    'learningPauseOnLookup': learningPauseOnLookup,
+    'learningSubtitleScale': learningSubtitleScale,
     'rssQuality': rssQuality,
     'rssAutoplay': rssAutoplay,
     'torrentSort': torrentSort,
@@ -88,6 +96,58 @@ Settings settingsFromJson(Map<String, dynamic> json) {
       json['subtitleLanguage'],
       defaults.subtitleLanguage,
     ),
+    learningTranslationLanguage: _choiceString(
+      json['learningTranslationLanguage'],
+      defaults.learningTranslationLanguage,
+      const {
+        'eng',
+        'es',
+        'pt',
+        'de',
+        'fr',
+        'it',
+        'ko',
+        'zh',
+        'ru',
+        'ar',
+        'hi',
+        'id',
+        'pl',
+        'th',
+        'tr',
+        'uk',
+        'vi',
+      },
+    ),
+    learningAutoSelectTracks: _bool(
+      json['learningAutoSelectTracks'],
+      defaults.learningAutoSelectTracks,
+    ),
+    learningShowJapanese: _bool(
+      json['learningShowJapanese'],
+      defaults.learningShowJapanese,
+    ),
+    learningShowFurigana: _bool(
+      json['learningShowFurigana'],
+      defaults.learningShowFurigana,
+    ),
+    learningShowRomaji: _bool(
+      json['learningShowRomaji'],
+      defaults.learningShowRomaji,
+    ),
+    learningShowTranslation: _bool(
+      json['learningShowTranslation'],
+      defaults.learningShowTranslation,
+    ),
+    learningPauseOnLookup: _bool(
+      json['learningPauseOnLookup'],
+      defaults.learningPauseOnLookup,
+    ),
+    learningSubtitleScale: _choiceDouble(
+      json['learningSubtitleScale'],
+      defaults.learningSubtitleScale,
+      const [0.85, 1.0, 1.2, 1.4],
+    ),
     rssQuality: _string(json['rssQuality'], defaults.rssQuality),
     rssAutoplay: _bool(json['rssAutoplay'], defaults.rssAutoplay),
     torrentSort: _string(json['torrentSort'], defaults.torrentSort),
@@ -128,8 +188,15 @@ Settings settingsFromJson(Map<String, dynamic> json) {
 
 String _string(dynamic value, String fallback) =>
     value is String ? value : fallback;
+String _choiceString(dynamic value, String fallback, Set<String> choices) =>
+    value is String && choices.contains(value) ? value : fallback;
 bool _bool(dynamic value, bool fallback) => value is bool ? value : fallback;
 int _int(dynamic value, int fallback) =>
     value is num ? value.toInt() : fallback;
 double _double(dynamic value, double fallback) =>
     value is num ? value.toDouble() : fallback;
+double _choiceDouble(dynamic value, double fallback, List<double> choices) {
+  if (value is! num) return fallback;
+  final decoded = value.toDouble();
+  return choices.contains(decoded) ? decoded : fallback;
+}

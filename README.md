@@ -13,6 +13,9 @@ for the full design.
 - Tracks watch progress with AniList / MyAnimeList
 - Embedded libmpv player with ASS subtitles, chapters, fonts, and
   external-player handoff
+- Opt-in [Japanese learning subtitles](docs/features/language-learning.md) with
+  interactive words, local JMdict definitions, furigana, romaji, and a second
+  authored translation track
 - Watch Together sessions
 
 The previous Svelte/Tauri/Rust implementation lives on the `redo` and
