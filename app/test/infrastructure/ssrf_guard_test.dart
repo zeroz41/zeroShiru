@@ -238,6 +238,28 @@ void main() {
       expect(inner.asked[1].url.toString(), 'https://cdn.example.net/file');
     });
 
+    test('credentials are stripped before a cross-origin redirect', () async {
+      final inner = ScriptTransport([
+        answer(302, '', headers: {'location': 'https://files.example.net/x'}),
+        answer(200, 'file'),
+      ]);
+      await GuardedHttpTransport(inner).send(
+        HttpRequest(
+          HttpMethod.get,
+          Uri.parse('https://api.example.com/start'),
+          headers: const {
+            'authorization': 'secret',
+            'cookie': 'session=secret',
+            'x-client': 'zeroShiru',
+          },
+        ),
+      );
+
+      expect(inner.asked[1].headers['authorization'], isNull);
+      expect(inner.asked[1].headers['cookie'], isNull);
+      expect(inner.asked[1].headers['x-client'], 'zeroShiru');
+    });
+
     test('a relative redirect resolves against the current url', () async {
       final inner = ScriptTransport([
         answer(302, '', headers: {'location': '/moved/here'}),

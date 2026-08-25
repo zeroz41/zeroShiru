@@ -15,7 +15,8 @@ for the full design.
   external-player handoff
 - Opt-in [Japanese learning subtitles](docs/features/language-learning.md) with
   interactive words, local JMdict definitions, furigana, romaji, and a second
-  authored translation track
+  authored translation track; missing Japanese episode text can be fetched and
+  cached through a user-connected Jimaku account
 - Watch Together sessions
 
 The previous Svelte/Tauri/Rust implementation lives on the `redo` and

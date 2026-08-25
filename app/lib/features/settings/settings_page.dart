@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/tokens.dart';
 import '../../application/learning/providers.dart';
+import '../../application/learning/subtitle_providers.dart';
 import '../../application/settings/providers.dart';
 import '../../application/sources/providers.dart';
 import '../../domain/models/debrid_route.dart';
@@ -12,6 +13,7 @@ import '../../domain/models/settings.dart';
 import '../../domain/models/source_extension.dart';
 import '../../domain/ports/debrid_client.dart';
 import '../../domain/ports/language_learning.dart';
+import '../../domain/ports/learning_subtitles.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -124,16 +126,6 @@ class _SettingsBodyState extends ConsumerState<_SettingsBody> {
               ),
             ),
           ),
-          _SwitchRow(
-            label: 'Prefer dubbed releases',
-            description: 'Ranks dubbed source results ahead when available.',
-            value: settings.preferDubs,
-            onChanged: (value) => unawaited(
-              controller.persist(
-                (current) => current.copyWith(preferDubs: value),
-              ),
-            ),
-          ),
         ],
       ),
       _SettingsCard(
@@ -162,7 +154,7 @@ class _SettingsBodyState extends ConsumerState<_SettingsBody> {
           ),
           _DropdownRow<String>(
             label: 'Audio language',
-            description: 'Preferred embedded audio track language.',
+            description: 'Preferred embedded audio track and first release-ranking signal.',
             value: settings.audioLanguage,
             items: const {
               'jpn': 'Japanese',
@@ -185,7 +177,7 @@ class _SettingsBodyState extends ConsumerState<_SettingsBody> {
           ),
           _DropdownRow<String>(
             label: 'Subtitle language',
-            description: 'Preferred embedded subtitle track language.',
+            description: 'Preferred embedded subtitle track and second release-ranking signal.',
             value: settings.subtitleLanguage,
             items: const {
               'eng': 'English',
@@ -761,6 +753,17 @@ class _LearningSettingsCardState extends ConsumerState<_LearningSettingsCard> {
           ),
         ),
         _SwitchRow(
+          label: 'Fetch missing Japanese text automatically',
+          description: 'When Learning is selected, use the episode identity to download and cache a Japanese text track if the release has none.',
+          value: settings.learningAutoFetchJapaneseSubtitles,
+          onChanged: (value) => unawaited(
+            controller.persist(
+              (current) =>
+                  current.copyWith(learningAutoFetchJapaneseSubtitles: value),
+            ),
+          ),
+        ),
+        _SwitchRow(
           label: 'Show Japanese text',
           description: 'Keep the original kanji and kana line visible.',
           value: settings.learningShowJapanese,
@@ -827,6 +830,8 @@ class _LearningSettingsCardState extends ConsumerState<_LearningSettingsCard> {
           ),
         ),
         const SizedBox(height: ShiruTokens.space3),
+        const _JimakuPanel(),
+        const SizedBox(height: ShiruTokens.space3),
         _DictionaryPanel(
           status: status,
           working: _working,
@@ -835,6 +840,204 @@ class _LearningSettingsCardState extends ConsumerState<_LearningSettingsCard> {
           onRemove: _remove,
         ),
       ],
+    );
+  }
+}
+
+class _JimakuPanel extends ConsumerStatefulWidget {
+  const _JimakuPanel();
+
+  @override
+  ConsumerState<_JimakuPanel> createState() => _JimakuPanelState();
+}
+
+class _JimakuPanelState extends ConsumerState<_JimakuPanel> {
+  late final TextEditingController _key;
+  bool _obscure = true;
+  bool _working = false;
+  bool _edited = false;
+  String? _message;
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _key = TextEditingController();
+    unawaited(() async {
+      final configured = await ref.read(jimakuConnectionProvider.future);
+      if (!mounted || _edited || configured == null) return;
+      _key.text = configured;
+    }());
+  }
+
+  @override
+  void dispose() {
+    _key.dispose();
+    super.dispose();
+  }
+
+  Future<void> _connect() async {
+    if (_working) return;
+    setState(() {
+      _working = true;
+      _message = null;
+    });
+    try {
+      await ref.read(jimakuConnectionProvider.notifier).connect(_key.text);
+      if (!mounted) return;
+      setState(() {
+        _message = _key.text.trim().isEmpty
+            ? 'Jimaku disconnected; cached subtitles remain available.'
+            : 'Connected. Missing Japanese episode tracks will be fetched automatically.';
+        _error = false;
+      });
+    } on LearningSubtitleFailure catch (failure) {
+      if (!mounted) return;
+      setState(() {
+        _message = failure.message;
+        _error = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _message =
+            'Jimaku could not be connected. Check the key and connection.';
+        _error = true;
+      });
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _disconnect() async {
+    if (_working) return;
+    setState(() => _working = true);
+    try {
+      await ref.read(jimakuConnectionProvider.notifier).disconnect();
+      _key.clear();
+      if (!mounted) return;
+      setState(() {
+        _message = 'Jimaku disconnected; cached subtitles remain available.';
+        _error = false;
+      });
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final connection = ref.watch(jimakuConnectionProvider);
+    final connected = connection.value?.isNotEmpty ?? false;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: ShiruTokens.darkVeryLight,
+        border: Border.all(color: ShiruTokens.surfaceBorder),
+        borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(ShiruTokens.space4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  connected ? Icons.cloud_done_outlined : Icons.cloud_outlined,
+                  color: connected
+                      ? ShiruTokens.completed
+                      : ShiruTokens.accentVeryLight,
+                ),
+                const SizedBox(width: ShiruTokens.space3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Automatic Japanese subtitles · Jimaku',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      Text(
+                        connected ? 'Connected securely' : 'Not connected',
+                        key: const ValueKey('jimaku-connection-status'),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: connected
+                              ? ShiruTokens.completed
+                              : ShiruTokens.textLight,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: ShiruTokens.space3),
+            TextField(
+              key: const ValueKey('jimaku-api-key'),
+              controller: _key,
+              obscureText: _obscure,
+              enableSuggestions: false,
+              autocorrect: false,
+              onChanged: (_) => _edited = true,
+              onSubmitted: (_) => unawaited(_connect()),
+              decoration: InputDecoration(
+                labelText: 'Personal Jimaku API key',
+                helperText: 'A free Jimaku account is required. Stored only in the OS keyring.',
+                suffixIcon: IconButton(
+                  tooltip: _obscure ? 'Show key' : 'Hide key',
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                  icon: Icon(
+                    _obscure
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: ShiruTokens.space3),
+            Wrap(
+              spacing: ShiruTokens.space2,
+              runSpacing: ShiruTokens.space2,
+              children: [
+                FilledButton.icon(
+                  key: const ValueKey('save-test-jimaku'),
+                  onPressed: _working ? null : _connect,
+                  icon: _working
+                      ? const SizedBox.square(
+                          dimension: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.verified_outlined),
+                  label: const Text('Save & test'),
+                ),
+                if (connected)
+                  OutlinedButton(
+                    key: const ValueKey('disconnect-jimaku'),
+                    onPressed: _working ? null : _disconnect,
+                    child: const Text('Disconnect'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: ShiruTokens.space2),
+            Text(
+              'Get a personal key at jimaku.cc/account. Only the AniList ID and episode number are queried; downloaded text stays in the app cache and lookup text is never uploaded.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            if (_message != null) ...[
+              const SizedBox(height: ShiruTokens.space2),
+              Text(
+                _message!,
+                key: const ValueKey('jimaku-connection-message'),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: _error
+                      ? ShiruTokens.errorVeryLight
+                      : ShiruTokens.completed,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

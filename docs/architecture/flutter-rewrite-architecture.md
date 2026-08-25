@@ -201,6 +201,13 @@ AniList (GraphQL) and MyAnimeList (REST) clients in Dart, preserving the existin
 
 **Learning mode — interaction first.** Keep the track selected/decoded but set `sub-visibility=no`; observe `sub-text`, `sub-start/end`, `secondary-sub-text` and render the cue as native Flutter token widgets (pause, highlight, reading, base form, glosses, sentence translation). This trades exact ASS positioning for interaction; the user can switch modes at any time. Bitmap tracks show an explicit "interactive text unavailable" state.
 
+When an episode has no Japanese text track, a separate
+`LearningSubtitleRepository` may resolve one by stable AniList ID + episode.
+The Jimaku adapter uses a personal key from OS credential storage, rejects
+OCR/generated candidates, bounds direct files and ZIP expansion, caches one
+verified text member per episode, and gives libmpv a local file URI. Provider
+authentication is never forwarded to download hosts.
+
 ## Cue identity and stale-result safety
 
 Every cue carries `player_generation + track_id + start_ms + end_ms + normalized_text_hash`. Async results (tokenization, dictionary, translation) apply only if the identity still matches; generation increments on every open; outstanding work is cancelled on seek/track-change/dispose. Tokenization and dictionary results are cacheable by normalized text + tokenizer/dictionary version.
@@ -219,7 +226,7 @@ See [the feature design](../features/language-learning.md).
 
 ## Language model
 
-Three separate concepts: application locale (ARB/`gen_l10n`), preferred media languages (ordered BCP 47 for audio/primary/secondary, original container tags retained), learning languages. Track selection: exact tag → base language → forced/default preferences → remembered per-show choice → explicit off. Never assume UI locale implies subtitle language.
+Three separate concepts: application locale (ARB/`gen_l10n`), preferred media languages (ordered BCP 47 for audio/primary/secondary, original container tags retained), learning languages. Track selection: exact tag → base language → forced/default preferences → remembered per-show choice → explicit off. Source lists use the same media-language preferences as strong ranking signals when providers report them, and conservative filename hints otherwise; incomplete metadata never hard-filters a playable result. Never assume UI locale implies subtitle language.
 
 # Platform strategy
 

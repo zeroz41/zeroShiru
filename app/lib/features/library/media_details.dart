@@ -10,6 +10,7 @@ import '../../application/library/providers.dart';
 import '../../application/playback/request.dart';
 import '../../application/settings/providers.dart';
 import '../../application/sources/providers.dart';
+import '../../application/sources/release_language.dart';
 import '../../application/playback/coverage.dart';
 import '../../domain/models/availability.dart';
 import '../../domain/models/media.dart';
@@ -867,6 +868,20 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
         aHash,
       ).order.compareTo(availabilityOf(_availability, bHash).order);
       if (order != 0) return order;
+      final preferences = widget.settings ?? const Settings();
+      order =
+          releaseLanguagePreferenceScore(
+            b,
+            audioLanguage: preferences.audioLanguage,
+            subtitleLanguage: preferences.subtitleLanguage,
+          ).compareTo(
+            releaseLanguagePreferenceScore(
+              a,
+              audioLanguage: preferences.audioLanguage,
+              subtitleLanguage: preferences.subtitleLanguage,
+            ),
+          );
+      if (order != 0) return order;
       order = switch (_sort) {
         _ReleaseSort.seeders => (b.seeders ?? 0).compareTo(a.seeders ?? 0),
         _ReleaseSort.quality => _quality(b.title).compareTo(_quality(a.title)),
@@ -874,10 +889,6 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
         _ReleaseSort.best => _typeRank(a).compareTo(_typeRank(b)),
       };
       if (order != 0) return order;
-      if (_sort == _ReleaseSort.best && widget.settings?.preferDubs == true) {
-        order = _isDub(b.title).compareTo(_isDub(a.title));
-        if (order != 0) return order;
-      }
       return switch (_sort == _ReleaseSort.best
           ? widget.settings?.torrentSort
           : null) {
@@ -1267,6 +1278,9 @@ class _ReleaseResultTile extends StatelessWidget {
                           Text('${result.seeders} seeders'),
                         if (result.type != null)
                           Text(result.type!.toUpperCase()),
+                        if (explicitReleaseLanguageLabel(result)
+                            case final languages?)
+                          Text(languages),
                       ],
                     ),
                   ],
@@ -1404,14 +1418,6 @@ int _typeRank(TorrentResult result) => switch (result.type) {
   'batch' => 2,
   _ => 3,
 };
-
-int _isDub(String title) =>
-    RegExp(
-      r'\b(dual[ ._-]*audio|dub(?:bed)?|eng(?:lish)?[ ._-]*audio)\b',
-      caseSensitive: false,
-    ).hasMatch(title)
-    ? 1
-    : 0;
 
 int _quality(String title) =>
     int.tryParse(

@@ -27,6 +27,7 @@ class Settings {
     // Language learning (only used by the explicit Learning subtitle mode)
     this.learningTranslationLanguage = 'eng',
     this.learningAutoSelectTracks = true,
+    this.learningAutoFetchJapaneseSubtitles = true,
     this.learningShowJapanese = true,
     this.learningShowFurigana = true,
     this.learningShowRomaji = false,
@@ -78,6 +79,7 @@ class Settings {
   /// the player's subtitle panel.
   final String learningTranslationLanguage;
   final bool learningAutoSelectTracks;
+  final bool learningAutoFetchJapaneseSubtitles;
   final bool learningShowJapanese;
   final bool learningShowFurigana;
   final bool learningShowRomaji;
@@ -132,6 +134,7 @@ class Settings {
     String? subtitleLanguage,
     String? learningTranslationLanguage,
     bool? learningAutoSelectTracks,
+    bool? learningAutoFetchJapaneseSubtitles,
     bool? learningShowJapanese,
     bool? learningShowFurigana,
     bool? learningShowRomaji,
@@ -176,6 +179,9 @@ class Settings {
           learningTranslationLanguage ?? this.learningTranslationLanguage,
       learningAutoSelectTracks:
           learningAutoSelectTracks ?? this.learningAutoSelectTracks,
+      learningAutoFetchJapaneseSubtitles:
+          learningAutoFetchJapaneseSubtitles ??
+          this.learningAutoFetchJapaneseSubtitles,
       learningShowJapanese: learningShowJapanese ?? this.learningShowJapanese,
       learningShowFurigana: learningShowFurigana ?? this.learningShowFurigana,
       learningShowRomaji: learningShowRomaji ?? this.learningShowRomaji,

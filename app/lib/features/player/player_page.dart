@@ -8,15 +8,18 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme/tokens.dart';
 import '../../application/learning/providers.dart';
+import '../../application/learning/subtitle_providers.dart';
 import '../../application/playback/backend.dart';
 import '../../application/playback/probe.dart';
 import '../../application/playback/providers.dart';
 import '../../application/playback/request.dart';
 import '../../application/settings/providers.dart';
 import '../../domain/models/torrent.dart';
+import '../../domain/models/media.dart';
 import '../../domain/models/settings.dart';
 import '../../domain/ports/debrid_client.dart';
 import '../../domain/ports/language_learning.dart';
+import '../../domain/ports/learning_subtitles.dart';
 import '../../domain/ports/media_engine.dart';
 
 const _idleSnapshot = PlaybackSnapshot(
@@ -48,6 +51,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   String? _resolveStatus;
   bool _resolving = false;
   int _resolveGeneration = 0;
+  Future<_LearningSubtitleLoadResult>? _learningSubtitleRequest;
+  String? _learningAutoAttempt;
+  SubtitleRendering _requestedSubtitleRendering = SubtitleRendering.standard;
+  int _activePlaybackGeneration = 0;
   BoxFit _fit = BoxFit.contain;
   double _lastAudibleVolume = 1;
   bool _exitHandled = false;
@@ -98,6 +105,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   Future<void> _resolveLaunch(PlaybackLaunch launch) async {
     final generation = ++_resolveGeneration;
+    _learningSubtitleRequest = null;
+    _learningAutoAttempt = null;
+    _activePlaybackGeneration = 0;
     setState(() {
       _launch = launch;
       _resolving = true;
@@ -205,11 +215,199 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Future<void> _open(PlayerFile source) async {
+    _activePlaybackGeneration = 0;
+    final opened = _engine.state
+        .firstWhere(
+          (snapshot) =>
+              snapshot.phase == PlaybackPhase.ready ||
+              snapshot.phase == PlaybackPhase.failed,
+        )
+        .timeout(const Duration(seconds: 30));
     try {
       await _engine.open(source);
+      _activePlaybackGeneration = (await opened).generation;
       if (mounted) await _engine.play();
     } on PlaybackFailure {
       // The redacted failure is already represented in the state stream.
+    }
+  }
+
+  Future<_LearningSubtitleLoadResult> _findJapaneseLearningSubtitle() {
+    final running = _learningSubtitleRequest;
+    if (running != null) return running;
+    final request = () async {
+      try {
+        return await _performJapaneseLearningSubtitleLookup();
+      } catch (_) {
+        return const _LearningSubtitleLoadResult.unavailable(
+          'The Japanese subtitle could not be prepared. Try again or add a local sidecar.',
+        );
+      }
+    }();
+    _learningSubtitleRequest = request;
+    unawaited(
+      request.then((result) {
+        if (result.ready || _learningSubtitleRequest != request) return;
+        _learningSubtitleRequest = null;
+      }),
+    );
+    return request;
+  }
+
+  Future<_LearningSubtitleLoadResult>
+  _performJapaneseLearningSubtitleLookup() async {
+    final launch = _launch;
+    final resolveGeneration = _resolveGeneration;
+    if (launch == null) {
+      return const _LearningSubtitleLoadResult.unavailable(
+        'Automatic matching needs an episode opened from its show page. You can still add a local sidecar.',
+      );
+    }
+    final settings = await ref.read(settingsControllerProvider.future);
+    if (!settings.learningAutoFetchJapaneseSubtitles) {
+      return const _LearningSubtitleLoadResult.unavailable(
+        'Automatic Japanese subtitle fetching is disabled in Learning settings.',
+      );
+    }
+    final repository = ref.read(learningSubtitleRepositoryProvider);
+    if (repository == null) {
+      return const _LearningSubtitleLoadResult.unavailable(
+        'Automatic Japanese subtitles are unavailable in this build.',
+      );
+    }
+    final credential = await ref.read(jimakuConnectionProvider.future);
+
+    try {
+      final match = await repository.findJapanese(
+        LearningSubtitleQuery(
+          anilistId: launch.media.id,
+          episode: launch.episode,
+          releaseName:
+              _source?.torrentName ??
+              _source?.name ??
+              launch.media.title.display,
+          movie: launch.media.format == MediaFormat.movie,
+        ),
+        credential: credential ?? '',
+      );
+      if (match == null) {
+        return const _LearningSubtitleLoadResult.unavailable(
+          'No non-OCR Japanese text subtitle was found for this episode. A local sidecar can still be added.',
+        );
+      }
+
+      if (!mounted ||
+          resolveGeneration != _resolveGeneration ||
+          _launch?.media.id != launch.media.id ||
+          _launch?.episode != launch.episode) {
+        return const _LearningSubtitleLoadResult.unavailable(
+          'Japanese text was cached for the previous episode.',
+        );
+      }
+      if (_requestedSubtitleRendering != SubtitleRendering.learning) {
+        return const _LearningSubtitleLoadResult.unavailable(
+          'Japanese text was cached. Select Learning again when you want to attach it.',
+        );
+      }
+
+      final translationLanguage = _languageBase(
+        settings.learningTranslationLanguage,
+      );
+      final translation = _latest.subtitleTracks
+          .where(
+            (track) =>
+                !track.isBitmapSubtitle &&
+                _languageBase(track.language) == translationLanguage,
+          )
+          .firstOrNull;
+      if (translation != null) {
+        await _engine.selectSubtitle(translation.id, secondary: true);
+      }
+      final japaneseAudio = _latest.audioTracks
+          .where((track) => _languageBase(track.language) == 'ja')
+          .firstOrNull;
+      if (japaneseAudio != null && japaneseAudio.id != _latest.selectedAudio) {
+        await _engine.selectAudio(japaneseAudio.id);
+      }
+      await _engine.addSubtitle(
+        match.source,
+        title: match.title,
+        language: 'ja',
+      );
+      return _LearningSubtitleLoadResult.ready(
+        'Japanese text attached from ${match.provider} and cached for this episode.',
+      );
+    } on LearningSubtitleFailure catch (failure) {
+      return _LearningSubtitleLoadResult.unavailable(failure.message);
+    } on PlaybackFailure catch (failure) {
+      return _LearningSubtitleLoadResult.unavailable(failure.message);
+    } catch (_) {
+      return const _LearningSubtitleLoadResult.unavailable(
+        'The Japanese subtitle could not be prepared. Try again or add a local sidecar.',
+      );
+    }
+  }
+
+  void _maybePrepareLearningTracks(
+    PlaybackSnapshot snapshot,
+    Settings settings,
+  ) {
+    if (snapshot.subtitleRendering != SubtitleRendering.learning ||
+        !settings.learningAutoSelectTracks ||
+        _launch == null ||
+        snapshot.phase == PlaybackPhase.idle ||
+        snapshot.phase == PlaybackPhase.opening ||
+        snapshot.phase == PlaybackPhase.failed ||
+        snapshot.generation != _activePlaybackGeneration) {
+      return;
+    }
+    final identity =
+        '${snapshot.generation}:${_launch!.media.id}:'
+        '${_launch!.episode}';
+    if (_learningAutoAttempt == identity) return;
+    _learningAutoAttempt = identity;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _requestedSubtitleRendering != SubtitleRendering.learning) {
+        return;
+      }
+      unawaited(_autoPrepareLearningTracks(snapshot, settings));
+    });
+  }
+
+  Future<void> _autoPrepareLearningTracks(
+    PlaybackSnapshot snapshot,
+    Settings settings,
+  ) async {
+    final japaneseAudio = snapshot.audioTracks
+        .where((track) => _languageBase(track.language) == 'ja')
+        .firstOrNull;
+    final textTracks = snapshot.subtitleTracks
+        .where((track) => !track.isBitmapSubtitle)
+        .toList();
+    final japanese = textTracks
+        .where((track) => _languageBase(track.language) == 'ja')
+        .firstOrNull;
+    final translation = textTracks
+        .where(
+          (track) =>
+              track.id != japanese?.id &&
+              _languageBase(track.language) ==
+                  _languageBase(settings.learningTranslationLanguage),
+        )
+        .firstOrNull;
+    try {
+      if (japaneseAudio != null && japaneseAudio.id != snapshot.selectedAudio) {
+        await _engine.selectAudio(japaneseAudio.id);
+      }
+      if (japanese != null) {
+        await _engine.selectSubtitle(japanese.id);
+        await _engine.selectSubtitle(translation?.id, secondary: true);
+      } else if (settings.learningAutoFetchJapaneseSubtitles) {
+        await _findJapaneseLearningSubtitle();
+      }
+    } on PlaybackFailure {
+      // The visible subtitle panel remains the explicit retry surface.
     }
   }
 
@@ -381,8 +579,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
             builder: (context, state) {
               final snapshot = state.data ?? _idleSnapshot;
               _latest = snapshot;
+              _maybePrepareLearningTracks(snapshot, learningSettings);
               return _PlayerStage(
                 snapshot: snapshot,
+                snapshots: _engine.state,
                 learningSettings: learningSettings,
                 source: _source,
                 launch: _launch,
@@ -421,8 +621,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                     _run(() => _engine.selectSubtitle(track)),
                 onSecondarySubtitle: (track) =>
                     _run(() => _engine.selectSubtitle(track, secondary: true)),
-                onSubtitleRendering: (mode) =>
-                    _run(() => _engine.setSubtitleRendering(mode)),
+                onSubtitleRendering: (mode) {
+                  _requestedSubtitleRendering = mode;
+                  _run(() => _engine.setSubtitleRendering(mode));
+                },
+                onFindJapaneseSubtitle: _findJapaneseLearningSubtitle,
                 onLearningLookup: () {
                   if (snapshot.phase == PlaybackPhase.playing ||
                       snapshot.phase == PlaybackPhase.buffering) {
@@ -461,6 +664,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 class _PlayerStage extends StatelessWidget {
   const _PlayerStage({
     required this.snapshot,
+    required this.snapshots,
     required this.learningSettings,
     required this.source,
     required this.launch,
@@ -484,6 +688,7 @@ class _PlayerStage extends StatelessWidget {
     required this.onSubtitle,
     required this.onSecondarySubtitle,
     required this.onSubtitleRendering,
+    required this.onFindJapaneseSubtitle,
     required this.onLearningLookup,
     required this.onSubtitleDelay,
     required this.onAddSubtitle,
@@ -491,6 +696,7 @@ class _PlayerStage extends StatelessWidget {
   });
 
   final PlaybackSnapshot snapshot;
+  final Stream<PlaybackSnapshot> snapshots;
   final Settings learningSettings;
   final PlayerFile? source;
   final PlaybackLaunch? launch;
@@ -514,6 +720,7 @@ class _PlayerStage extends StatelessWidget {
   final ValueChanged<String?> onSubtitle;
   final ValueChanged<String?> onSecondarySubtitle;
   final ValueChanged<SubtitleRendering> onSubtitleRendering;
+  final Future<_LearningSubtitleLoadResult> Function() onFindJapaneseSubtitle;
   final VoidCallback onLearningLookup;
   final void Function(Duration delay, bool secondary) onSubtitleDelay;
   final ValueChanged<_ExternalSubtitleRequest> onAddSubtitle;
@@ -587,6 +794,7 @@ class _PlayerStage extends StatelessWidget {
                     snapshot.phase != PlaybackPhase.failed
                 ? _PlayerControls(
                     snapshot: snapshot,
+                    snapshots: snapshots,
                     learningSettings: learningSettings,
                     fit: fit,
                     onTogglePlayback: onTogglePlayback,
@@ -600,6 +808,7 @@ class _PlayerStage extends StatelessWidget {
                     onSubtitle: onSubtitle,
                     onSecondarySubtitle: onSecondarySubtitle,
                     onSubtitleRendering: onSubtitleRendering,
+                    onFindJapaneseSubtitle: onFindJapaneseSubtitle,
                     onSubtitleDelay: onSubtitleDelay,
                     onAddSubtitle: onAddSubtitle,
                     onToggleFit: onToggleFit,
@@ -1122,6 +1331,7 @@ class _PlayerFailure extends StatelessWidget {
 class _PlayerControls extends StatelessWidget {
   const _PlayerControls({
     required this.snapshot,
+    required this.snapshots,
     required this.learningSettings,
     required this.fit,
     required this.onTogglePlayback,
@@ -1135,12 +1345,14 @@ class _PlayerControls extends StatelessWidget {
     required this.onSubtitle,
     required this.onSecondarySubtitle,
     required this.onSubtitleRendering,
+    required this.onFindJapaneseSubtitle,
     required this.onSubtitleDelay,
     required this.onAddSubtitle,
     required this.onToggleFit,
   });
 
   final PlaybackSnapshot snapshot;
+  final Stream<PlaybackSnapshot> snapshots;
   final Settings learningSettings;
   final BoxFit fit;
   final VoidCallback onTogglePlayback;
@@ -1154,6 +1366,7 @@ class _PlayerControls extends StatelessWidget {
   final ValueChanged<String?> onSubtitle;
   final ValueChanged<String?> onSecondarySubtitle;
   final ValueChanged<SubtitleRendering> onSubtitleRendering;
+  final Future<_LearningSubtitleLoadResult> Function() onFindJapaneseSubtitle;
   final void Function(Duration delay, bool secondary) onSubtitleDelay;
   final ValueChanged<_ExternalSubtitleRequest> onAddSubtitle;
   final VoidCallback onToggleFit;
@@ -1260,11 +1473,13 @@ class _PlayerControls extends StatelessWidget {
                         ),
                       _SubtitleButton(
                         snapshot: snapshot,
+                        snapshots: snapshots,
                         learningSettings: learningSettings,
                         onAudio: onAudio,
                         onPrimary: onSubtitle,
                         onSecondary: onSecondarySubtitle,
                         onRendering: onSubtitleRendering,
+                        onFindJapaneseSubtitle: onFindJapaneseSubtitle,
                         onDelay: onSubtitleDelay,
                         onAddSubtitle: onAddSubtitle,
                       ),
@@ -1822,6 +2037,15 @@ class _LearningNotice extends StatelessWidget {
   );
 }
 
+class _LearningSubtitleLoadResult {
+  const _LearningSubtitleLoadResult.ready(this.message) : ready = true;
+
+  const _LearningSubtitleLoadResult.unavailable(this.message) : ready = false;
+
+  final bool ready;
+  final String message;
+}
+
 class _ExternalSubtitleRequest {
   const _ExternalSubtitleRequest({
     required this.source,
@@ -1837,21 +2061,25 @@ class _ExternalSubtitleRequest {
 class _SubtitleButton extends StatelessWidget {
   const _SubtitleButton({
     required this.snapshot,
+    required this.snapshots,
     required this.learningSettings,
     required this.onAudio,
     required this.onPrimary,
     required this.onSecondary,
     required this.onRendering,
+    required this.onFindJapaneseSubtitle,
     required this.onDelay,
     required this.onAddSubtitle,
   });
 
   final PlaybackSnapshot snapshot;
+  final Stream<PlaybackSnapshot> snapshots;
   final Settings learningSettings;
   final ValueChanged<String?> onAudio;
   final ValueChanged<String?> onPrimary;
   final ValueChanged<String?> onSecondary;
   final ValueChanged<SubtitleRendering> onRendering;
+  final Future<_LearningSubtitleLoadResult> Function() onFindJapaneseSubtitle;
   final void Function(Duration delay, bool secondary) onDelay;
   final ValueChanged<_ExternalSubtitleRequest> onAddSubtitle;
 
@@ -1863,11 +2091,13 @@ class _SubtitleButton extends StatelessWidget {
         context,
         panel: _SubtitlePanel(
           snapshot: snapshot,
+          snapshots: snapshots,
           learningSettings: learningSettings,
           onAudio: onAudio,
           onPrimary: onPrimary,
           onSecondary: onSecondary,
           onRendering: onRendering,
+          onFindJapaneseSubtitle: onFindJapaneseSubtitle,
           onDelay: onDelay,
           onAddSubtitle: onAddSubtitle,
         ),
@@ -1885,21 +2115,25 @@ class _SubtitleButton extends StatelessWidget {
 class _SubtitlePanel extends StatefulWidget {
   const _SubtitlePanel({
     required this.snapshot,
+    required this.snapshots,
     required this.learningSettings,
     required this.onAudio,
     required this.onPrimary,
     required this.onSecondary,
     required this.onRendering,
+    required this.onFindJapaneseSubtitle,
     required this.onDelay,
     required this.onAddSubtitle,
   });
 
   final PlaybackSnapshot snapshot;
+  final Stream<PlaybackSnapshot> snapshots;
   final Settings learningSettings;
   final ValueChanged<String?> onAudio;
   final ValueChanged<String?> onPrimary;
   final ValueChanged<String?> onSecondary;
   final ValueChanged<SubtitleRendering> onRendering;
+  final Future<_LearningSubtitleLoadResult> Function() onFindJapaneseSubtitle;
   final void Function(Duration delay, bool secondary) onDelay;
   final ValueChanged<_ExternalSubtitleRequest> onAddSubtitle;
 
@@ -1908,12 +2142,37 @@ class _SubtitlePanel extends StatefulWidget {
 }
 
 class _SubtitlePanelState extends State<_SubtitlePanel> {
+  late final StreamSubscription<PlaybackSnapshot> _subscription;
+  late PlaybackSnapshot _snapshot = widget.snapshot;
   late String? _primary = widget.snapshot.selectedPrimarySubtitle;
   late String? _secondary = widget.snapshot.selectedSecondarySubtitle;
   late SubtitleRendering _rendering = widget.snapshot.subtitleRendering;
   late Duration _primaryDelay = widget.snapshot.primarySubtitleDelay;
   late Duration _secondaryDelay = widget.snapshot.secondarySubtitleDelay;
   String? _learningWarning;
+  bool _learningMessagePositive = false;
+  bool _findingJapanese = false;
+  bool _learningCanRetry = false;
+  int _learningRequest = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscription = widget.snapshots.listen((snapshot) {
+      if (!mounted || snapshot.generation != _snapshot.generation) return;
+      setState(() {
+        _snapshot = snapshot;
+        _primary = snapshot.selectedPrimarySubtitle;
+        _secondary = snapshot.selectedSecondarySubtitle;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_subscription.cancel());
+    super.dispose();
+  }
 
   void _selectPrimary(String? id) {
     setState(() => _primary = id);
@@ -1937,62 +2196,96 @@ class _SubtitlePanelState extends State<_SubtitlePanel> {
   }
 
   void _setRendering(SubtitleRendering mode) {
+    _learningRequest++;
     setState(() {
       _rendering = mode;
       _learningWarning = null;
+      _learningMessagePositive = false;
+      _learningCanRetry = false;
     });
+    widget.onRendering(mode);
     if (mode == SubtitleRendering.learning &&
         widget.learningSettings.learningAutoSelectTracks) {
-      final warnings = <String>[];
-      final japaneseAudio = widget.snapshot.audioTracks
-          .where((track) => _languageBase(track.language) == 'ja')
-          .firstOrNull;
-      if (japaneseAudio != null &&
-          japaneseAudio.id != widget.snapshot.selectedAudio) {
-        widget.onAudio(japaneseAudio.id);
-      } else if (japaneseAudio == null &&
-          widget.snapshot.audioTracks.any(
-            (track) => _languageBase(track.language) != null,
-          )) {
-        warnings.add(
-          'No Japanese audio track was found; the current audio stays selected.',
-        );
-      }
-      final textTracks = widget.snapshot.subtitleTracks
-          .where((track) => !track.isBitmapSubtitle)
-          .toList();
-      final japanese = textTracks
-          .where((track) => _languageBase(track.language) == 'ja')
-          .firstOrNull;
-      final translationLanguage = _languageBase(
-        widget.learningSettings.learningTranslationLanguage,
+      unawaited(_prepareLearningTracks());
+    }
+  }
+
+  Future<void> _prepareLearningTracks() async {
+    final request = ++_learningRequest;
+    final warnings = <String>[];
+    final japaneseAudio = _snapshot.audioTracks
+        .where((track) => _languageBase(track.language) == 'ja')
+        .firstOrNull;
+    if (japaneseAudio != null && japaneseAudio.id != _snapshot.selectedAudio) {
+      widget.onAudio(japaneseAudio.id);
+    } else if (japaneseAudio == null &&
+        _snapshot.audioTracks.any(
+          (track) => _languageBase(track.language) != null,
+        )) {
+      warnings.add(
+        'No Japanese audio track was found; the current audio stays selected.',
       );
-      final translation = textTracks
-          .where(
-            (track) =>
-                track.id != japanese?.id &&
-                _languageBase(track.language) == translationLanguage,
-          )
-          .firstOrNull;
-      if (japanese == null) {
+    }
+
+    final textTracks = _snapshot.subtitleTracks
+        .where((track) => !track.isBitmapSubtitle)
+        .toList();
+    final japanese = textTracks
+        .where((track) => _languageBase(track.language) == 'ja')
+        .firstOrNull;
+    final translationLanguage = _languageBase(
+      widget.learningSettings.learningTranslationLanguage,
+    );
+    final translation = textTracks
+        .where(
+          (track) =>
+              track.id != japanese?.id &&
+              _languageBase(track.language) == translationLanguage,
+        )
+        .firstOrNull;
+    if (japanese != null) {
+      _selectPrimary(japanese.id);
+      _selectSecondary(translation?.id);
+      if (translation == null &&
+          widget.learningSettings.learningShowTranslation) {
         warnings.add(
-          'Learning mode needs a Japanese text subtitle track. Add an ASS, SRT, or VTT sidecar if this release only has bitmap subtitles.',
+          'Japanese is ready. No matching ${_languageTitle(translationLanguage)} text track was found, so translation is hidden for this release.',
         );
-      } else {
-        _selectPrimary(japanese.id);
-        _selectSecondary(translation?.id);
-        if (translation == null &&
-            widget.learningSettings.learningShowTranslation) {
-          warnings.add(
-            'Japanese is ready. No matching ${_languageTitle(translationLanguage)} text track was found, so translation is hidden for this release.',
-          );
-        }
       }
-      if (warnings.isNotEmpty) {
+      if (warnings.isNotEmpty && mounted) {
         setState(() => _learningWarning = warnings.join(' '));
       }
+      return;
     }
-    widget.onRendering(mode);
+
+    if (!widget.learningSettings.learningAutoFetchJapaneseSubtitles) {
+      warnings.add(
+        'No Japanese text track is embedded. Automatic fetching is disabled; add a local ASS, SRT, or VTT sidecar.',
+      );
+      if (mounted) setState(() => _learningWarning = warnings.join(' '));
+      return;
+    }
+
+    setState(() {
+      _findingJapanese = true;
+      _learningCanRetry = false;
+      _learningWarning = [
+        ...warnings,
+        'Finding a Japanese text track for this episode…',
+      ].join(' ');
+    });
+    final result = await widget.onFindJapaneseSubtitle();
+    if (!mounted ||
+        request != _learningRequest ||
+        _rendering != SubtitleRendering.learning) {
+      return;
+    }
+    setState(() {
+      _findingJapanese = false;
+      _learningMessagePositive = result.ready;
+      _learningCanRetry = !result.ready;
+      _learningWarning = [...warnings, result.message].join(' ');
+    });
   }
 
   @override
@@ -2063,8 +2356,16 @@ class _SubtitlePanelState extends State<_SubtitlePanel> {
                 const SizedBox(height: ShiruTokens.space3),
                 DecoratedBox(
                   decoration: BoxDecoration(
-                    color: const Color(0x2233AE17),
-                    border: Border.all(color: ShiruTokens.warning),
+                    color: _learningMessagePositive
+                        ? const Color(0x1F22C55E)
+                        : const Color(0x2233AE17),
+                    border: Border.all(
+                      color: _learningMessagePositive
+                          ? ShiruTokens.completed
+                          : _findingJapanese
+                          ? ShiruTokens.accentLight
+                          : ShiruTokens.warning,
+                    ),
                     borderRadius: BorderRadius.circular(ShiruTokens.radiusBase),
                   ),
                   child: Padding(
@@ -2072,17 +2373,41 @@ class _SubtitlePanelState extends State<_SubtitlePanel> {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(
-                          Icons.info_outline_rounded,
-                          color: ShiruTokens.warning,
-                          size: 19,
-                        ),
+                        if (_findingJapanese)
+                          const SizedBox.square(
+                            dimension: 19,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        else
+                          Icon(
+                            _learningMessagePositive
+                                ? Icons.check_circle_outline_rounded
+                                : Icons.info_outline_rounded,
+                            color: _learningMessagePositive
+                                ? ShiruTokens.completed
+                                : ShiruTokens.warning,
+                            size: 19,
+                          ),
                         const SizedBox(width: ShiruTokens.space2),
                         Expanded(
-                          child: Text(
-                            _learningWarning!,
-                            key: const ValueKey('learning-track-warning'),
-                            style: Theme.of(context).textTheme.bodySmall,
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _learningWarning!,
+                                  key: const ValueKey('learning-track-warning'),
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ),
+                              if (_learningCanRetry) ...[
+                                const SizedBox(width: ShiruTokens.space2),
+                                TextButton(
+                                  onPressed: () =>
+                                      unawaited(_prepareLearningTracks()),
+                                  child: const Text('Try again'),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                       ],
@@ -2096,14 +2421,14 @@ class _SubtitlePanelState extends State<_SubtitlePanel> {
                   final compact = constraints.maxWidth < 650;
                   final primary = _TrackSection(
                     title: 'Primary',
-                    tracks: widget.snapshot.subtitleTracks,
+                    tracks: _snapshot.subtitleTracks,
                     selected: _primary,
                     onSelected: _selectPrimary,
                   );
                   final secondary = _TrackSection(
                     title: 'Secondary',
                     subtitle: 'Optional dual-language line',
-                    tracks: widget.snapshot.subtitleTracks,
+                    tracks: _snapshot.subtitleTracks,
                     selected: _secondary,
                     onSelected: _selectSecondary,
                   );

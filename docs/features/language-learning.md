@@ -22,6 +22,14 @@ Japanese text track ─► libmpv cue + timing ─► cue identity ─► TinySe
                                              tappable Flutter word widgets
 
 translated text track ─► libmpv secondary cue + timing ─► aligned line below
+
+AniList ID + episode ─► Jimaku read-only API ─► scored text subtitle
+                                                   │
+                                                   ▼
+                                      bounded per-episode local cache
+                                                   │
+                                                   ▼
+                                      libmpv external Japanese track
 ```
 
 On entering Learning mode, optional automatic pairing chooses Japanese audio,
@@ -30,6 +38,16 @@ secondary. The
 current implementation starts with English and can pair the other translation
 languages already supported by the player's subtitle preferences. Translation
 is authored subtitle text; zeroShiru does not generate or rewrite it.
+
+If the release has no Japanese text track, zeroShiru can resolve one from
+[Jimaku](https://jimaku.cc) using the AniList ID and episode already carried by
+the playback request. Jimaku requires a free personal API key, stored in the OS
+keyring. Direct ASS, SSA, SRT, and WebVTT files are supported, as are bounded
+ZIP archives. The resolver rejects OCR/Whisper-labelled candidates, checks the
+episode again locally, prefers release-name timing matches, verifies that the
+chosen file contains Japanese text, and stores only that member in a
+per-episode, per-release cache so differently timed WEB and Blu-ray variants do
+not collide. A cached match is reused offline without another provider request.
 
 Each Japanese cue is segmented in a persistent background isolate without a
 warm-up model or native NLP runtime. When JMdict is installed, the pipeline
@@ -57,6 +75,13 @@ also why the core definition experience does not use a local or hosted LLM:
 JMdict is deterministic, source-attributed, fast, private, and usable on
 low-power devices without hallucinated glosses.
 
+Automatic subtitle acquisition is the one separate network operation: when it
+is enabled and an embedded Japanese text track is missing, Jimaku receives the
+public AniList ID and episode number. It does not receive subtitle cues,
+lookups, playback position, or debrid URLs. Download redirects are
+SSRF-checked, credentials are stripped across origins, and the Jimaku key is
+never sent to the returned file host.
+
 JMdict is created and maintained by the
 [Electronic Dictionary Research and Development Group](https://www.edrdg.org/jmdict/j_jmdict.html)
 and is used under the [EDRDG licence](https://www.edrdg.org/edrdg/licence.html).
@@ -71,6 +96,7 @@ All study behavior is dormant until **Learning** is selected in the subtitle
 panel. Its settings control:
 
 - automatic Japanese + translation text-track pairing;
+- automatic retrieval of a missing Japanese episode track;
 - Japanese surface text, furigana, romaji, and translated line visibility;
 - pause on the first hover/tap lookup in each cue; and
 - learning-overlay scale, independent of normal subtitles.

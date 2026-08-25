@@ -79,10 +79,12 @@ the local Japanese–English JMdict cache, then choose **Learning** in the
 player's subtitle panel. Standard mode remains the default and continues to
 render authored ASS styling through libass.
 
-Learning mode needs a timed text track (ASS, SRT, or WebVTT) in Japanese. It
-can pair that with an English or other translated text track. Bitmap PGS and
-VobSub tracks still play in Standard mode, but require a text sidecar to become
-interactive. See the [language-learning design and privacy notes](../docs/features/language-learning.md).
+Learning mode needs a timed text track (ASS, SSA, SRT, or WebVTT) in Japanese.
+It can be embedded, fetched and cached automatically for the current AniList
+episode after connecting a free personal Jimaku key in **Settings → Learning**,
+or added manually as a local/HTTPS sidecar. PGS and VobSub tracks still play in
+Standard mode, but are never OCRed to become interactive. See the
+[language-learning design and privacy notes](../docs/features/language-learning.md).
 
 ## Validate a change
 

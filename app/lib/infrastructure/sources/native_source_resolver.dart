@@ -200,6 +200,8 @@ class NativeSourceResolver implements SourceResolver {
                         accuracy: result.accuracy,
                         type: result.type,
                         sourceId: extension.id,
+                        audioLanguages: result.audioLanguages,
+                        subtitleLanguages: result.subtitleLanguages,
                       ),
                   ],
                 ),
@@ -892,6 +894,7 @@ class _TsukiAdapter extends _NativeAdapter {
               ? 'batch'
               : null,
           date: _epoch(item['source_date']),
+          audioLanguages: audio,
         ),
       );
     }
@@ -957,7 +960,7 @@ class _NekoBtAdapter extends _NativeAdapter {
     final audio = _stringList(settings['audioLanguage']);
     if (subtitles.isNotEmpty) {
       parameters['sub_lang'] = subtitles.join(',');
-      parameters['fsub_lang'] = subtitles.join(',');
+      parameters['fansub_lang'] = subtitles.join(',');
     }
     if (audio.isNotEmpty) {
       parameters['audio_lang'] = audio.join(',');
@@ -1002,6 +1005,11 @@ class _NekoBtAdapter extends _NativeAdapter {
               : 'low',
           type: batch && episodeIds.length > 1 ? 'batch' : null,
           date: _epoch(item['uploaded_at']),
+          audioLanguages: languages,
+          subtitleLanguages: {
+            ...(_text(item['sub_lang']) ?? '').split(','),
+            ...(_text(item['fsub_lang']) ?? '').split(','),
+          }.where((value) => value.trim().isNotEmpty).toList(),
         ),
       );
     }

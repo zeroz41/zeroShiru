@@ -32,6 +32,7 @@ extension SettingsJson on Settings {
     'subtitleLanguage': subtitleLanguage,
     'learningTranslationLanguage': learningTranslationLanguage,
     'learningAutoSelectTracks': learningAutoSelectTracks,
+    'learningAutoFetchJapaneseSubtitles': learningAutoFetchJapaneseSubtitles,
     'learningShowJapanese': learningShowJapanese,
     'learningShowFurigana': learningShowFurigana,
     'learningShowRomaji': learningShowRomaji,
@@ -122,6 +123,10 @@ Settings settingsFromJson(Map<String, dynamic> json) {
     learningAutoSelectTracks: _bool(
       json['learningAutoSelectTracks'],
       defaults.learningAutoSelectTracks,
+    ),
+    learningAutoFetchJapaneseSubtitles: _bool(
+      json['learningAutoFetchJapaneseSubtitles'],
+      defaults.learningAutoFetchJapaneseSubtitles,
     ),
     learningShowJapanese: _bool(
       json['learningShowJapanese'],

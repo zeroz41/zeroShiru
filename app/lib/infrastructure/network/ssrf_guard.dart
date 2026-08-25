@@ -222,7 +222,7 @@ class GuardedHttpTransport implements HttpTransport {
 
   @override
   Future<HttpResponse> send(HttpRequest request) async {
-    final headers = {
+    var headers = {
       for (final entry in request.headers.entries)
         if (!strippedHeaders.contains(entry.key.toLowerCase()))
           entry.key: entry.value,
@@ -259,7 +259,18 @@ class GuardedHttpTransport implements HttpTransport {
         if (hops > maxRedirects) {
           throw const NetworkException('too many redirects');
         }
+        final previous = url;
         url = url.resolve(location);
+        if (!_sameOrigin(previous, url)) {
+          headers = Map<String, String>.of(headers)
+            ..removeWhere(
+              (name, _) => const {
+                'authorization',
+                'proxy-authorization',
+                'cookie',
+              }.contains(name.toLowerCase()),
+            );
+        }
         // A 303 answers "see other" — and historically 301/302 after a POST
         // are refetched as GET. 307/308 keep the method and body.
         if (response.status == 303 ||
@@ -282,6 +293,11 @@ class GuardedHttpTransport implements HttpTransport {
       status == 303 ||
       status == 307 ||
       status == 308;
+
+  static bool _sameOrigin(Uri a, Uri b) =>
+      a.scheme.toLowerCase() == b.scheme.toLowerCase() &&
+      a.host.toLowerCase() == b.host.toLowerCase() &&
+      a.port == b.port;
 
   void _checkBodySize(HttpResponse response) {
     final declared = int.tryParse(response.header('content-length') ?? '');

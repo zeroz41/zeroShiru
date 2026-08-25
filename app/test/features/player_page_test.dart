@@ -12,6 +12,7 @@ import 'package:zeroshiru/application/playback/providers.dart';
 import 'package:zeroshiru/application/playback/request.dart';
 import 'package:zeroshiru/application/library/providers.dart';
 import 'package:zeroshiru/application/learning/providers.dart';
+import 'package:zeroshiru/application/learning/subtitle_providers.dart';
 import 'package:zeroshiru/application/settings/providers.dart';
 import 'package:zeroshiru/domain/models/availability.dart';
 import 'package:zeroshiru/domain/models/media.dart';
@@ -27,6 +28,9 @@ class _FakeEngine implements MediaEngine {
   final secondCues = StreamController<SubtitleCue>.broadcast();
   final metricEvents = StreamController<PlayerMetrics>.broadcast();
   final calls = <String>[];
+  String? addedSubtitleSource;
+  String? addedSubtitleTitle;
+  String? addedSubtitleLanguage;
 
   @override
   Stream<PlaybackSnapshot> get state => states.stream;
@@ -110,7 +114,12 @@ class _FakeEngine implements MediaEngine {
     String source, {
     String? title,
     String? language,
-  }) async => calls.add('add-subtitle');
+  }) async {
+    calls.add('add-subtitle');
+    addedSubtitleSource = source;
+    addedSubtitleTitle = title;
+    addedSubtitleLanguage = language;
+  }
 
   @override
   Future<void> dispose() async {
@@ -521,6 +530,177 @@ void main() {
   });
 
   testWidgets(
+    'Learning automatically attaches the episode Japanese track and pairs English',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 760);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final engine = _FakeEngine();
+      final backend = _FakeBackend(engine);
+      final debrid = _ResolvingDebrid();
+      final credentials = _Credentials()
+        ..value = 'torbox-secret'
+        ..jimaku = 'jimaku-secret';
+      final subtitles = _LearningSubtitles();
+      const launch = PlaybackLaunch(
+        media: Media(
+          id: 42,
+          title: MediaTitle(userPreferred: 'Learning Show'),
+          episodes: 12,
+        ),
+        episode: 7,
+        magnet: '0123456789abcdef0123456789abcdef01234567',
+        service: DebridService.torbox,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            playbackBackendProvider.overrideWithValue(backend),
+            playbackProbeTransportProvider.overrideWithValue(_ProbeTransport()),
+            settingsRepositoryProvider.overrideWithValue(
+              _SettingsRepository(
+                const Settings(debridService: DebridService.torbox),
+              ),
+            ),
+            credentialStoreProvider.overrideWithValue(credentials),
+            debridClientsProvider.overrideWithValue({
+              DebridService.torbox: debrid,
+            }),
+            learningSubtitleRepositoryProvider.overrideWithValue(subtitles),
+            languageLearningToolsProvider.overrideWithValue(
+              _FakeLearningTools(),
+            ),
+          ],
+          child: MaterialApp(
+            theme: buildShiruTheme(),
+            home: const PlayerPage(initialLaunch: launch),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      engine.states.add(
+        const PlaybackSnapshot(
+          generation: 1,
+          phase: PlaybackPhase.playing,
+          duration: Duration(minutes: 24),
+          audioTracks: [
+            MediaTrack(id: 'audio-ja', kind: TrackKind.audio, language: 'ja'),
+          ],
+          subtitleTracks: [
+            MediaTrack(
+              id: 'sub-en',
+              kind: TrackKind.subtitle,
+              language: 'en',
+              codec: 'ass',
+            ),
+          ],
+          selectedPrimarySubtitle: 'sub-en',
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Subtitles'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Learning'));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(subtitles.queries.single.anilistId, 42);
+      expect(subtitles.queries.single.episode, 7);
+      expect(subtitles.credentials, ['jimaku-secret']);
+      expect(engine.calls, contains('subtitle:sub-en:true'));
+      expect(engine.calls, contains('add-subtitle'));
+      expect(engine.addedSubtitleSource, 'file:///cache/show-07.ass');
+      expect(engine.addedSubtitleLanguage, 'ja');
+      expect(find.textContaining('cached for this episode'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a Japanese fetch finishing after Styled is restored stays cached only',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 760);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final engine = _FakeEngine();
+      final pending = Completer<LearningSubtitleMatch?>();
+      final subtitles = _LearningSubtitles(pending: pending);
+      final credentials = _Credentials()
+        ..value = 'torbox-secret'
+        ..jimaku = 'jimaku-secret';
+      const launch = PlaybackLaunch(
+        media: Media(
+          id: 42,
+          title: MediaTitle(userPreferred: 'Learning Show'),
+          episodes: 12,
+        ),
+        episode: 7,
+        magnet: '0123456789abcdef0123456789abcdef01234567',
+        service: DebridService.torbox,
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            playbackBackendProvider.overrideWithValue(_FakeBackend(engine)),
+            settingsRepositoryProvider.overrideWithValue(
+              _SettingsRepository(
+                const Settings(debridService: DebridService.torbox),
+              ),
+            ),
+            credentialStoreProvider.overrideWithValue(credentials),
+            debridClientsProvider.overrideWithValue({
+              DebridService.torbox: _ResolvingDebrid(),
+            }),
+            learningSubtitleRepositoryProvider.overrideWithValue(subtitles),
+          ],
+          child: MaterialApp(
+            theme: buildShiruTheme(),
+            home: const PlayerPage(initialLaunch: launch),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      engine.states.add(
+        const PlaybackSnapshot(
+          generation: 1,
+          phase: PlaybackPhase.playing,
+          duration: Duration(minutes: 24),
+          audioTracks: [
+            MediaTrack(id: 'audio-ja', kind: TrackKind.audio, language: 'ja'),
+          ],
+          subtitleTracks: [
+            MediaTrack(
+              id: 'sub-en',
+              kind: TrackKind.subtitle,
+              language: 'en',
+              codec: 'ass',
+            ),
+          ],
+          selectedPrimarySubtitle: 'sub-en',
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byTooltip('Subtitles'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Learning'));
+      await tester.pump();
+      await tester.tap(find.text('Styled'));
+      await tester.pump();
+
+      pending.complete(_LearningSubtitles.match);
+      await tester.pumpAndSettle();
+
+      expect(engine.calls, isNot(contains('add-subtitle')));
+      expect(engine.calls, contains('render:standard'));
+    },
+  );
+
+  testWidgets(
     'TorBox launch resolves the requested episode before opening mpv',
     (tester) async {
       tester.view.physicalSize = const Size(500, 700);
@@ -679,16 +859,61 @@ class _FakeLearningTools implements LanguageLearningTools {
 
 class _Credentials implements CredentialStore {
   String? value;
+  String? jimaku;
 
   @override
   Future<String?> read(String key) async =>
-      key == debridCredentialKey(DebridService.torbox) ? value : null;
+      key == debridCredentialKey(DebridService.torbox)
+      ? value
+      : key == jimakuCredentialKey
+      ? jimaku
+      : null;
 
   @override
-  Future<void> write(String key, String value) async => this.value = value;
+  Future<void> write(String key, String value) async {
+    if (key == jimakuCredentialKey) {
+      jimaku = value;
+    } else {
+      this.value = value;
+    }
+  }
 
   @override
-  Future<void> delete(String key) async => value = null;
+  Future<void> delete(String key) async {
+    if (key == jimakuCredentialKey) {
+      jimaku = null;
+    } else {
+      value = null;
+    }
+  }
+}
+
+class _LearningSubtitles implements LearningSubtitleRepository {
+  _LearningSubtitles({this.pending});
+
+  static const match = LearningSubtitleMatch(
+    source: 'file:///cache/show-07.ass',
+    title: 'Japanese learning · Jimaku',
+    provider: 'Jimaku',
+    originalName: 'Show - 07.ass',
+  );
+
+  final Completer<LearningSubtitleMatch?>? pending;
+  final queries = <LearningSubtitleQuery>[];
+  final credentials = <String>[];
+
+  @override
+  Future<void> validateCredential(String credential) async {}
+
+  @override
+  Future<LearningSubtitleMatch?> findJapanese(
+    LearningSubtitleQuery query, {
+    required String credential,
+  }) async {
+    queries.add(query);
+    credentials.add(credential);
+    return await pending?.future ?? match;
+  }
 }
 
 class _ResolvingDebrid implements DebridClient {

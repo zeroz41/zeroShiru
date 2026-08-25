@@ -331,6 +331,10 @@ class MediaKitEngine implements MediaEngine {
       ),
       'The subtitle file could not be loaded.',
     );
+    // Loading a track must not re-enable libass behind the native Learning
+    // overlay. Some libmpv builds adjust visibility while selecting a URI.
+    await _applySubtitleVisibility();
+    _emit();
   }
 
   Future<void> _applyTrackPreferences(PlaybackPreferences preferences) async {

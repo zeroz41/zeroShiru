@@ -1,4 +1,5 @@
 import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 
 import '../../application/playback/backend.dart';
 import '../../domain/ports/ports.dart';
@@ -7,6 +8,7 @@ import '../database/query_cache_impl.dart';
 import '../database/settings_repository_impl.dart';
 import '../debrid/debrid_client_impl.dart';
 import '../learning/local_japanese_learning_tools.dart';
+import '../learning/jimaku_learning_subtitle_repository.dart';
 import '../media/media_kit_playback_backend.dart';
 import '../network/http_transport_impl.dart';
 import '../network/http_streaming_transport.dart';
@@ -35,6 +37,7 @@ class AppServices {
     required this.playbackProbe,
     required this.sources,
     required this.learning,
+    required this.learningSubtitles,
     required this._profileDatabase,
     required this._sharedDatabase,
     required this._queryCache,
@@ -52,6 +55,7 @@ class AppServices {
   final IoStreamingTransport playbackProbe;
   final SourceResolver sources;
   final LanguageLearningTools learning;
+  final LearningSubtitleRepository learningSubtitles;
 
   final AppDatabase _profileDatabase;
   final AppDatabase _sharedDatabase;
@@ -74,6 +78,13 @@ class AppServices {
       transport: GuardedHttpTransport(
         transport,
         maxBodyBytes: 64 * 1024 * 1024,
+      ),
+    );
+    final learningSubtitles = JimakuLearningSubtitleRepository(
+      cacheDirectory: p.join(support.path, 'cache', 'learning-subtitles'),
+      transport: GuardedHttpTransport(
+        transport,
+        maxBodyBytes: 16 * 1024 * 1024,
       ),
     );
     final sources = NativeSourceResolver(
@@ -109,6 +120,7 @@ class AppServices {
       playbackProbe: playbackProbe,
       sources: sources,
       learning: learning,
+      learningSubtitles: learningSubtitles,
       profileDatabase: databases.profile,
       sharedDatabase: databases.shared,
       queryCache: queryCache,

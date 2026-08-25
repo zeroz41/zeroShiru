@@ -17,6 +17,8 @@ class TorrentResult {
     this.accuracy,
     this.type,
     this.sourceId,
+    this.audioLanguages = const [],
+    this.subtitleLanguages = const [],
   });
 
   final String title;
@@ -37,6 +39,12 @@ class TorrentResult {
   /// 'batch' | 'best' | 'alt'
   final String? type;
   final String? sourceId;
+
+  /// Provider-reported language tags when available. Empty means unknown,
+  /// never "no language"; release ranking may then use conservative title
+  /// hints without filtering the result out.
+  final List<String> audioLanguages;
+  final List<String> subtitleLanguages;
 }
 
 /// The question asked of every enabled source.

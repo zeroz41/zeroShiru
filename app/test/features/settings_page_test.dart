@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zeroshiru/app/theme/theme.dart';
 import 'package:zeroshiru/application/library/providers.dart';
+import 'package:zeroshiru/application/learning/subtitle_providers.dart';
 import 'package:zeroshiru/application/settings/providers.dart';
 import 'package:zeroshiru/domain/models/availability.dart';
 import 'package:zeroshiru/domain/models/settings.dart';
@@ -143,6 +144,50 @@ void main() {
 
     expect(find.text('Service'), findsOneWidget);
   });
+
+  testWidgets('Jimaku key is validated and stored only in the keyring', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1100, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final credentials = _Credentials();
+    final subtitles = _LearningSubtitles();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(
+            _SettingsRepository(const Settings()),
+          ),
+          credentialStoreProvider.overrideWithValue(credentials),
+          debridClientsProvider.overrideWithValue(const {}),
+          learningSubtitleRepositoryProvider.overrideWithValue(subtitles),
+        ],
+        child: MaterialApp(
+          theme: buildShiruTheme(),
+          home: const Scaffold(body: SettingsPage()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('settings-section-learning')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('jimaku-api-key')));
+    await tester.enterText(
+      find.byKey(const ValueKey('jimaku-api-key')),
+      '  personal-jimaku-key  ',
+    );
+    await tester.tap(find.byKey(const ValueKey('save-test-jimaku')));
+    await tester.pumpAndSettle();
+
+    expect(subtitles.validated, ['personal-jimaku-key']);
+    expect(credentials.values[jimakuCredentialKey], 'personal-jimaku-key');
+    expect(
+      find.textContaining('Missing Japanese episode tracks'),
+      findsOneWidget,
+    );
+  });
 }
 
 class _SettingsRepository implements SettingsRepository {
@@ -216,4 +261,19 @@ class _DebridClient implements DebridClient {
 
   @override
   Future<void> forgetResolved(String apiKey, String hash) async {}
+}
+
+class _LearningSubtitles implements LearningSubtitleRepository {
+  final validated = <String>[];
+
+  @override
+  Future<void> validateCredential(String credential) async {
+    validated.add(credential);
+  }
+
+  @override
+  Future<LearningSubtitleMatch?> findJapanese(
+    LearningSubtitleQuery query, {
+    required String credential,
+  }) async => null;
 }

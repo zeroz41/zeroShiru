@@ -96,6 +96,7 @@ void main() {
         subtitleLanguage: 'spa',
         learningTranslationLanguage: 'de',
         learningAutoSelectTracks: false,
+        learningAutoFetchJapaneseSubtitles: false,
         learningShowJapanese: false,
         learningShowFurigana: false,
         learningShowRomaji: true,
