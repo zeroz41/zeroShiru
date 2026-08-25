@@ -72,13 +72,26 @@ void main() {
     expect(find.text('Test cached release 04 1080p'), findsOneWidget);
     expect(find.text('Cached'), findsOneWidget);
     expect(find.byKey(const ValueKey('source-results')), findsOneWidget);
+    expect(find.byKey(const ValueKey('cached-source-filter')), findsOneWidget);
+    expect(find.byKey(const ValueKey('source-sort')), findsOneWidget);
     expect(find.byKey(const ValueKey('release-magnet')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('source-sort')));
+    await tester.pumpAndSettle();
+    expect(find.text('Highest quality'), findsOneWidget);
+    await tester.tap(find.text('Highest quality'));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('manual-release-toggle')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('release-magnet')), findsOneWidget);
     expect(find.text('1 playable releases'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('close-source-results')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('source-results')), findsNothing);
+    expect(find.byKey(const ValueKey('episode-list')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

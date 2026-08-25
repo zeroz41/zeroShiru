@@ -72,6 +72,17 @@ void main() {
         PlaybackPhase.ended,
       );
     });
+
+    test('auto subtitles report the effective visible default track', () {
+      const tracks = [
+        kit.SubtitleTrack('2', 'Signs', 'eng'),
+        kit.SubtitleTrack('3', 'Full dialogue', 'eng', isDefault: true),
+      ];
+
+      expect(selectedKitSubtitleTrackId('auto', tracks), '3');
+      expect(selectedKitSubtitleTrackId('no', tracks), isNull);
+      expect(selectedKitSubtitleTrackId('2', tracks), '2');
+    });
   });
 
   group('player boundary rules', () {

@@ -30,42 +30,59 @@ Future<void> showMediaDetails(
   BuildContext context,
   Media media, {
   EpisodeSelected? onEpisodeSelected,
+  int? initialEpisode,
 }) async {
-  final reduceMotion = MediaQuery.disableAnimationsOf(context);
-  final launch = await showGeneralDialog<PlaybackLaunch>(
-    context: context,
-    barrierDismissible: true,
-    barrierLabel: 'Close details',
-    barrierColor: const Color(0xD9000000),
-    transitionDuration: reduceMotion ? Duration.zero : ShiruTokens.motionPanel,
-    pageBuilder: (context, animation, secondaryAnimation) =>
-        MediaDetails(media: media, onEpisodeSelected: onEpisodeSelected),
-    transitionBuilder: (context, animation, secondaryAnimation, child) {
-      final curved = CurvedAnimation(
-        parent: animation,
-        curve: ShiruTokens.easeSettle,
-      );
-      return FadeTransition(
-        opacity: curved,
-        child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.025),
-            end: Offset.zero,
-          ).animate(curved),
-          child: child,
-        ),
-      );
-    },
-  );
-  if (launch != null && context.mounted) {
-    context.push('/player', extra: launch);
+  var selectedEpisode = initialEpisode;
+  while (true) {
+    if (!context.mounted) return;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final launch = await showGeneralDialog<PlaybackLaunch>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Close details',
+      barrierColor: const Color(0xD9000000),
+      transitionDuration: reduceMotion
+          ? Duration.zero
+          : ShiruTokens.motionPanel,
+      pageBuilder: (context, animation, secondaryAnimation) => MediaDetails(
+        media: media,
+        initialEpisode: selectedEpisode,
+        onEpisodeSelected: onEpisodeSelected,
+      ),
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: ShiruTokens.easeSettle,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.025),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
+    );
+    if (launch == null || !context.mounted) return;
+    selectedEpisode = launch.episode;
+    selectedEpisode =
+        await context.push<int>('/player', extra: launch) ?? selectedEpisode;
   }
 }
 
 class MediaDetails extends ConsumerStatefulWidget {
-  const MediaDetails({super.key, required this.media, this.onEpisodeSelected});
+  const MediaDetails({
+    super.key,
+    required this.media,
+    this.initialEpisode,
+    this.onEpisodeSelected,
+  });
 
   final Media media;
+  final int? initialEpisode;
   final EpisodeSelected? onEpisodeSelected;
 
   @override
@@ -83,15 +100,16 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
   @override
   void initState() {
     super.initState();
-    _episode = _initialEpisode(media);
+    _episode = _requestedEpisode(media, widget.initialEpisode);
     _magnet = TextEditingController();
   }
 
   @override
   void didUpdateWidget(MediaDetails oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.media.id != media.id) {
-      _episode = _initialEpisode(media);
+    if (oldWidget.media.id != media.id ||
+        oldWidget.initialEpisode != widget.initialEpisode) {
+      _episode = _requestedEpisode(media, widget.initialEpisode);
       _releaseOpen = false;
       _releaseError = null;
       _magnet.clear();
@@ -122,6 +140,10 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
       _releaseOpen = true;
       _releaseError = null;
     });
+  }
+
+  void _closeReleases() {
+    setState(() => _releaseOpen = false);
   }
 
   void _launch(Settings? settings, [String? selected]) {
@@ -193,6 +215,7 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
                       settings: currentSettings,
                       episodes: episodes,
                       onWatch: _watchNow,
+                      onCloseReleases: _closeReleases,
                       onSelectEpisode: _selectEpisode,
                       onLaunch: (source) => _launch(currentSettings, source),
                     )
@@ -206,6 +229,7 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
                       settings: currentSettings,
                       episodes: episodes,
                       onWatch: _watchNow,
+                      onCloseReleases: _closeReleases,
                       onSelectEpisode: _selectEpisode,
                       onLaunch: (source) => _launch(currentSettings, source),
                     ),
@@ -290,6 +314,7 @@ class _DesktopDetails extends StatelessWidget {
     required this.settings,
     required this.episodes,
     required this.onWatch,
+    required this.onCloseReleases,
     required this.onSelectEpisode,
     required this.onLaunch,
   });
@@ -302,6 +327,7 @@ class _DesktopDetails extends StatelessWidget {
   final Settings? settings;
   final List<EpisodeInfo> episodes;
   final VoidCallback onWatch;
+  final VoidCallback onCloseReleases;
   final ValueChanged<int> onSelectEpisode;
   final ValueChanged<String> onLaunch;
 
@@ -332,7 +358,7 @@ class _DesktopDetails extends StatelessWidget {
               children: [
                 if (releaseOpen)
                   Expanded(
-                    flex: 6,
+                    flex: 5,
                     child: _ReleaseHandoff(
                       media: media,
                       episode: episode,
@@ -340,6 +366,7 @@ class _DesktopDetails extends StatelessWidget {
                       error: releaseError,
                       controller: magnet,
                       settings: settings,
+                      onClose: onCloseReleases,
                       onLaunch: onLaunch,
                     ),
                   )
@@ -351,11 +378,12 @@ class _DesktopDetails extends StatelessWidget {
                     error: releaseError,
                     controller: magnet,
                     settings: settings,
+                    onClose: onCloseReleases,
                     onLaunch: onLaunch,
                   ),
                 const SizedBox(height: ShiruTokens.space3),
                 Expanded(
-                  flex: releaseOpen ? 5 : 10,
+                  flex: releaseOpen ? 6 : 10,
                   child: EpisodeSelector(
                     episodeCount: media.maxEpisode ?? 1,
                     watchedThrough: media.listEntry?.progress ?? 0,
@@ -386,6 +414,7 @@ class _CompactDetails extends StatelessWidget {
     required this.settings,
     required this.episodes,
     required this.onWatch,
+    required this.onCloseReleases,
     required this.onSelectEpisode,
     required this.onLaunch,
   });
@@ -398,6 +427,7 @@ class _CompactDetails extends StatelessWidget {
   final Settings? settings;
   final List<EpisodeInfo> episodes;
   final VoidCallback onWatch;
+  final VoidCallback onCloseReleases;
   final ValueChanged<int> onSelectEpisode;
   final ValueChanged<String> onLaunch;
 
@@ -422,7 +452,7 @@ class _CompactDetails extends StatelessWidget {
         if ((media.maxEpisode ?? 0) > 0) ...[
           const SizedBox(height: ShiruTokens.space5),
           SizedBox(
-            height: releaseOpen ? 560 : null,
+            height: releaseOpen ? 400 : null,
             child: _ReleaseHandoff(
               media: media,
               episode: episode,
@@ -430,6 +460,7 @@ class _CompactDetails extends StatelessWidget {
               error: releaseError,
               controller: magnet,
               settings: settings,
+              onClose: onCloseReleases,
               onLaunch: onLaunch,
             ),
           ),
@@ -648,6 +679,7 @@ class _ReleaseHandoff extends ConsumerStatefulWidget {
     required this.error,
     required this.controller,
     required this.settings,
+    required this.onClose,
     required this.onLaunch,
   });
 
@@ -657,11 +689,14 @@ class _ReleaseHandoff extends ConsumerStatefulWidget {
   final String? error;
   final TextEditingController controller;
   final Settings? settings;
+  final VoidCallback onClose;
   final ValueChanged<String> onLaunch;
 
   @override
   ConsumerState<_ReleaseHandoff> createState() => _ReleaseHandoffState();
 }
+
+enum _ReleaseSort { best, seeders, quality, size }
 
 class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
   StreamSubscription<SourceSearchBatch>? _subscription;
@@ -672,6 +707,8 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
   final _sourceErrors = <String>[];
   bool _loading = false;
   bool _manual = false;
+  bool _cachedOnly = false;
+  _ReleaseSort _sort = _ReleaseSort.best;
   int _generation = 0;
 
   @override
@@ -772,7 +809,8 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
 
   void _scheduleAvailability(int generation, {bool immediate = false}) {
     final settings = widget.settings;
-    if ((settings?.debridCacheCheck != true &&
+    if ((!_cachedOnly &&
+            settings?.debridCacheCheck != true &&
             settings?.debridCachedOnly != true) ||
         settings?.debridService == null ||
         settings?.activeDebridKey?.isNotEmpty != true) {
@@ -814,7 +852,9 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
 
   List<TorrentResult> get _ranked {
     final values = _results.where((item) {
-      if (widget.settings?.debridCachedOnly != true) return true;
+      if (!_cachedOnly && widget.settings?.debridCachedOnly != true) {
+        return true;
+      }
       final hash = parseHash(item.hash ?? item.link);
       final state = availabilityOf(_availability, hash);
       return state == Availability.cached || !_availability.containsKey(hash);
@@ -827,13 +867,20 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
         aHash,
       ).order.compareTo(availabilityOf(_availability, bHash).order);
       if (order != 0) return order;
-      order = _typeRank(a).compareTo(_typeRank(b));
+      order = switch (_sort) {
+        _ReleaseSort.seeders => (b.seeders ?? 0).compareTo(a.seeders ?? 0),
+        _ReleaseSort.quality => _quality(b.title).compareTo(_quality(a.title)),
+        _ReleaseSort.size => (b.size ?? 0).compareTo(a.size ?? 0),
+        _ReleaseSort.best => _typeRank(a).compareTo(_typeRank(b)),
+      };
       if (order != 0) return order;
-      if (widget.settings?.preferDubs == true) {
+      if (_sort == _ReleaseSort.best && widget.settings?.preferDubs == true) {
         order = _isDub(b.title).compareTo(_isDub(a.title));
         if (order != 0) return order;
       }
-      return switch (widget.settings?.torrentSort) {
+      return switch (_sort == _ReleaseSort.best
+          ? widget.settings?.torrentSort
+          : null) {
         'size' => (b.size ?? 0).compareTo(a.size ?? 0),
         'quality' => _quality(b.title).compareTo(_quality(a.title)),
         _ => (b.seeders ?? 0).compareTo(a.seeders ?? 0),
@@ -850,10 +897,8 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
         service != null && (settings?.activeDebridKey?.isNotEmpty ?? false);
     final provider = service == null ? 'TorBox' : _serviceTitle(service);
     final results = _ranked;
-    return AnimatedContainer(
+    return Container(
       key: const ValueKey('release-handoff'),
-      duration: ShiruTokens.motionPanel,
-      curve: ShiruTokens.easeSettle,
       width: double.infinity,
       padding: const EdgeInsets.all(ShiruTokens.space3),
       decoration: BoxDecoration(
@@ -908,6 +953,13 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
                   onPressed: _loading ? null : _search,
                   icon: const Icon(Icons.refresh_rounded),
                 ),
+              if (widget.open)
+                IconButton(
+                  key: const ValueKey('close-source-results'),
+                  tooltip: 'Collapse sources',
+                  onPressed: widget.onClose,
+                  icon: const Icon(Icons.keyboard_arrow_up_rounded),
+                ),
               _ConnectionDot(connected: connected),
             ],
           ),
@@ -915,8 +967,32 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
             const SizedBox(height: ShiruTokens.space2),
             if (_loading) const LinearProgressIndicator(minHeight: 2),
             const SizedBox(height: ShiruTokens.space2),
+            _SourceToolbar(
+              sort: _sort,
+              cachedOnly: _cachedOnly || settings?.debridCachedOnly == true,
+              cachedLocked: settings?.debridCachedOnly == true,
+              onSort: (value) => setState(() => _sort = value),
+              onCachedOnly: (value) {
+                setState(() => _cachedOnly = value);
+                if (value) {
+                  _scheduleAvailability(_generation, immediate: true);
+                }
+              },
+            ),
+            const SizedBox(height: ShiruTokens.space2),
             Expanded(
-              child: results.isEmpty
+              child: _manual
+                  ? SingleChildScrollView(
+                      padding: const EdgeInsets.only(right: ShiruTokens.space1),
+                      child: _ManualRelease(
+                        controller: widget.controller,
+                        error: widget.error,
+                        connected: connected,
+                        provider: provider,
+                        onLaunch: () => widget.onLaunch(widget.controller.text),
+                      ),
+                    )
+                  : results.isEmpty
                   ? _EmptyReleaseResults(
                       loading: _loading,
                       hasErrors: _sourceErrors.isNotEmpty,
@@ -936,7 +1012,8 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
                           checking:
                               hash != null &&
                               (settings?.debridCacheCheck == true ||
-                                  settings?.debridCachedOnly == true) &&
+                                  settings?.debridCachedOnly == true ||
+                                  _cachedOnly) &&
                               !_availability.containsKey(hash),
                           connected: connected,
                           provider: provider,
@@ -962,17 +1039,94 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
                 _manual ? 'Hide manual link' : 'Use magnet or info hash',
               ),
             ),
-            if (_manual)
-              _ManualRelease(
-                controller: widget.controller,
-                error: widget.error,
-                connected: connected,
-                provider: provider,
-                onLaunch: () => widget.onLaunch(widget.controller.text),
-              ),
           ],
         ],
       ),
+    );
+  }
+}
+
+class _SourceToolbar extends StatelessWidget {
+  const _SourceToolbar({
+    required this.sort,
+    required this.cachedOnly,
+    required this.cachedLocked,
+    required this.onSort,
+    required this.onCachedOnly,
+  });
+
+  final _ReleaseSort sort;
+  final bool cachedOnly;
+  final bool cachedLocked;
+  final ValueChanged<_ReleaseSort> onSort;
+  final ValueChanged<bool> onCachedOnly;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        FilterChip(
+          key: const ValueKey('cached-source-filter'),
+          selected: cachedOnly,
+          onSelected: cachedLocked ? null : onCachedOnly,
+          avatar: const Icon(Icons.bolt_rounded, size: 16),
+          label: const Text('Cached only'),
+        ),
+        const Spacer(),
+        Text(
+          'Sort',
+          style: Theme.of(context).textTheme.labelMedium
+              ?.copyWith(color: ShiruTokens.textMuted),
+        ),
+        const SizedBox(width: ShiruTokens.space1),
+        PopupMenuButton<_ReleaseSort>(
+          key: const ValueKey('source-sort'),
+          tooltip: 'Sort source results',
+          initialValue: sort,
+          onSelected: onSort,
+          itemBuilder: (context) => const [
+            PopupMenuItem(value: _ReleaseSort.best, child: Text('Best match')),
+            PopupMenuItem(
+              value: _ReleaseSort.seeders,
+              child: Text('Most seeders'),
+            ),
+            PopupMenuItem(
+              value: _ReleaseSort.quality,
+              child: Text('Highest quality'),
+            ),
+            PopupMenuItem(
+              value: _ReleaseSort.size,
+              child: Text('Largest file'),
+            ),
+          ],
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: ShiruTokens.surfacePanel,
+              border: Border.all(color: ShiruTokens.surfaceBorder),
+              borderRadius: BorderRadius.circular(ShiruTokens.radiusPill),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: ShiruTokens.space2,
+                vertical: ShiruTokens.space1,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(switch (sort) {
+                    _ReleaseSort.best => 'Best',
+                    _ReleaseSort.seeders => 'Seeders',
+                    _ReleaseSort.quality => 'Quality',
+                    _ReleaseSort.size => 'Size',
+                  }, style: Theme.of(context).textTheme.labelMedium),
+                  const SizedBox(width: ShiruTokens.space1),
+                  const Icon(Icons.expand_more_rounded, size: 16),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1008,40 +1162,42 @@ class _EmptyReleaseResults extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final installed = ref.watch(sourceCatalogProvider).value?.enabledCount ?? 0;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(ShiruTokens.space4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              installed == 0
-                  ? Icons.extension_off_outlined
-                  : Icons.manage_search_rounded,
-              size: 32,
-              color: ShiruTokens.grayVeryDim,
-            ),
-            const SizedBox(height: ShiruTokens.space2),
-            Text(
-              loading
-                  ? 'Finding releases…'
-                  : installed == 0
-                  ? 'Install and enable source extensions in Settings.'
-                  : hasErrors
-                  ? 'No source returned a release this time.'
-                  : 'No matching releases found.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium
-                  ?.copyWith(color: ShiruTokens.textLight),
-            ),
-            if (!loading) ...[
-              const SizedBox(height: ShiruTokens.space2),
-              TextButton(
-                onPressed: onManual,
-                child: const Text('Enter a link manually'),
+    return SingleChildScrollView(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(ShiruTokens.space4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                installed == 0
+                    ? Icons.extension_off_outlined
+                    : Icons.manage_search_rounded,
+                size: 32,
+                color: ShiruTokens.grayVeryDim,
               ),
+              const SizedBox(height: ShiruTokens.space2),
+              Text(
+                loading
+                    ? 'Finding releases…'
+                    : installed == 0
+                    ? 'Install and enable source extensions in Settings.'
+                    : hasErrors
+                    ? 'No source returned a release this time.'
+                    : 'No matching releases found.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium
+                    ?.copyWith(color: ShiruTokens.textLight),
+              ),
+              if (!loading) ...[
+                const SizedBox(height: ShiruTokens.space2),
+                TextButton(
+                  onPressed: onManual,
+                  child: const Text('Enter a link manually'),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -1444,6 +1600,11 @@ int _initialEpisode(Media media) {
   final count = media.maxEpisode ?? 1;
   final next = (media.listEntry?.progress ?? 0) + 1;
   return next.clamp(1, count);
+}
+
+int _requestedEpisode(Media media, int? requested) {
+  final count = media.maxEpisode ?? 1;
+  return (requested ?? _initialEpisode(media)).clamp(1, count);
 }
 
 String _format(MediaFormat format) => switch (format) {

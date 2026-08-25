@@ -1,8 +1,11 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../domain/models/torrent.dart';
 import '../application/playback/request.dart';
+import '../domain/models/catalog.dart';
+import '../domain/models/media.dart';
+import '../domain/models/torrent.dart';
 import '../features/downloads/downloads_page.dart';
 import '../features/home/home_page.dart';
 import '../features/player/player_page.dart';
@@ -32,8 +35,19 @@ final routerProvider = Provider<GoRouter>((ref) {
             routes: [
               GoRoute(
                 path: '/search',
-                pageBuilder: (context, state) =>
-                    const NoTransitionPage(child: SearchPage()),
+                pageBuilder: (context, state) => NoTransitionPage(
+                  child: SearchPage(
+                    key: ValueKey('search-${state.uri.query}'),
+                    initialGenre: state.uri.queryParameters['genre'],
+                    initialSort: _parseSort(state.uri.queryParameters['sort']),
+                    initialSeason: _parseSeason(
+                      state.uri.queryParameters['season'],
+                    ),
+                    initialYear: int.tryParse(
+                      state.uri.queryParameters['year'] ?? '',
+                    ),
+                  ),
+                ),
               ),
             ],
           ),
@@ -79,3 +93,20 @@ final routerProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+MediaSort? _parseSort(String? value) => switch (value) {
+  'trending' => MediaSort.trending,
+  'popularity' => MediaSort.popularity,
+  'score' => MediaSort.score,
+  'title' => MediaSort.title,
+  'startDate' => MediaSort.startDate,
+  _ => null,
+};
+
+MediaSeason? _parseSeason(String? value) => switch (value) {
+  'winter' => MediaSeason.winter,
+  'spring' => MediaSeason.spring,
+  'summer' => MediaSeason.summer,
+  'fall' => MediaSeason.fall,
+  _ => null,
+};

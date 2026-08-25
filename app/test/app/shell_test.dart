@@ -66,8 +66,13 @@ void main() {
           .width,
       ShiruTokens.sidebarWidth,
     );
+    final pageCenter = tester.getCenter(find.text('page:Home'));
 
     await tester.tap(find.byKey(const ValueKey('desktop-menu-toggle')));
+    await tester.pump(const Duration(milliseconds: 80));
+
+    // Expanding the overlay rail must not repeatedly re-layout the page.
+    expect(tester.getCenter(find.text('page:Home')), pageCenter);
     await tester.pumpAndSettle();
 
     for (final d in AppShell.destinations) {

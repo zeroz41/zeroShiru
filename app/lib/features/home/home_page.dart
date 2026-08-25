@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/theme/tokens.dart';
 import '../../app/widgets/empty_state.dart';
@@ -17,12 +18,15 @@ class HomePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final feed = ref.watch(homeFeedProvider);
+    final personalized = ref.watch(personalizedHomeFeedProvider).value;
     return feed.when(
       loading: () => const _HomeLoading(),
       error: (error, stack) =>
           _HomeFailure(onRetry: () => ref.invalidate(homeFeedProvider)),
       data: (data) {
-        if (data.trending.isEmpty && data.popular.isEmpty) {
+        if (data.trending.isEmpty &&
+            data.newReleases.isEmpty &&
+            data.popular.isEmpty) {
           return const EmptyState(
             icon: Icons.movie_filter_outlined,
             message: 'Nothing is airing here yet',
@@ -46,17 +50,65 @@ class HomePage extends ConsumerWidget {
                 ShiruTokens.space7,
               ),
               sliver: SliverList.list(
-                children: [
+                children: _withSectionSpacing([
+                  if (personalized?.continueWatching.isNotEmpty ?? false)
+                    _MediaRail(
+                      title: 'Continue watching',
+                      media: personalized!.continueWatching,
+                    ),
+                  if (personalized?.recommendations.isNotEmpty ?? false)
+                    _MediaRail(
+                      title: personalized!.favoriteGenres.isEmpty
+                          ? 'For you'
+                          : 'For you · ${personalized.favoriteGenres.join(' & ')}',
+                      media: personalized.recommendations,
+                      onTitleTap: personalized.favoriteGenres.isEmpty
+                          ? null
+                          : () => _openSearch(
+                              context,
+                              genre: personalized.favoriteGenres.first,
+                              sort: 'score',
+                            ),
+                    ),
                   if (data.trending.isNotEmpty)
                     _MediaRail(
                       title: 'Trending this season',
                       media: data.trending,
+                      onTitleTap: () => _openSearch(
+                        context,
+                        sort: 'trending',
+                        season: _seasonName(DateTime.now()),
+                        year: DateTime.now().year,
+                      ),
                     ),
-                  if (data.trending.isNotEmpty && data.popular.isNotEmpty)
-                    const SizedBox(height: ShiruTokens.space7),
+                  if (data.newReleases.isNotEmpty)
+                    _MediaRail(
+                      title: 'New & noteworthy',
+                      media: data.newReleases,
+                      onTitleTap: () => _openSearch(
+                        context,
+                        sort: 'popularity',
+                        year: DateTime.now().year,
+                      ),
+                    ),
+                  for (final section in data.genreSections)
+                    _MediaRail(
+                      title: '${section.genre} picks',
+                      media: section.media,
+                      onTitleTap: () => _openSearch(
+                        context,
+                        genre: section.genre,
+                        sort: 'popularity',
+                      ),
+                    ),
                   if (data.popular.isNotEmpty)
-                    _MediaRail(title: 'All-time popular', media: data.popular),
-                ],
+                    _MediaRail(
+                      title: 'All-time popular',
+                      media: data.popular,
+                      onTitleTap: () =>
+                          _openSearch(context, sort: 'popularity'),
+                    ),
+                ]),
               ),
             ),
           ],
@@ -67,15 +119,17 @@ class HomePage extends ConsumerWidget {
 }
 
 class _MediaRail extends StatelessWidget {
-  const _MediaRail({required this.title, required this.media});
+  const _MediaRail({required this.title, required this.media, this.onTitleTap});
 
   final String title;
   final List<Media> media;
+  final VoidCallback? onTitleTap;
 
   @override
   Widget build(BuildContext context) {
     return TitledRail(
       title: title,
+      onTitleTap: onTitleTap,
       children: [
         for (final item in media)
           MediaPoster(
@@ -87,6 +141,40 @@ class _MediaRail extends StatelessWidget {
     );
   }
 }
+
+List<Widget> _withSectionSpacing(List<Widget> sections) => [
+  for (var index = 0; index < sections.length; index++) ...[
+    if (index > 0) const SizedBox(height: ShiruTokens.space7),
+    sections[index],
+  ],
+];
+
+void _openSearch(
+  BuildContext context, {
+  String? genre,
+  String? sort,
+  String? season,
+  int? year,
+}) {
+  context.go(
+    Uri(
+      path: '/search',
+      queryParameters: {
+        'genre': ?genre,
+        'sort': ?sort,
+        'season': ?season,
+        if (year != null) 'year': '$year',
+      },
+    ).toString(),
+  );
+}
+
+String _seasonName(DateTime date) => switch (date.month) {
+  <= 3 => 'winter',
+  <= 6 => 'spring',
+  <= 9 => 'summer',
+  _ => 'fall',
+};
 
 class _HomeLoading extends StatelessWidget {
   const _HomeLoading();

@@ -38,7 +38,18 @@ const _genres = [
 ];
 
 class SearchPage extends ConsumerStatefulWidget {
-  const SearchPage({super.key});
+  const SearchPage({
+    super.key,
+    this.initialGenre,
+    this.initialSort,
+    this.initialSeason,
+    this.initialYear,
+  });
+
+  final String? initialGenre;
+  final MediaSort? initialSort;
+  final MediaSeason? initialSeason;
+  final int? initialYear;
 
   @override
   ConsumerState<SearchPage> createState() => _SearchPageState();
@@ -49,19 +60,27 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   final _scroll = ScrollController();
   final _items = <Media>[];
 
-  DiscoveryFilters _filters = const DiscoveryFilters();
+  late DiscoveryFilters _filters;
   _GridDensity _density = _GridDensity.compact;
   Timer? _searchDebounce;
   int _generation = 0;
   int _nextPage = 1;
   bool _hasNextPage = true;
   bool _loading = false;
+  bool _refreshing = false;
+  bool _failedRefresh = false;
   bool _filtersOpen = false;
   Object? _error;
 
   @override
   void initState() {
     super.initState();
+    _filters = DiscoveryFilters(
+      sort: widget.initialSort ?? MediaSort.trending,
+      season: widget.initialSeason,
+      year: widget.initialYear,
+      genres: widget.initialGenre == null ? const {} : {widget.initialGenre!},
+    );
     _scroll.addListener(_loadNearEnd);
     WidgetsBinding.instance.addPostFrameCallback((_) => _load(reset: true));
   }
@@ -100,10 +119,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final pageNumber = reset ? 1 : _nextPage;
     setState(() {
       if (reset) {
-        _items.clear();
         _nextPage = 1;
         _hasNextPage = true;
         _error = null;
+        _failedRefresh = false;
+        _refreshing = _items.isNotEmpty;
       }
       _loading = true;
     });
@@ -114,20 +134,37 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           .browse(_filters.toQuery(search: _search.text, page: pageNumber));
       if (!mounted || requestGeneration != _generation) return;
       setState(() {
+        if (reset) _items.clear();
         final known = {for (final media in _items) media.id};
         _items.addAll(page.items.where((media) => known.add(media.id)));
         _hasNextPage = page.hasNextPage;
         _nextPage = pageNumber + 1;
         _error = null;
       });
+      if (reset && _scroll.hasClients) {
+        _scroll.jumpTo(_scroll.position.minScrollExtent);
+      }
     } catch (error) {
       if (!mounted || requestGeneration != _generation) return;
-      setState(() => _error = error);
+      setState(() {
+        _error = error;
+        _failedRefresh = reset && _items.isNotEmpty;
+      });
     } finally {
       if (mounted && requestGeneration == _generation) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
       }
     }
+  }
+
+  void _clearSearch() {
+    _searchDebounce?.cancel();
+    _search.clear();
+    setState(() {});
+    _load(reset: true);
   }
 
   void _updateFilters(DiscoveryFilters next) {
@@ -194,11 +231,33 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       );
     }
     if (_items.isEmpty) {
-      return const EmptyState(
+      final query = _search.text.trim();
+      return EmptyState(
         key: ValueKey('empty'),
         icon: Icons.search_off_rounded,
-        message: 'Nothing matches those filters',
-        detail: 'Remove a filter or try another title.',
+        message: query.isEmpty
+            ? 'Nothing matches those filters'
+            : 'No results for “$query”',
+        detail: 'Try a broader title or remove one of the active filters.',
+        action: Wrap(
+          spacing: ShiruTokens.space2,
+          runSpacing: ShiruTokens.space2,
+          alignment: WrapAlignment.center,
+          children: [
+            if (query.isNotEmpty)
+              OutlinedButton.icon(
+                onPressed: _clearSearch,
+                icon: const Icon(Icons.close_rounded),
+                label: const Text('Clear title'),
+              ),
+            if (!_filters.isDefault)
+              FilledButton.tonalIcon(
+                onPressed: _clearFilters,
+                icon: const Icon(Icons.filter_alt_off_rounded),
+                label: const Text('Reset filters'),
+              ),
+          ],
+        ),
       );
     }
 
@@ -217,7 +276,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             crossAxisSpacing: ShiruTokens.space3,
             mainAxisSpacing: ShiruTokens.space4,
           ),
-          itemCount: _items.length + (_loading ? 1 : 0),
+          itemCount: _items.length + (_loading && !_refreshing ? 1 : 0),
           itemBuilder: (context, index) {
             if (index == _items.length) {
               return const PosterSkeleton(width: double.infinity);
@@ -236,12 +295,24 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             );
           },
         ),
+        if (_refreshing)
+          const Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            child: LinearProgressIndicator(minHeight: 2),
+          ),
         if (_error != null && !_loading)
           Positioned(
             left: ShiruTokens.space5,
             right: ShiruTokens.space5,
             bottom: ShiruTokens.space4,
-            child: _PageLoadFailure(onRetry: _load),
+            child: _PageLoadFailure(
+              message: _failedRefresh
+                  ? 'Results could not be refreshed.'
+                  : 'More results could not be loaded.',
+              onRetry: _failedRefresh ? () => _load(reset: true) : _load,
+            ),
           ),
       ],
     );
@@ -323,6 +394,13 @@ class _SearchToolbar extends StatelessWidget {
                   onDensityChanged: onDensityChanged,
                 ),
               ),
+              if (!filtersOpen) ...[
+                const SizedBox(height: ShiruTokens.space3),
+                _DiscoverPresets(
+                  filters: filters,
+                  onSelected: onFiltersChanged,
+                ),
+              ],
               AnimatedSize(
                 duration: reduceMotion
                     ? Duration.zero
@@ -359,6 +437,67 @@ class _SearchToolbar extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _DiscoverPresets extends StatelessWidget {
+  const _DiscoverPresets({required this.filters, required this.onSelected});
+
+  final DiscoveryFilters filters;
+  final ValueChanged<DiscoveryFilters> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final currentSeason = switch (now.month) {
+      <= 3 => MediaSeason.winter,
+      <= 6 => MediaSeason.spring,
+      <= 9 => MediaSeason.summer,
+      _ => MediaSeason.fall,
+    };
+    final presets = <(String, IconData, DiscoveryFilters)>[
+      (
+        'Trending',
+        Icons.local_fire_department_rounded,
+        const DiscoveryFilters(),
+      ),
+      (
+        'This season',
+        Icons.calendar_view_month_rounded,
+        DiscoveryFilters(season: currentSeason, year: now.year),
+      ),
+      (
+        'Top new',
+        Icons.new_releases_outlined,
+        DiscoveryFilters(sort: MediaSort.popularity, year: now.year),
+      ),
+      (
+        'Popular',
+        Icons.groups_rounded,
+        const DiscoveryFilters(sort: MediaSort.popularity),
+      ),
+      (
+        'Top rated',
+        Icons.star_rounded,
+        const DiscoveryFilters(sort: MediaSort.score),
+      ),
+    ];
+    return SizedBox(
+      height: 34,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: presets.length,
+        separatorBuilder: (_, _) => const SizedBox(width: ShiruTokens.space2),
+        itemBuilder: (context, index) {
+          final preset = presets[index];
+          return ActionChip(
+            avatar: Icon(preset.$2, size: 16),
+            label: Text(preset.$1),
+            onPressed: () => onSelected(preset.$3),
+          );
+        },
       ),
     );
   }
@@ -988,8 +1127,9 @@ class _SearchFailure extends StatelessWidget {
 }
 
 class _PageLoadFailure extends StatelessWidget {
-  const _PageLoadFailure({required this.onRetry});
+  const _PageLoadFailure({required this.message, required this.onRetry});
 
+  final String message;
   final VoidCallback onRetry;
 
   @override
@@ -1005,7 +1145,7 @@ class _PageLoadFailure extends StatelessWidget {
           children: [
             const Icon(Icons.cloud_off_rounded, size: 18),
             const SizedBox(width: ShiruTokens.space2),
-            const Expanded(child: Text('More results could not be loaded.')),
+            Expanded(child: Text(message)),
             TextButton(onPressed: onRetry, child: const Text('Retry')),
           ],
         ),

@@ -25,6 +25,7 @@ class MediaPoster extends StatelessWidget {
       image: cover == null ? null : CachedNetworkImageProvider(cover),
       bloomColor: parseMediaColor(media.coverColor),
       airing: media.status == MediaStatus.releasing,
+      progress: _progress(media),
       metadata: _metadata(media),
       width: width,
       onTap: onTap,
@@ -39,7 +40,17 @@ List<PosterCardMetadata> _metadata(Media media) {
       _formatLabel(media.format!),
   ].join(' · ');
   return [
-    if (identity.isNotEmpty) PosterCardMetadata(identity),
+    if (media.listEntry case final entry?)
+      if (entry.progress > 0)
+        PosterCardMetadata(
+          media.maxEpisode == null
+              ? 'Episode ${entry.progress}'
+              : 'Ep ${entry.progress} of ${media.maxEpisode}',
+          icon: Icons.play_circle_outline_rounded,
+          color: ShiruTokens.accentVeryLight,
+        ),
+    if (media.listEntry?.progress == null || media.listEntry!.progress == 0)
+      if (identity.isNotEmpty) PosterCardMetadata(identity),
     if (media.averageScore != null)
       PosterCardMetadata(
         '${media.averageScore}%',
@@ -47,6 +58,15 @@ List<PosterCardMetadata> _metadata(Media media) {
         color: ShiruTokens.warning,
       ),
   ];
+}
+
+double? _progress(Media media) {
+  final watched = media.listEntry?.progress;
+  final total = media.maxEpisode;
+  if (watched == null || watched <= 0 || total == null || total <= 0) {
+    return null;
+  }
+  return (watched / total).clamp(0.0, 1.0);
 }
 
 String _formatLabel(MediaFormat format) => switch (format) {

@@ -40,12 +40,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   SubtitleCue? _primaryCue;
   SubtitleCue? _secondaryCue;
   PlayerFile? _source;
+  PlaybackLaunch? _launch;
   Object? _resolveError;
   String? _resolveStatus;
   bool _resolving = false;
   int _resolveGeneration = 0;
   BoxFit _fit = BoxFit.contain;
   double _lastAudibleVolume = 1;
+  bool _exitHandled = false;
 
   MediaEngine get _engine => _backend.engine;
 
@@ -53,6 +55,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   void initState() {
     super.initState();
     _source = widget.initialSource;
+    _launch = widget.initialLaunch;
     _backend = ref.read(playbackBackendProvider);
     _surface = _backend.buildSurface(
       key: const ValueKey('playback-surface'),
@@ -93,6 +96,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   Future<void> _resolveLaunch(PlaybackLaunch launch) async {
     final generation = ++_resolveGeneration;
     setState(() {
+      _launch = launch;
       _resolving = true;
       _resolveError = null;
       _resolveStatus = 'Connecting to ${_serviceTitle(launch.service)}…';
@@ -175,7 +179,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Future<void> _retry() async {
-    final launch = widget.initialLaunch;
+    final launch = _launch;
     if (launch == null) {
       final source = _source;
       if (source != null) await _open(source);
@@ -219,12 +223,53 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }());
   }
 
-  void _leave() {
+  Future<void> _pauseForExit() async {
+    if (_exitHandled) return;
+    _exitHandled = true;
+    if (_latest.phase == PlaybackPhase.playing ||
+        _latest.phase == PlaybackPhase.buffering) {
+      try {
+        await _engine.pause();
+      } on PlaybackFailure {
+        // Leaving the player must not be blocked by a failed pause command.
+      }
+    }
+  }
+
+  Future<void> _leave() async {
+    await _pauseForExit();
+    if (!mounted) return;
     if (context.canPop()) {
-      context.pop();
+      context.pop(_launch?.episode);
     } else {
       context.go('/home');
     }
+  }
+
+  Future<void> _switchEpisode(int direction) async {
+    final launch = _launch;
+    if (launch == null || _resolving) return;
+    final target = launch.episode + direction;
+    final maximum = launch.media.maxEpisode;
+    if (target < 1 ||
+        (direction > 0 && maximum == null) ||
+        (maximum != null && target > maximum)) {
+      return;
+    }
+    try {
+      await _engine.pause();
+    } on PlaybackFailure {
+      // Resolution below will replace the current source either way.
+    }
+    if (!mounted) return;
+    await _resolveLaunch(
+      PlaybackLaunch(
+        media: launch.media,
+        episode: target,
+        magnet: launch.magnet,
+        service: launch.service,
+      ),
+    );
   }
 
   Future<void> _togglePlayback() => switch (_latest.phase) {
@@ -296,6 +341,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _run(() => _engine.setSpeed(1));
     } else if (key == LogicalKeyboardKey.keyW) {
       _toggleFit();
+    } else if (key == LogicalKeyboardKey.keyP) {
+      unawaited(_switchEpisode(-1));
+    } else if (key == LogicalKeyboardKey.keyN) {
+      unawaited(_switchEpisode(1));
+    } else if (key == LogicalKeyboardKey.escape) {
+      unawaited(_leave());
     } else {
       return KeyEventResult.ignored;
     }
@@ -310,61 +361,76 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Focus(
-        autofocus: true,
-        onKeyEvent: _onKeyEvent,
-        child: StreamBuilder<PlaybackSnapshot>(
-          stream: _engine.state,
-          initialData: _idleSnapshot,
-          builder: (context, state) {
-            final snapshot = state.data ?? _idleSnapshot;
-            _latest = snapshot;
-            return _PlayerStage(
-              snapshot: snapshot,
-              source: _source,
-              launch: widget.initialLaunch,
-              resolving: _resolving,
-              resolveStatus: _resolveStatus,
-              resolveError: _resolveError,
-              surface: _fit == BoxFit.contain
-                  ? _surface
-                  : _backend.buildSurface(
-                      key: const ValueKey('playback-surface'),
-                      fit: _fit,
-                    ),
-              fit: _fit,
-              primaryCue: _primaryCue,
-              secondaryCue: _secondaryCue,
-              onBack: _leave,
-              onRetry: _source == null && widget.initialLaunch == null
-                  ? null
-                  : () => unawaited(_retry()),
-              onTogglePlayback: () => _run(_togglePlayback),
-              onSeek: (position) => _run(() => _engine.seek(position)),
-              onVolume: (volume) => _run(() => _engine.setVolume(volume)),
-              onToggleMute: () => _run(_toggleMute),
-              onSpeed: (speed) => _run(() => _engine.setSpeed(speed)),
-              onAudio: (track) => _run(() => _engine.selectAudio(track)),
-              onSubtitle: (track) => _run(() => _engine.selectSubtitle(track)),
-              onSecondarySubtitle: (track) =>
-                  _run(() => _engine.selectSubtitle(track, secondary: true)),
-              onSubtitleRendering: (mode) =>
-                  _run(() => _engine.setSubtitleRendering(mode)),
-              onSubtitleDelay: (delay, secondary) => _run(
-                () => _engine.setSubtitleDelay(delay, secondary: secondary),
-              ),
-              onAddSubtitle: (request) => _run(
-                () => _engine.addSubtitle(
-                  request.source,
-                  title: request.title,
-                  language: request.language,
+    return PopScope<Object?>(
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) unawaited(_pauseForExit());
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Focus(
+          autofocus: true,
+          onKeyEvent: _onKeyEvent,
+          child: StreamBuilder<PlaybackSnapshot>(
+            stream: _engine.state,
+            initialData: _idleSnapshot,
+            builder: (context, state) {
+              final snapshot = state.data ?? _idleSnapshot;
+              _latest = snapshot;
+              return _PlayerStage(
+                snapshot: snapshot,
+                source: _source,
+                launch: _launch,
+                resolving: _resolving,
+                resolveStatus: _resolveStatus,
+                resolveError: _resolveError,
+                surface: _fit == BoxFit.contain
+                    ? _surface
+                    : _backend.buildSurface(
+                        key: const ValueKey('playback-surface'),
+                        fit: _fit,
+                      ),
+                fit: _fit,
+                primaryCue: _primaryCue,
+                secondaryCue: _secondaryCue,
+                onBack: () => unawaited(_leave()),
+                onRetry: _source == null && _launch == null
+                    ? null
+                    : () => unawaited(_retry()),
+                onTogglePlayback: () => _run(_togglePlayback),
+                onPreviousEpisode: (_launch?.episode ?? 1) > 1
+                    ? () => unawaited(_switchEpisode(-1))
+                    : null,
+                onNextEpisode:
+                    _launch != null &&
+                        _launch!.media.maxEpisode != null &&
+                        _launch!.episode < _launch!.media.maxEpisode!
+                    ? () => unawaited(_switchEpisode(1))
+                    : null,
+                onSeek: (position) => _run(() => _engine.seek(position)),
+                onVolume: (volume) => _run(() => _engine.setVolume(volume)),
+                onToggleMute: () => _run(_toggleMute),
+                onSpeed: (speed) => _run(() => _engine.setSpeed(speed)),
+                onAudio: (track) => _run(() => _engine.selectAudio(track)),
+                onSubtitle: (track) =>
+                    _run(() => _engine.selectSubtitle(track)),
+                onSecondarySubtitle: (track) =>
+                    _run(() => _engine.selectSubtitle(track, secondary: true)),
+                onSubtitleRendering: (mode) =>
+                    _run(() => _engine.setSubtitleRendering(mode)),
+                onSubtitleDelay: (delay, secondary) => _run(
+                  () => _engine.setSubtitleDelay(delay, secondary: secondary),
                 ),
-              ),
-              onToggleFit: _toggleFit,
-            );
-          },
+                onAddSubtitle: (request) => _run(
+                  () => _engine.addSubtitle(
+                    request.source,
+                    title: request.title,
+                    language: request.language,
+                  ),
+                ),
+                onToggleFit: _toggleFit,
+              );
+            },
+          ),
         ),
       ),
     );
@@ -373,6 +439,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   @override
   void dispose() {
     _resolveGeneration++;
+    unawaited(_pauseForExit());
     unawaited(_primaryCueSubscription.cancel());
     unawaited(_secondaryCueSubscription.cancel());
     super.dispose();
@@ -394,6 +461,8 @@ class _PlayerStage extends StatelessWidget {
     required this.onBack,
     required this.onRetry,
     required this.onTogglePlayback,
+    required this.onPreviousEpisode,
+    required this.onNextEpisode,
     required this.onSeek,
     required this.onVolume,
     required this.onToggleMute,
@@ -420,6 +489,8 @@ class _PlayerStage extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback? onRetry;
   final VoidCallback onTogglePlayback;
+  final VoidCallback? onPreviousEpisode;
+  final VoidCallback? onNextEpisode;
   final ValueChanged<Duration> onSeek;
   final ValueChanged<double> onVolume;
   final VoidCallback onToggleMute;
@@ -448,7 +519,18 @@ class _PlayerStage extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          surface,
+          GestureDetector(
+            key: const ValueKey('player-surface-interaction'),
+            behavior: HitTestBehavior.opaque,
+            onTap:
+                source != null &&
+                    !artworkLoading &&
+                    resolveError == null &&
+                    snapshot.phase != PlaybackPhase.failed
+                ? onTogglePlayback
+                : null,
+            child: surface,
+          ),
           if (artworkLoading)
             _PlayerLoading(
               launch: launch!,
@@ -475,36 +557,170 @@ class _PlayerStage extends StatelessWidget {
               primary: primaryCue,
               secondary: secondaryCue,
             ),
-          _TopChrome(
-            title: launch?.media.title.display ?? source?.name,
-            subtitle: launch == null ? null : 'Episode ${launch!.episode}',
-            provider: launch == null ? null : _serviceTitle(launch!.service),
-            onBack: onBack,
+          _PlayerChrome(
+            autoHide:
+                source != null &&
+                !artworkLoading &&
+                resolveError == null &&
+                snapshot.phase != PlaybackPhase.failed,
+            top: _TopChrome(
+              title: launch?.media.title.display ?? source?.name,
+              subtitle: launch == null ? null : 'Episode ${launch!.episode}',
+              provider: launch == null ? null : _serviceTitle(launch!.service),
+              backToEpisodes: launch != null,
+              onBack: onBack,
+            ),
+            bottom:
+                source != null &&
+                    !artworkLoading &&
+                    resolveError == null &&
+                    snapshot.phase != PlaybackPhase.failed
+                ? _PlayerControls(
+                    snapshot: snapshot,
+                    fit: fit,
+                    onTogglePlayback: onTogglePlayback,
+                    onPreviousEpisode: onPreviousEpisode,
+                    onNextEpisode: onNextEpisode,
+                    onSeek: onSeek,
+                    onVolume: onVolume,
+                    onToggleMute: onToggleMute,
+                    onSpeed: onSpeed,
+                    onAudio: onAudio,
+                    onSubtitle: onSubtitle,
+                    onSecondarySubtitle: onSecondarySubtitle,
+                    onSubtitleRendering: onSubtitleRendering,
+                    onSubtitleDelay: onSubtitleDelay,
+                    onAddSubtitle: onAddSubtitle,
+                    onToggleFit: onToggleFit,
+                  )
+                : null,
           ),
-          if (source != null &&
-              !artworkLoading &&
-              resolveError == null &&
-              snapshot.phase != PlaybackPhase.failed)
+        ],
+      ),
+    );
+  }
+}
+
+class _PlayerChrome extends StatefulWidget {
+  const _PlayerChrome({
+    required this.autoHide,
+    required this.top,
+    required this.bottom,
+  });
+
+  final bool autoHide;
+  final Widget top;
+  final Widget? bottom;
+
+  @override
+  State<_PlayerChrome> createState() => _PlayerChromeState();
+}
+
+class _PlayerChromeState extends State<_PlayerChrome> {
+  static const _idleDelay = Duration(milliseconds: 2600);
+
+  Timer? _idleTimer;
+  bool _visible = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scheduleHide());
+  }
+
+  @override
+  void didUpdateWidget(_PlayerChrome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.autoHide != widget.autoHide) {
+      if (widget.autoHide) {
+        _reveal();
+      } else {
+        _idleTimer?.cancel();
+        if (!_visible) setState(() => _visible = true);
+      }
+    }
+  }
+
+  void _scheduleHide() {
+    _idleTimer?.cancel();
+    if (!mounted || !widget.autoHide) return;
+    _idleTimer = Timer(_idleDelay, () {
+      if (mounted && widget.autoHide) setState(() => _visible = false);
+    });
+  }
+
+  void _reveal() {
+    if (!_visible && mounted) setState(() => _visible = true);
+    _scheduleHide();
+  }
+
+  void _hideNow() {
+    _idleTimer?.cancel();
+    if (mounted && widget.autoHide && _visible) {
+      setState(() => _visible = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _idleTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : ShiruTokens.motion;
+    Widget animatedChrome({required Widget child, required Offset hidden}) {
+      return IgnorePointer(
+        ignoring: !_visible,
+        child: AnimatedSlide(
+          offset: _visible ? Offset.zero : hidden,
+          duration: duration,
+          curve: ShiruTokens.easeSettle,
+          child: AnimatedOpacity(
+            key: ValueKey('player-chrome-${hidden.dy < 0 ? 'top' : 'bottom'}'),
+            opacity: _visible ? 1 : 0,
+            duration: duration,
+            curve: ShiruTokens.easeSettle,
+            child: child,
+          ),
+        ),
+      );
+    }
+
+    return MouseRegion(
+      opaque: false,
+      cursor: widget.autoHide && !_visible
+          ? SystemMouseCursors.none
+          : MouseCursor.defer,
+      onEnter: (_) => _reveal(),
+      onHover: (_) => _reveal(),
+      onExit: (_) => _hideNow(),
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _reveal(),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
             Align(
-              alignment: Alignment.bottomCenter,
-              child: _PlayerControls(
-                snapshot: snapshot,
-                fit: fit,
-                onTogglePlayback: onTogglePlayback,
-                onSeek: onSeek,
-                onVolume: onVolume,
-                onToggleMute: onToggleMute,
-                onSpeed: onSpeed,
-                onAudio: onAudio,
-                onSubtitle: onSubtitle,
-                onSecondarySubtitle: onSecondarySubtitle,
-                onSubtitleRendering: onSubtitleRendering,
-                onSubtitleDelay: onSubtitleDelay,
-                onAddSubtitle: onAddSubtitle,
-                onToggleFit: onToggleFit,
+              alignment: Alignment.topCenter,
+              child: animatedChrome(
+                hidden: const Offset(0, -0.18),
+                child: widget.top,
               ),
             ),
-        ],
+            if (widget.bottom case final bottom?)
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: animatedChrome(
+                  hidden: const Offset(0, 0.18),
+                  child: bottom,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -515,12 +731,14 @@ class _TopChrome extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.provider,
+    required this.backToEpisodes,
     required this.onBack,
   });
 
   final String? title;
   final String? subtitle;
   final String? provider;
+  final bool backToEpisodes;
   final VoidCallback onBack;
 
   @override
@@ -543,9 +761,13 @@ class _TopChrome extends StatelessWidget {
               children: [
                 const SizedBox(width: ShiruTokens.space3),
                 IconButton(
-                  tooltip: 'Back',
+                  tooltip: backToEpisodes ? 'Back to episodes' : 'Close player',
                   onPressed: onBack,
-                  icon: const Icon(Icons.arrow_back_rounded),
+                  icon: Icon(
+                    backToEpisodes
+                        ? Icons.arrow_back_rounded
+                        : Icons.close_rounded,
+                  ),
                 ),
                 if (title != null) ...[
                   const SizedBox(width: ShiruTokens.space2),
@@ -883,6 +1105,8 @@ class _PlayerControls extends StatelessWidget {
     required this.snapshot,
     required this.fit,
     required this.onTogglePlayback,
+    required this.onPreviousEpisode,
+    required this.onNextEpisode,
     required this.onSeek,
     required this.onVolume,
     required this.onToggleMute,
@@ -899,6 +1123,8 @@ class _PlayerControls extends StatelessWidget {
   final PlaybackSnapshot snapshot;
   final BoxFit fit;
   final VoidCallback onTogglePlayback;
+  final VoidCallback? onPreviousEpisode;
+  final VoidCallback? onNextEpisode;
   final ValueChanged<Duration> onSeek;
   final ValueChanged<double> onVolume;
   final VoidCallback onToggleMute;
@@ -950,6 +1176,12 @@ class _PlayerControls extends StatelessWidget {
                   final compact = constraints.maxWidth < 540;
                   return Row(
                     children: [
+                      if (onPreviousEpisode != null || onNextEpisode != null)
+                        IconButton(
+                          tooltip: 'Previous episode (P)',
+                          onPressed: onPreviousEpisode,
+                          icon: const Icon(Icons.skip_previous_rounded),
+                        ),
                       IconButton(
                         tooltip: _playing ? 'Pause' : 'Play',
                         onPressed: onTogglePlayback,
@@ -959,18 +1191,24 @@ class _PlayerControls extends StatelessWidget {
                               : Icons.play_arrow_rounded,
                         ),
                       ),
-                      IconButton(
-                        tooltip: snapshot.muted ? 'Unmute' : 'Mute',
-                        onPressed: onToggleMute,
-                        icon: Icon(
-                          snapshot.muted
-                              ? Icons.volume_off_rounded
-                              : snapshot.volume < 0.5
-                              ? Icons.volume_down_rounded
-                              : Icons.volume_up_rounded,
+                      if (onPreviousEpisode != null || onNextEpisode != null)
+                        IconButton(
+                          tooltip: 'Next episode (N)',
+                          onPressed: onNextEpisode,
+                          icon: const Icon(Icons.skip_next_rounded),
                         ),
-                      ),
-                      if (!compact)
+                      if (!compact) ...[
+                        IconButton(
+                          tooltip: snapshot.muted ? 'Unmute' : 'Mute',
+                          onPressed: onToggleMute,
+                          icon: Icon(
+                            snapshot.muted
+                                ? Icons.volume_off_rounded
+                                : snapshot.volume < 0.5
+                                ? Icons.volume_down_rounded
+                                : Icons.volume_up_rounded,
+                          ),
+                        ),
                         SizedBox(
                           width: 92,
                           child: Slider(
@@ -978,6 +1216,7 @@ class _PlayerControls extends StatelessWidget {
                             onChanged: onVolume,
                           ),
                         ),
+                      ],
                       const SizedBox(width: ShiruTokens.space2),
                       Text(
                         '${_formatDuration(snapshot.position)} / '
@@ -1006,7 +1245,8 @@ class _PlayerControls extends StatelessWidget {
                         onDelay: onSubtitleDelay,
                         onAddSubtitle: onAddSubtitle,
                       ),
-                      _SpeedMenu(speed: snapshot.speed, onSelected: onSpeed),
+                      if (!compact)
+                        _SpeedMenu(speed: snapshot.speed, onSelected: onSpeed),
                       IconButton(
                         tooltip: fit == BoxFit.contain
                             ? 'Fill viewport'
@@ -1209,13 +1449,9 @@ class _SubtitleButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return IconButton(
       tooltip: 'Subtitles',
-      onPressed: () => showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
-        backgroundColor: Colors.transparent,
-        barrierColor: const Color(0xB3000000),
-        builder: (context) => _SubtitlePanel(
+      onPressed: () => _showSubtitlePanel(
+        context,
+        panel: _SubtitlePanel(
           snapshot: snapshot,
           onPrimary: onPrimary,
           onSecondary: onSecondary,
@@ -1285,138 +1521,162 @@ class _SubtitlePanelState extends State<_SubtitlePanel> {
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 860, maxHeight: 690),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: ShiruTokens.surfaceShell,
-            border: Border.all(color: ShiruTokens.surfaceBorder),
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(ShiruTokens.radiusSurfaceTop),
-            ),
-            boxShadow: const [
-              BoxShadow(color: Color(0xD9000000), blurRadius: 36),
-            ],
-          ),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(ShiruTokens.space5),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.translate_rounded,
-                      color: ShiruTokens.accentVeryLight,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 820, maxHeight: 680),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: ShiruTokens.surfaceShell,
+          border: Border.all(color: ShiruTokens.surfaceBorder),
+          borderRadius: BorderRadius.circular(ShiruTokens.radiusSurfaceTop),
+          boxShadow: const [
+            BoxShadow(color: Color(0xD9000000), blurRadius: 36),
+          ],
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(ShiruTokens.space5),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.translate_rounded,
+                    color: ShiruTokens.accentVeryLight,
+                  ),
+                  const SizedBox(width: ShiruTokens.space2),
+                  Expanded(
+                    child: Text(
+                      'Subtitles & languages',
+                      style: Theme.of(context).textTheme.headlineMedium,
                     ),
-                    const SizedBox(width: ShiruTokens.space2),
-                    Expanded(
-                      child: Text(
-                        'Subtitles & languages',
-                        style: Theme.of(context).textTheme.headlineMedium,
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Close',
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: ShiruTokens.space4),
-                Text('Display', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: ShiruTokens.space2),
-                SegmentedButton<SubtitleRendering>(
-                  showSelectedIcon: false,
-                  segments: const [
-                    ButtonSegment(
-                      value: SubtitleRendering.standard,
-                      icon: Icon(Icons.closed_caption_rounded, size: 18),
-                      label: Text('Styled'),
-                    ),
-                    ButtonSegment(
-                      value: SubtitleRendering.learning,
-                      icon: Icon(Icons.touch_app_rounded, size: 18),
-                      label: Text('Learning'),
-                    ),
-                    ButtonSegment(
-                      value: SubtitleRendering.off,
-                      icon: Icon(Icons.visibility_off_rounded, size: 18),
-                      label: Text('Hidden'),
-                    ),
-                  ],
-                  selected: {_rendering},
-                  onSelectionChanged: (selection) {
-                    final mode = selection.single;
-                    setState(() => _rendering = mode);
-                    widget.onRendering(mode);
-                  },
-                ),
-                const SizedBox(height: ShiruTokens.space5),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 650;
-                    final primary = _TrackSection(
-                      title: 'Primary',
-                      tracks: widget.snapshot.subtitleTracks,
-                      selected: _primary,
-                      onSelected: _selectPrimary,
-                    );
-                    final secondary = _TrackSection(
-                      title: 'Secondary',
-                      subtitle: 'Optional dual-language line',
-                      tracks: widget.snapshot.subtitleTracks,
-                      selected: _secondary,
-                      onSelected: _selectSecondary,
-                    );
-                    if (compact) {
-                      return Column(
-                        children: [
-                          primary,
-                          const SizedBox(height: ShiruTokens.space4),
-                          secondary,
-                        ],
-                      );
-                    }
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: ShiruTokens.space4),
+              Text('Display', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: ShiruTokens.space2),
+              SegmentedButton<SubtitleRendering>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(
+                    value: SubtitleRendering.standard,
+                    icon: Icon(Icons.closed_caption_rounded, size: 18),
+                    label: Text('Styled'),
+                  ),
+                  ButtonSegment(
+                    value: SubtitleRendering.learning,
+                    icon: Icon(Icons.touch_app_rounded, size: 18),
+                    label: Text('Learning'),
+                  ),
+                  ButtonSegment(
+                    value: SubtitleRendering.off,
+                    icon: Icon(Icons.visibility_off_rounded, size: 18),
+                    label: Text('Hidden'),
+                  ),
+                ],
+                selected: {_rendering},
+                onSelectionChanged: (selection) {
+                  final mode = selection.single;
+                  setState(() => _rendering = mode);
+                  widget.onRendering(mode);
+                },
+              ),
+              const SizedBox(height: ShiruTokens.space5),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 650;
+                  final primary = _TrackSection(
+                    title: 'Primary',
+                    tracks: widget.snapshot.subtitleTracks,
+                    selected: _primary,
+                    onSelected: _selectPrimary,
+                  );
+                  final secondary = _TrackSection(
+                    title: 'Secondary',
+                    subtitle: 'Optional dual-language line',
+                    tracks: widget.snapshot.subtitleTracks,
+                    selected: _secondary,
+                    onSelected: _selectSecondary,
+                  );
+                  if (compact) {
+                    return Column(
                       children: [
-                        Expanded(child: primary),
-                        const SizedBox(width: ShiruTokens.space4),
-                        Expanded(child: secondary),
+                        primary,
+                        const SizedBox(height: ShiruTokens.space4),
+                        secondary,
                       ],
                     );
-                  },
-                ),
-                const SizedBox(height: ShiruTokens.space5),
-                _DelayRow(
-                  label: 'Primary timing',
-                  value: _primaryDelay,
-                  onChanged: (value) => _setDelay(value, secondary: false),
-                ),
-                _DelayRow(
-                  label: 'Secondary timing',
-                  value: _secondaryDelay,
-                  onChanged: (value) => _setDelay(value, secondary: true),
-                ),
-                const SizedBox(height: ShiruTokens.space3),
-                OutlinedButton.icon(
-                  onPressed: () async {
-                    final request = await _showExternalSubtitleDialog(context);
-                    if (request != null) widget.onAddSubtitle(request);
-                  },
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('Add sidecar subtitle'),
-                ),
-              ],
-            ),
+                  }
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: primary),
+                      const SizedBox(width: ShiruTokens.space4),
+                      Expanded(child: secondary),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: ShiruTokens.space5),
+              _DelayRow(
+                label: 'Primary timing',
+                value: _primaryDelay,
+                onChanged: (value) => _setDelay(value, secondary: false),
+              ),
+              _DelayRow(
+                label: 'Secondary timing',
+                value: _secondaryDelay,
+                onChanged: (value) => _setDelay(value, secondary: true),
+              ),
+              const SizedBox(height: ShiruTokens.space3),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final request = await _showExternalSubtitleDialog(context);
+                  if (request != null) widget.onAddSubtitle(request);
+                },
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('Add sidecar subtitle'),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
+}
+
+Future<void> _showSubtitlePanel(BuildContext context, {required Widget panel}) {
+  final reduceMotion = MediaQuery.disableAnimationsOf(context);
+  return showGeneralDialog<void>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Close subtitle settings',
+    barrierColor: const Color(0xB3000000),
+    transitionDuration: reduceMotion ? Duration.zero : ShiruTokens.motion,
+    pageBuilder: (context, animation, secondaryAnimation) => SafeArea(
+      minimum: const EdgeInsets.all(ShiruTokens.space4),
+      child: Center(child: panel),
+    ),
+    transitionBuilder: (context, animation, secondaryAnimation, child) {
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: ShiruTokens.easeSettle,
+        reverseCurve: ShiruTokens.easePress,
+      );
+      return FadeTransition(
+        opacity: curved,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.97, end: 1).animate(curved),
+          child: child,
+        ),
+      );
+    },
+  );
 }
 
 class _TrackSection extends StatelessWidget {

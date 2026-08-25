@@ -87,14 +87,26 @@ class _TitledRailState extends State<TitledRail> {
                       controller: _controller,
                       scrollDirection: Axis.horizontal,
                       physics: const ClampingScrollPhysics(),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          for (var i = 0; i < widget.children.length; i++) ...[
-                            if (i > 0) SizedBox(width: widget.itemSpacing),
-                            widget.children[i],
+                      child: Padding(
+                        // Poster cards rise on hover. Reserve that paint space
+                        // so the scroll viewport does not cut off their top
+                        // accent ring.
+                        padding: const EdgeInsets.only(
+                          top: ShiruTokens.cardHoverRise + 1,
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (
+                              var i = 0;
+                              i < widget.children.length;
+                              i++
+                            ) ...[
+                              if (i > 0) SizedBox(width: widget.itemSpacing),
+                              widget.children[i],
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -191,6 +203,16 @@ class _RailHeader extends StatelessWidget {
                       : ShiruTokens.highlight,
                 ),
               ),
+              if (onTap != null) ...[
+                const SizedBox(width: ShiruTokens.space1),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 20,
+                  color: hovered
+                      ? ShiruTokens.accentVeryLight
+                      : ShiruTokens.textMuted,
+                ),
+              ],
             ],
           ),
         );

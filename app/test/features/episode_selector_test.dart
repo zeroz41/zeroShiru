@@ -38,6 +38,14 @@ void main() {
       expect(find.byKey(const ValueKey('episode-1')), findsNothing);
       expect(find.byKey(const ValueKey('episode-6')), findsOneWidget);
 
+      await tester.tap(find.byKey(const ValueKey('episode-sort')));
+      await tester.pumpAndSettle();
+      expect(find.text('Oldest first'), findsOneWidget);
+      expect(find.text('Newest first'), findsOneWidget);
+      await tester.tap(find.text('Newest first'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('episode-80')), findsOneWidget);
+
       await tester.enterText(
         find.byKey(const ValueKey('episode-search')),
         '42',

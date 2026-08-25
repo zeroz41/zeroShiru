@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -62,6 +64,9 @@ class _FakeCatalog implements CatalogRepository {
     if (query.search?.trim() == 'Monster') {
       return MediaPage(items: [media(3, 'Monster')], hasNextPage: false);
     }
+    if (query.sort == MediaSort.popularity && query.year != null) {
+      return MediaPage(items: [media(4, 'New Show')], hasNextPage: false);
+    }
     if (query.sort == MediaSort.popularity) {
       return MediaPage(items: [media(2, 'Popular Show')], hasNextPage: false);
     }
@@ -70,6 +75,16 @@ class _FakeCatalog implements CatalogRepository {
 
   @override
   Future<Media?> mediaById(int id) async => null;
+}
+
+class _DeferredSearchCatalog extends _FakeCatalog {
+  final monster = Completer<MediaPage>();
+
+  @override
+  Future<MediaPage> browse(MediaBrowseQuery query) {
+    if (query.search?.trim() == 'Monster') return monster.future;
+    return super.browse(query);
+  }
 }
 
 Widget _app(Widget child, _FakeCatalog catalog) => ProviderScope(
@@ -90,9 +105,10 @@ void main() {
     expect(find.text('Seasonal Show'), findsWidgets);
     expect(find.text('84%'), findsWidgets);
     expect(find.text('Trending this season'), findsOneWidget);
-    expect(catalog.queries, hasLength(2));
+    expect(find.text('Browse by genre'), findsNothing);
+    expect(catalog.queries, hasLength(3));
 
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -600));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -1200));
     await tester.pump();
     expect(find.text('Popular Show'), findsOneWidget);
     expect(find.text('All-time popular'), findsOneWidget);
@@ -121,6 +137,37 @@ void main() {
     );
     expect(catalog.queries.last.search, 'Monster');
     expect(catalog.queries.last.page, 1);
+  });
+
+  testWidgets('Search preserves current results while a new query loads', (
+    tester,
+  ) async {
+    final catalog = _DeferredSearchCatalog();
+    await tester.pumpWidget(_app(const SearchPage(), catalog));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    await tester.enterText(find.byType(TextField), 'Monster');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pump();
+
+    expect(find.text('Seasonal Show'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+
+    catalog.monster.complete(
+      MediaPage(items: [media(3, 'Monster')], hasNextPage: false),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(find.text('Seasonal Show'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(MediaPoster),
+        matching: find.text('Monster'),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('Search applies populated discovery filters to the catalogue', (

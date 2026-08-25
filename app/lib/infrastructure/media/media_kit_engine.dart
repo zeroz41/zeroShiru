@@ -596,7 +596,10 @@ PlaybackSnapshot mapMediaKitState(
         if (!_automaticTrackIds.contains(track.id)) mapSubtitleTrack(track),
     ],
     selectedAudio: selectedKitTrackId(state.track.audio.id),
-    selectedPrimarySubtitle: selectedKitTrackId(state.track.subtitle.id),
+    selectedPrimarySubtitle: selectedKitSubtitleTrackId(
+      state.track.subtitle.id,
+      state.tracks.subtitle,
+    ),
     selectedSecondarySubtitle: selectedSecondary,
     subtitleRendering: subtitleRendering,
     primarySubtitleDelay: primarySubtitleDelay,
@@ -630,6 +633,23 @@ MediaTrack mapSubtitleTrack(kit.SubtitleTrack track) => MediaTrack(
 
 String? selectedKitTrackId(String id) =>
     _automaticTrackIds.contains(id) ? null : id;
+
+/// libmpv may report `auto` while visibly rendering the container's default
+/// subtitle. Surface that effective choice instead of presenting it as Off.
+String? selectedKitSubtitleTrackId(
+  String id,
+  Iterable<kit.SubtitleTrack> tracks,
+) {
+  if (id == 'no') return null;
+  if (id != 'auto') return id;
+  kit.SubtitleTrack? fallback;
+  for (final track in tracks) {
+    if (_automaticTrackIds.contains(track.id)) continue;
+    fallback ??= track;
+    if (track.isDefault == true) return track.id;
+  }
+  return fallback?.id;
+}
 
 String? normalizeTrackLanguage(String? raw) {
   final source = raw?.trim();

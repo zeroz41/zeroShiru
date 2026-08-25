@@ -57,6 +57,14 @@ final homeFeedProvider = FutureProvider<HomeFeed>((ref) {
   return loadHomeFeed(ref.watch(catalogRepositoryProvider));
 });
 
+final personalizedHomeFeedProvider = FutureProvider<PersonalizedHomeFeed>((
+  ref,
+) async {
+  final tracking = ref.watch(trackingRepositoryProvider);
+  final home = await ref.watch(homeFeedProvider.future);
+  return loadPersonalizedHomeFeed(tracking, home);
+});
+
 final trackingAccountsProvider = FutureProvider<List<TrackingAccount>>((ref) {
   return ref.watch(trackingRepositoryProvider).accounts();
 });

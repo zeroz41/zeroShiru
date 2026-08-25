@@ -9,11 +9,13 @@ class EmptyState extends StatelessWidget {
     this.icon = Icons.inbox_rounded,
     required this.message,
     this.detail,
+    this.action,
   });
 
   final IconData icon;
   final String message;
   final String? detail;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -51,6 +53,10 @@ class EmptyState extends StatelessWidget {
                   color: ShiruTokens.textMuted,
                 ),
               ),
+            ],
+            if (action != null) ...[
+              const SizedBox(height: ShiruTokens.space4),
+              action!,
             ],
           ],
         ),

@@ -100,7 +100,7 @@ class _EpisodeSelectorState extends State<EpisodeSelector> {
                   count: widget.episodeCount,
                   upNext: widget.selectedEpisode == widget.watchedThrough + 1,
                   ascending: _ascending,
-                  onReverse: () => setState(() => _ascending = !_ascending),
+                  onSort: (ascending) => setState(() => _ascending = ascending),
                 ),
                 const SizedBox(height: ShiruTokens.space3),
                 _EpisodeToolbar(
@@ -138,7 +138,7 @@ class _EpisodeSelectorState extends State<EpisodeSelector> {
     return Scrollbar(
       child: ListView.separated(
         key: const ValueKey('episode-list'),
-        padding: const EdgeInsets.only(right: ShiruTokens.space1),
+        padding: const EdgeInsets.fromLTRB(1, 1, ShiruTokens.space1, 1),
         itemCount: episodes.length,
         separatorBuilder: (_, _) => const SizedBox(height: ShiruTokens.space2),
         itemBuilder: (context, index) {
@@ -170,7 +170,7 @@ class _EpisodeHeader extends StatelessWidget {
     required this.count,
     required this.upNext,
     required this.ascending,
-    required this.onReverse,
+    required this.onSort,
   });
 
   final String label;
@@ -178,7 +178,7 @@ class _EpisodeHeader extends StatelessWidget {
   final int count;
   final bool upNext;
   final bool ascending;
-  final VoidCallback onReverse;
+  final ValueChanged<bool> onSort;
 
   @override
   Widget build(BuildContext context) {
@@ -210,12 +210,57 @@ class _EpisodeHeader extends StatelessWidget {
           ),
         ],
         const SizedBox(width: ShiruTokens.space1),
-        IconButton(
-          tooltip: ascending ? 'Newest first' : 'Oldest first',
-          onPressed: onReverse,
-          icon: Icon(
-            ascending ? Icons.south_rounded : Icons.north_rounded,
-            size: 19,
+        PopupMenuButton<bool>(
+          key: const ValueKey('episode-sort'),
+          tooltip: 'Sort episodes',
+          initialValue: ascending,
+          onSelected: onSort,
+          itemBuilder: (context) => const [
+            PopupMenuItem(
+              value: true,
+              child: ListTile(
+                dense: true,
+                leading: Icon(Icons.arrow_downward_rounded, size: 18),
+                title: Text('Oldest first'),
+              ),
+            ),
+            PopupMenuItem(
+              value: false,
+              child: ListTile(
+                dense: true,
+                leading: Icon(Icons.arrow_upward_rounded, size: 18),
+                title: Text('Newest first'),
+              ),
+            ),
+          ],
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: ShiruTokens.surfacePanel,
+              border: Border.all(color: ShiruTokens.surfaceBorder),
+              borderRadius: BorderRadius.circular(ShiruTokens.radiusPill),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: ShiruTokens.space2,
+                vertical: ShiruTokens.space1,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    ascending
+                        ? Icons.arrow_downward_rounded
+                        : Icons.arrow_upward_rounded,
+                    size: 15,
+                  ),
+                  const SizedBox(width: ShiruTokens.space1),
+                  Text(
+                    ascending ? 'Oldest' : 'Newest',
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ],
@@ -369,12 +414,6 @@ class _EpisodeRow extends StatelessWidget {
               color: selected
                   ? const Color(0xE6262E3A)
                   : ShiruTokens.surfacePanel,
-              border: Border.all(
-                color: selected
-                    ? ShiruTokens.accentLight
-                    : ShiruTokens.surfaceBorder,
-                width: selected ? 1.4 : 1,
-              ),
               borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
               boxShadow: selected
                   ? const [
@@ -385,6 +424,18 @@ class _EpisodeRow extends StatelessWidget {
                       ),
                     ]
                   : null,
+            ),
+            // Artwork fills the row, so paint the selection ring in front of
+            // it. A normal decoration border sits behind the child and loses
+            // its top edge.
+            foregroundDecoration: BoxDecoration(
+              border: Border.all(
+                color: selected
+                    ? ShiruTokens.accentLight
+                    : ShiruTokens.surfaceBorder,
+                width: selected ? 1.4 : 1,
+              ),
+              borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel - 1),

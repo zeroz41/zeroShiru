@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:zeroshiru/app/theme/theme.dart';
 import 'package:zeroshiru/application/playback/backend.dart';
 import 'package:zeroshiru/application/playback/providers.dart';
@@ -182,6 +184,186 @@ void main() {
     expect(find.byKey(const ValueKey('playback-surface')), findsOneWidget);
   });
 
+  testWidgets('clicking the video surface toggles playback', (tester) async {
+    final engine = _FakeEngine();
+    final backend = _FakeBackend(engine);
+    const source = PlayerFile(
+      name: 'Episode 03.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      _app(const PlayerPage(initialSource: source), backend),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('player-surface-interaction')));
+    await tester.pump();
+
+    expect(engine.calls.where((call) => call == 'pause'), hasLength(1));
+  });
+
+  testWidgets('closing the player pauses once and returns to its origin', (
+    tester,
+  ) async {
+    final engine = _FakeEngine();
+    final backend = _FakeBackend(engine);
+    const source = PlayerFile(
+      name: 'Episode 03.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    final router = GoRouter(
+      initialLocation: '/library',
+      routes: [
+        GoRoute(
+          path: '/library',
+          builder: (context, _) => Scaffold(
+            body: FilledButton(
+              onPressed: () => context.push('/player'),
+              child: const Text('Open player'),
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/player',
+          builder: (_, _) => const PlayerPage(initialSource: source),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [playbackBackendProvider.overrideWithValue(backend)],
+        child: MaterialApp.router(
+          theme: buildShiruTheme(),
+          routerConfig: router,
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open player'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byTooltip('Close player'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Close player'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Open player'), findsOneWidget);
+    expect(engine.calls.where((call) => call == 'pause'), hasLength(1));
+  });
+
+  testWidgets('episode back returns the active episode to its selector', (
+    tester,
+  ) async {
+    final engine = _FakeEngine();
+    final backend = _FakeBackend(engine);
+    final debrid = _ResolvingDebrid();
+    final probe = _ProbeTransport();
+    final repository = _SettingsRepository(
+      const Settings(debridService: DebridService.torbox),
+    );
+    final credentials = _Credentials()..value = 'torbox-secret';
+    const launch = PlaybackLaunch(
+      media: Media(
+        id: 42,
+        title: MediaTitle(userPreferred: 'Selector Return Show'),
+        episodes: 12,
+      ),
+      episode: 7,
+      magnet: '0123456789abcdef0123456789abcdef01234567',
+      service: DebridService.torbox,
+    );
+    int? returnedEpisode;
+    final router = GoRouter(
+      initialLocation: '/library',
+      routes: [
+        GoRoute(
+          path: '/library',
+          builder: (context, _) => Scaffold(
+            body: FilledButton(
+              onPressed: () async {
+                returnedEpisode = await context.push<int>(
+                  '/player',
+                  extra: launch,
+                );
+              },
+              child: const Text('Choose episode'),
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/player',
+          builder: (_, state) =>
+              PlayerPage(initialLaunch: state.extra! as PlaybackLaunch),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          playbackBackendProvider.overrideWithValue(backend),
+          playbackProbeTransportProvider.overrideWithValue(probe),
+          settingsRepositoryProvider.overrideWithValue(repository),
+          credentialStoreProvider.overrideWithValue(credentials),
+          debridClientsProvider.overrideWithValue({
+            DebridService.torbox: debrid,
+          }),
+        ],
+        child: MaterialApp.router(
+          theme: buildShiruTheme(),
+          routerConfig: router,
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Choose episode'));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byTooltip('Back to episodes'));
+    await tester.pumpAndSettle();
+
+    expect(returnedEpisode, 7);
+    expect(find.text('Choose episode'), findsOneWidget);
+  });
+
+  testWidgets('player chrome hides after inactivity and returns on movement', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1000, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final backend = _FakeBackend(_FakeEngine());
+    const source = PlayerFile(
+      name: 'Episode 03.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      _app(const PlayerPage(initialSource: source), backend),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    AnimatedOpacity bottomChrome() => tester.widget<AnimatedOpacity>(
+      find.byKey(const ValueKey('player-chrome-bottom')),
+    );
+
+    expect(bottomChrome().opacity, 1);
+    await tester.pump(const Duration(milliseconds: 2700));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(bottomChrome().opacity, 0);
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(500, 350));
+    await mouse.moveTo(const Offset(502, 350));
+    await tester.pump();
+    expect(bottomChrome().opacity, 1);
+    await mouse.removePointer();
+  });
+
   testWidgets('player exposes dual-language subtitle controls and timing', (
     tester,
   ) async {
@@ -244,6 +426,10 @@ void main() {
     await tester.tap(find.byTooltip('Later by 0.1 seconds').first);
     await tester.pump();
     expect(engine.calls, contains('delay:100:false'));
+
+    await tester.tapAt(const Offset(10, 400));
+    await tester.pumpAndSettle();
+    expect(find.text('Subtitles & languages'), findsNothing);
   });
 
   testWidgets('learning mode displays current primary and secondary cues', (
@@ -297,6 +483,10 @@ void main() {
   testWidgets(
     'TorBox launch resolves the requested episode before opening mpv',
     (tester) async {
+      tester.view.physicalSize = const Size(500, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
       final engine = _FakeEngine();
       final backend = _FakeBackend(engine);
       final debrid = _ResolvingDebrid();
@@ -345,8 +535,19 @@ void main() {
       expect(find.text('Clean Player Show'), findsOneWidget);
       expect(find.text('Episode 7'), findsOneWidget);
       expect(find.text('TorBox'), findsOneWidget);
+      expect(find.byTooltip('Back to episodes'), findsOneWidget);
+      expect(find.byTooltip('Previous episode (P)'), findsOneWidget);
+      expect(find.byTooltip('Next episode (N)'), findsOneWidget);
       expect(find.textContaining('torbox-secret'), findsNothing);
       expect(find.textContaining('signed-token'), findsNothing);
+
+      await tester.tap(find.byTooltip('Next episode (N)'));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(debrid.calls.last, ('torbox-secret', launch.magnet, 8));
+      expect(find.text('Episode 8'), findsOneWidget);
     },
   );
 }

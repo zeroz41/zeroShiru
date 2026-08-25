@@ -31,6 +31,7 @@ class PosterCard extends StatefulWidget {
     this.onTap,
     this.bloomColor,
     this.airing = false,
+    this.progress,
     this.metadata = const [],
     this.width = ShiruTokens.cardWidth,
   }) : assert(
@@ -55,6 +56,10 @@ class PosterCard extends StatefulWidget {
 
   /// Shows the pulsing ring + green AIRING badge.
   final bool airing;
+
+  /// Optional watched fraction, painted over the artwork edge for quick
+  /// resume scanning without adding another badge.
+  final double? progress;
 
   /// Quiet, glanceable facts shown below the title. Keep this to two short
   /// items so poster rails remain easy to scan.
@@ -197,7 +202,22 @@ class _PosterCardState extends State<PosterCard> {
                   ),
                   child: AspectRatio(
                     aspectRatio: ShiruTokens.cardArtAspect,
-                    child: _artwork(context),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _artwork(context),
+                        if (widget.progress case final progress?)
+                          Align(
+                            alignment: Alignment.bottomCenter,
+                            child: LinearProgressIndicator(
+                              value: progress,
+                              minHeight: 3,
+                              color: ShiruTokens.accentLight,
+                              backgroundColor: const Color(0x99000000),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: ShiruTokens.space1),

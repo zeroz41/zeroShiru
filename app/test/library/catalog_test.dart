@@ -4,7 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zeroshiru/application/library/home_feed.dart';
 import 'package:zeroshiru/domain/models/catalog.dart';
 import 'package:zeroshiru/domain/models/media.dart';
-import 'package:zeroshiru/domain/ports/catalog_repository.dart';
+import 'package:zeroshiru/domain/models/tracking_account.dart';
+import 'package:zeroshiru/domain/ports/ports.dart';
 import 'package:zeroshiru/infrastructure/network/transport.dart';
 import 'package:zeroshiru/infrastructure/tracking/anilist_catalog_repository.dart';
 import 'package:zeroshiru/infrastructure/tracking/anilist_client.dart';
@@ -32,6 +33,28 @@ class _RecordingCatalog implements CatalogRepository {
   Future<Media?> mediaById(int id) async => null;
 }
 
+class _WatchingRepository implements TrackingRepository {
+  _WatchingRepository(this.watching);
+
+  final List<Media> watching;
+
+  @override
+  Future<List<TrackingAccount>> accounts() async => const [];
+
+  @override
+  Future<Media?> mediaById(int id) async => null;
+
+  @override
+  Future<List<Media>> search(String query, {int page = 1}) async => const [];
+
+  @override
+  Future<List<Media>> userList(ListStatus status) async =>
+      status == ListStatus.current ? watching : const [];
+
+  @override
+  Future<void> updateProgress(Media media, int episode) async {}
+}
+
 void main() {
   test('season boundaries follow anime cours', () {
     expect(mediaSeasonAt(DateTime(2026, 1, 1)), MediaSeason.winter);
@@ -42,20 +65,24 @@ void main() {
   });
 
   test(
-    'home feed asks for this season and all-time popularity concurrently',
+    'home feed asks for seasonal, new, and popular titles concurrently',
     () async {
       final catalog = _RecordingCatalog();
       final feed = await loadHomeFeed(catalog, now: DateTime(2026, 8, 23));
 
-      expect(catalog.queries, hasLength(2));
+      expect(catalog.queries, hasLength(3));
       final seasonal = catalog.queries[0];
       expect(seasonal.season, MediaSeason.summer);
       expect(seasonal.year, 2026);
       expect(seasonal.sort, MediaSort.trending);
       expect(seasonal.excludedStatuses, [MediaStatus.notYetReleased]);
       expect(catalog.queries[1].sort, MediaSort.popularity);
+      expect(catalog.queries[1].year, 2026);
+      expect(catalog.queries[1].excludedStatuses, [MediaStatus.notYetReleased]);
+      expect(catalog.queries[2].sort, MediaSort.popularity);
       expect(feed.hero.single.title.display, 'Result 1');
-      expect(feed.popular.single.title.display, 'Result 2');
+      expect(feed.newReleases.single.title.display, 'Result 2');
+      expect(feed.popular.single.title.display, 'Result 3');
     },
   );
 
@@ -108,4 +135,44 @@ void main() {
     expect(variables['isAdult'], isFalse);
     expect(result.hasNextPage, isTrue);
   });
+
+  test(
+    'personalized home feed resumes progress and favors watched genres',
+    () async {
+      const watching = Media(
+        id: 1,
+        title: MediaTitle(userPreferred: 'Watching'),
+        episodes: 12,
+        genres: ['Fantasy', 'Adventure'],
+        listEntry: ListEntry(status: ListStatus.current, progress: 4),
+      );
+      const fantasy = Media(
+        id: 2,
+        title: MediaTitle(userPreferred: 'Fantasy pick'),
+        genres: ['Fantasy'],
+        averageScore: 80,
+      );
+      const comedy = Media(
+        id: 3,
+        title: MediaTitle(userPreferred: 'Comedy pick'),
+        genres: ['Comedy'],
+        averageScore: 99,
+      );
+      const home = HomeFeed(
+        hero: [],
+        trending: [comedy, fantasy],
+        newReleases: [],
+        popular: [],
+      );
+
+      final feed = await loadPersonalizedHomeFeed(
+        _WatchingRepository([watching]),
+        home,
+      );
+
+      expect(feed.continueWatching, [watching]);
+      expect(feed.recommendations, [fantasy]);
+      expect(feed.favoriteGenres, ['Adventure', 'Fantasy']);
+    },
+  );
 }

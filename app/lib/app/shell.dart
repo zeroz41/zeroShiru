@@ -55,14 +55,25 @@ class _AppShellState extends State<AppShell> {
 
     if (isDesktop) {
       return Scaffold(
-        body: Row(
+        body: Stack(
           children: [
-            _SideRail(
-              selectedIndex: _selectedIndex,
-              expanded: _railExpanded,
-              onToggle: () => setState(() => _railExpanded = !_railExpanded),
+            // Keep the page at a stable width while the labelled rail opens.
+            // Only the small navigation surface is laid out during the
+            // animation, which avoids reflowing image-heavy home rails.
+            Positioned.fill(
+              left: ShiruTokens.sidebarWidth,
+              child: RepaintBoundary(child: content),
             ),
-            Expanded(child: content),
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: _SideRail(
+                selectedIndex: _selectedIndex,
+                expanded: _railExpanded,
+                onToggle: () => setState(() => _railExpanded = !_railExpanded),
+              ),
+            ),
           ],
         ),
       );
@@ -92,74 +103,76 @@ class _SideRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    return AnimatedContainer(
-      key: const ValueKey('desktop-navigation-rail'),
-      width: expanded
-          ? ShiruTokens.sidebarExpandedWidth
-          : ShiruTokens.sidebarWidth,
-      duration: reduceMotion ? Duration.zero : ShiruTokens.motionPanel,
-      curve: ShiruTokens.easeSettle,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [ShiruTokens.surfacePanelStrong, ShiruTokens.surfaceShell],
+    return RepaintBoundary(
+      child: AnimatedContainer(
+        key: const ValueKey('desktop-navigation-rail'),
+        width: expanded
+            ? ShiruTokens.sidebarExpandedWidth
+            : ShiruTokens.sidebarWidth,
+        duration: reduceMotion ? Duration.zero : ShiruTokens.motion,
+        curve: ShiruTokens.easeSettle,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [ShiruTokens.surfacePanelStrong, ShiruTokens.surfaceShell],
+          ),
+          border: Border(right: BorderSide(color: ShiruTokens.surfaceBorder)),
+          boxShadow: ShiruTokens.sidebarShadow,
         ),
-        border: Border(right: BorderSide(color: ShiruTokens.surfaceBorder)),
-        boxShadow: ShiruTokens.sidebarShadow,
-      ),
-      child: ClipRect(
-        child: Column(
-          children: [
-            const SizedBox(height: ShiruTokens.space3),
-            _RailHeader(expanded: expanded, onToggle: onToggle),
-            const SizedBox(height: ShiruTokens.space4),
-            for (var i = 0; i < AppShell.destinations.length - 1; i++)
+        child: ClipRect(
+          child: Column(
+            children: [
+              const SizedBox(height: ShiruTokens.space3),
+              _RailHeader(expanded: expanded, onToggle: onToggle),
+              const SizedBox(height: ShiruTokens.space4),
+              for (var i = 0; i < AppShell.destinations.length - 1; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
+                  child: _NavItem(
+                    destination: AppShell.destinations[i],
+                    active: i == selectedIndex,
+                    expanded: true,
+                    inline: expanded,
+                    showLabel: expanded,
+                  ),
+                ),
+              const Spacer(),
+              Padding(
+                padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
+                child: _NavItem.action(
+                  icon: Icons.notifications_none_rounded,
+                  label: 'Updates',
+                  expanded: true,
+                  inline: expanded,
+                  showLabel: expanded,
+                  onTap: () =>
+                      _showShellPanel(context, const _NotificationPanel()),
+                ),
+              ),
               Padding(
                 padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
                 child: _NavItem(
-                  destination: AppShell.destinations[i],
-                  active: i == selectedIndex,
+                  destination: AppShell.destinations.last,
+                  active: selectedIndex == AppShell.destinations.length - 1,
                   expanded: true,
                   inline: expanded,
                   showLabel: expanded,
                 ),
               ),
-            const Spacer(),
-            Padding(
-              padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
-              child: _NavItem.action(
-                icon: Icons.notifications_none_rounded,
-                label: 'Updates',
-                expanded: true,
-                inline: expanded,
-                showLabel: expanded,
-                onTap: () =>
-                    _showShellPanel(context, const _NotificationPanel()),
+              Padding(
+                padding: const EdgeInsets.only(bottom: ShiruTokens.space3),
+                child: _NavItem.action(
+                  icon: Icons.account_circle_outlined,
+                  label: 'Profile',
+                  expanded: true,
+                  inline: expanded,
+                  showLabel: expanded,
+                  onTap: () => _showShellPanel(context, const _ProfilePanel()),
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(bottom: ShiruTokens.space1),
-              child: _NavItem(
-                destination: AppShell.destinations.last,
-                active: selectedIndex == AppShell.destinations.length - 1,
-                expanded: true,
-                inline: expanded,
-                showLabel: expanded,
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(bottom: ShiruTokens.space3),
-              child: _NavItem.action(
-                icon: Icons.account_circle_outlined,
-                label: 'Profile',
-                expanded: true,
-                inline: expanded,
-                showLabel: expanded,
-                onTap: () => _showShellPanel(context, const _ProfilePanel()),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -178,9 +191,19 @@ class _RailHeader extends StatelessWidget {
     return SizedBox(
       height: ShiruTokens.brandMarkSize,
       child: AnimatedSwitcher(
-        duration: reduceMotion ? Duration.zero : ShiruTokens.motion,
+        duration: reduceMotion ? Duration.zero : ShiruTokens.motionQuick,
         switchInCurve: ShiruTokens.easeSettle,
         switchOutCurve: ShiruTokens.easePress,
+        transitionBuilder: (child, animation) => FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(-0.06, 0),
+              end: Offset.zero,
+            ).animate(animation),
+            child: child,
+          ),
+        ),
         child: expanded
             ? Padding(
                 key: const ValueKey('expanded-rail-header'),
@@ -794,39 +817,25 @@ class _NavItemState extends State<_NavItem> {
                       padding: EdgeInsets.symmetric(
                         horizontal: widget.inline ? ShiruTokens.space4 : 0,
                       ),
-                      child: widget.inline
-                          ? Row(
-                              children: [
-                                AnimatedScale(
-                                  scale: _pressed
-                                      ? 0.92
-                                      : (hovered ? 1.08 : 1.0),
-                                  duration: ShiruTokens.motionPress,
-                                  curve: ShiruTokens.easePress,
-                                  child: Icon(icon, size: 20, color: iconColor),
-                                ),
-                                const SizedBox(width: ShiruTokens.space3),
-                                Expanded(
-                                  child: Text(
-                                    label,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.fade,
-                                    softWrap: false,
-                                    style: TextStyle(
-                                      fontFamily: ShiruTokens.fontFamily,
-                                      fontSize: ShiruTokens.fontScale14,
-                                      fontWeight: widget.active
-                                          ? FontWeight.w700
-                                          : FontWeight.w600,
-                                      color: labelColor,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            )
-                          : Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
+                      child: AnimatedSwitcher(
+                        duration: MediaQuery.disableAnimationsOf(context)
+                            ? Duration.zero
+                            : ShiruTokens.motionQuick,
+                        switchInCurve: ShiruTokens.easeSettle,
+                        switchOutCurve: ShiruTokens.easePress,
+                        transitionBuilder: (child, animation) => FadeTransition(
+                          opacity: animation,
+                          child: SlideTransition(
+                            position: Tween<Offset>(
+                              begin: const Offset(-0.08, 0),
+                              end: Offset.zero,
+                            ).animate(animation),
+                            child: child,
+                          ),
+                        ),
+                        child: widget.inline
+                            ? Row(
+                                key: ValueKey('nav-inline-$label'),
                                 children: [
                                   AnimatedScale(
                                     scale: _pressed
@@ -840,27 +849,64 @@ class _NavItemState extends State<_NavItem> {
                                       color: iconColor,
                                     ),
                                   ),
-                                  if (widget.showLabel) ...[
-                                    const SizedBox(height: 2),
-                                    FittedBox(
-                                      fit: BoxFit.scaleDown,
-                                      child: Text(
-                                        label,
-                                        maxLines: 1,
-                                        style: TextStyle(
-                                          fontFamily: ShiruTokens.fontFamily,
-                                          fontSize: ShiruTokens.fontSize12,
-                                          fontWeight: widget.active
-                                              ? FontWeight.w700
-                                              : FontWeight.w600,
-                                          color: labelColor,
-                                        ),
+                                  const SizedBox(width: ShiruTokens.space3),
+                                  Expanded(
+                                    child: Text(
+                                      label,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.fade,
+                                      softWrap: false,
+                                      style: TextStyle(
+                                        fontFamily: ShiruTokens.fontFamily,
+                                        fontSize: ShiruTokens.fontScale14,
+                                        fontWeight: widget.active
+                                            ? FontWeight.w700
+                                            : FontWeight.w600,
+                                        color: labelColor,
                                       ),
                                     ),
-                                  ],
+                                  ),
                                 ],
+                              )
+                            : Center(
+                                key: ValueKey('nav-compact-$label'),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    AnimatedScale(
+                                      scale: _pressed
+                                          ? 0.92
+                                          : (hovered ? 1.08 : 1.0),
+                                      duration: ShiruTokens.motionPress,
+                                      curve: ShiruTokens.easePress,
+                                      child: Icon(
+                                        icon,
+                                        size: 20,
+                                        color: iconColor,
+                                      ),
+                                    ),
+                                    if (widget.showLabel) ...[
+                                      const SizedBox(height: 2),
+                                      FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        child: Text(
+                                          label,
+                                          maxLines: 1,
+                                          style: TextStyle(
+                                            fontFamily: ShiruTokens.fontFamily,
+                                            fontSize: ShiruTokens.fontSize12,
+                                            fontWeight: widget.active
+                                                ? FontWeight.w700
+                                                : FontWeight.w600,
+                                            color: labelColor,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
                               ),
-                            ),
+                      ),
                     ),
                   ),
                 ],

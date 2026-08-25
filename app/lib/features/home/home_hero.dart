@@ -21,11 +21,12 @@ class _HomeHeroState extends State<HomeHero> {
   final PageController _controller = PageController();
   Timer? _rotation;
   int _index = 0;
+  bool _hovered = false;
 
   @override
   void initState() {
     super.initState();
-    _restartRotation();
+    _scheduleRotation();
   }
 
   @override
@@ -33,22 +34,36 @@ class _HomeHeroState extends State<HomeHero> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.media.length != widget.media.length) {
       _index = 0;
-      _restartRotation();
+      _scheduleRotation();
     }
   }
 
-  void _restartRotation() {
+  void _scheduleRotation() {
     _rotation?.cancel();
-    if (widget.media.length < 2) return;
-    _rotation = Timer.periodic(const Duration(seconds: 15), (_) {
+    if (_hovered || widget.media.length < 2) return;
+    _rotation = Timer(const Duration(seconds: 15), () {
       if (!mounted || !_controller.hasClients) return;
       final next = (_index + 1) % widget.media.length;
-      _controller.animateToPage(
-        next,
-        duration: ShiruTokens.motionPanel,
-        curve: ShiruTokens.easeSettle,
-      );
+      _goTo(next);
     });
+  }
+
+  void _goTo(int index) {
+    if (!_controller.hasClients || widget.media.isEmpty) return;
+    _controller.animateToPage(
+      index % widget.media.length,
+      duration: ShiruTokens.motionPanel,
+      curve: ShiruTokens.easeSettle,
+    );
+  }
+
+  void _onHover(bool hovered) {
+    _hovered = hovered;
+    if (hovered) {
+      _rotation?.cancel();
+    } else {
+      _scheduleRotation();
+    }
   }
 
   @override
@@ -60,54 +75,116 @@ class _HomeHeroState extends State<HomeHero> {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 307,
-      child: Stack(
-        children: [
-          PageView.builder(
-            controller: _controller,
-            itemCount: widget.media.length,
-            onPageChanged: (value) => setState(() => _index = value),
-            itemBuilder: (context, index) => _HeroSlide(
-              media: widget.media[index],
-              onDetails: () => widget.onDetails(widget.media[index]),
+    return MouseRegion(
+      onEnter: (_) => _onHover(true),
+      onExit: (_) => _onHover(false),
+      child: SizedBox(
+        height: 307,
+        child: Stack(
+          children: [
+            PageView.builder(
+              controller: _controller,
+              itemCount: widget.media.length,
+              onPageChanged: (value) {
+                setState(() => _index = value);
+                _scheduleRotation();
+              },
+              itemBuilder: (context, index) => _HeroSlide(
+                media: widget.media[index],
+                onDetails: () => widget.onDetails(widget.media[index]),
+              ),
             ),
-          ),
-          if (widget.media.length > 1)
-            Positioned(
-              left: ShiruTokens.space7,
-              bottom: ShiruTokens.space3,
-              child: Row(
-                children: [
-                  for (var i = 0; i < widget.media.length; i++)
-                    GestureDetector(
-                      onTap: () => _controller.animateToPage(
-                        i,
-                        duration: ShiruTokens.motionPanel,
-                        curve: ShiruTokens.easeSettle,
-                      ),
-                      child: AnimatedContainer(
-                        duration: ShiruTokens.motion,
-                        curve: ShiruTokens.easeSettle,
-                        width: i == _index ? 38 : 21,
-                        height: 3,
-                        margin: const EdgeInsets.only(
-                          right: ShiruTokens.space1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: i == _index
-                              ? ShiruTokens.accent
-                              : ShiruTokens.textMuted,
-                          borderRadius: BorderRadius.circular(
-                            ShiruTokens.radiusPill,
+            if (widget.media.length > 1) ...[
+              Positioned(
+                left: ShiruTokens.space3,
+                top: 0,
+                bottom: 0,
+                child: _HeroArrow(
+                  tooltip: 'Previous featured show',
+                  icon: Icons.chevron_left_rounded,
+                  onPressed: () => _goTo(
+                    (_index - 1 + widget.media.length) % widget.media.length,
+                  ),
+                ),
+              ),
+              Positioned(
+                right: ShiruTokens.space3,
+                top: 0,
+                bottom: 0,
+                child: _HeroArrow(
+                  tooltip: 'Next featured show',
+                  icon: Icons.chevron_right_rounded,
+                  onPressed: () => _goTo((_index + 1) % widget.media.length),
+                ),
+              ),
+              Positioned(
+                left: ShiruTokens.space7,
+                bottom: ShiruTokens.space3,
+                child: Row(
+                  children: [
+                    for (var i = 0; i < widget.media.length; i++)
+                      Semantics(
+                        button: true,
+                        selected: i == _index,
+                        label: 'Featured show ${i + 1}',
+                        child: GestureDetector(
+                          onTap: () => _goTo(i),
+                          child: AnimatedContainer(
+                            duration: ShiruTokens.motion,
+                            curve: ShiruTokens.easeSettle,
+                            width: i == _index ? 38 : 21,
+                            height: 3,
+                            margin: const EdgeInsets.only(
+                              right: ShiruTokens.space1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: i == _index
+                                  ? ShiruTokens.accent
+                                  : ShiruTokens.textMuted,
+                              borderRadius: BorderRadius.circular(
+                                ShiruTokens.radiusPill,
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            ),
-        ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HeroArrow extends StatelessWidget {
+  const _HeroArrow({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Material(
+        color: const Color(0xB3121416),
+        shape: const CircleBorder(
+          side: BorderSide(color: ShiruTokens.surfaceBorder),
+        ),
+        elevation: 6,
+        shadowColor: Colors.black,
+        child: IconButton(
+          tooltip: tooltip,
+          onPressed: onPressed,
+          icon: Icon(icon, color: ShiruTokens.highlight),
+        ),
       ),
     );
   }
