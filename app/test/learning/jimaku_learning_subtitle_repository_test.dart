@@ -51,6 +51,10 @@ void main() {
       expect(second?.source, first?.source);
       final cached = File.fromUri(Uri.parse(first!.source));
       expect(await cached.exists(), isTrue);
+      expect(cached.path, contains('v4-source-aware'));
+      expect(first.originalName, '[JP] Test Show - 07.ass');
+      expect(second?.originalName, '[JP] Test Show - 07.ass');
+      expect(first.title, contains('[JP] Test Show - 07.ass'));
       expect(await cached.readAsString(), contains('日本語'));
       expect(transport.downloadRequests, hasLength(1));
       expect(transport.fileEpisodeQueries, ['7']);
@@ -124,6 +128,175 @@ void main() {
       contains('七話'),
     );
     expect(transport.downloadRequests.single.url.path, '/show.zip');
+  });
+
+  test('prefers the subtitle timed for the active release source', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zeroshiru-jimaku-release-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final transport = _JimakuTransport(
+      files: const [
+        {
+          'name': 'Test Show - 07 [BluRay].ass',
+          'url': 'https://files.example/bluray.ass',
+          'last_modified': '2026-08-24T00:00:00Z',
+        },
+        {
+          'name': '[SubsPlease] Test Show - 07 [WEB-DL].srt',
+          'url': 'https://files.example/web.srt',
+          'last_modified': '2026-08-24T00:00:00Z',
+        },
+      ],
+      downloads: {
+        '/bluray.ass': utf8.encode(
+          '[Events]\nDialogue: 0,0:00:01,0:00:02,Default,,0,0,0,,違う版の日本語です。',
+        ),
+        '/web.srt': utf8.encode(
+          '1\n00:00:01,000 --> 00:00:02,000\n正しい版の日本語です。',
+        ),
+      },
+    );
+    final repository = JimakuLearningSubtitleRepository(
+      transport: transport,
+      cacheDirectory: directory.path,
+    );
+
+    final match = await repository.findJapanese(
+      const LearningSubtitleQuery(
+        anilistId: 123,
+        episode: 7,
+        releaseName: '[SubsPlease] Test Show - 07 WEB-DL 1080p.mkv',
+      ),
+      credential: 'personal-key',
+    );
+
+    expect(match?.originalName, contains('SubsPlease'));
+    expect(transport.downloadRequests.single.url.path, '/web.srt');
+    expect(
+      await File.fromUri(Uri.parse(match!.source)).readAsString(),
+      contains('正しい版'),
+    );
+  });
+
+  test('a debrid episode never defaults to differently timed NTV captions', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zeroshiru-jimaku-source-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final transport = _JimakuTransport(
+      files: const [
+        {
+          'name':
+              '[NanakoRaws] Sousou no Frieren S2 - 01 (NTV 1080p HEVC AAC).ass',
+          'url': 'https://files.example/ntv.ass',
+          'last_modified': '2026-06-24T00:00:00Z',
+        },
+        {
+          'name': 'Sousou.no.Frieren.S02E01.WEBRip.Amazon.ja-jp[sdh].srt',
+          'url': 'https://files.example/amazon.srt',
+          'last_modified': '2026-06-24T00:00:00Z',
+        },
+      ],
+      downloads: {
+        '/ntv.ass': utf8.encode(
+          '[Events]\nDialogue: 0,0:00:04,0:00:06,Default,,0,0,0,,放送版の日本語です。',
+        ),
+        '/amazon.srt': utf8.encode(
+          '1\n00:00:01,000 --> 00:00:03,000\n配信版の日本語です。',
+        ),
+      },
+    );
+    final repository = JimakuLearningSubtitleRepository(
+      transport: transport,
+      cacheDirectory: directory.path,
+    );
+    const query = LearningSubtitleQuery(
+      anilistId: 123,
+      episode: 1,
+      releaseName: '[EMBER] Sousou no Frieren S02E01 1080p HEVC.mkv',
+    );
+
+    final first = await repository.findJapanese(
+      query,
+      credential: 'personal-key',
+    );
+    final cached = await repository.findJapanese(query, credential: '');
+
+    expect(first?.originalName, contains('Amazon'));
+    expect(cached?.originalName, contains('Amazon'));
+    expect(transport.downloadRequests.single.url.path, '/amazon.srt');
+    expect(
+      await File.fromUri(Uri.parse(first!.source)).readAsString(),
+      contains('配信版'),
+    );
+  });
+
+  test('rejects ambiguous and wrong-episode direct files even when the API returns them', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zeroshiru-jimaku-strict-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final transport = _JimakuTransport(
+      files: const [
+        {
+          'name': 'Test Show Japanese.ass',
+          'url': 'https://files.example/ambiguous.ass',
+          'last_modified': '2026-08-24T00:00:00Z',
+        },
+        {
+          'name': 'Test Show - 06.ass',
+          'url': 'https://files.example/show-06.ass',
+          'last_modified': '2026-08-24T00:00:00Z',
+        },
+      ],
+      downloads: const {},
+    );
+    final repository = JimakuLearningSubtitleRepository(
+      transport: transport,
+      cacheDirectory: directory.path,
+    );
+
+    final match = await repository.findJapanese(
+      const LearningSubtitleQuery(
+        anilistId: 123,
+        episode: 7,
+        releaseName: 'Test Show - 07.mkv',
+      ),
+      credential: 'personal-key',
+    );
+
+    expect(match, isNull);
+    expect(transport.downloadRequests, isEmpty);
+  });
+
+  test('does not reuse subtitle files from the unsafe legacy cache', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zeroshiru-jimaku-legacy-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final legacy = File('${directory.path}/123/7/legacy-release/wrong.ass');
+    await legacy.create(recursive: true);
+    await legacy.writeAsString(
+      '[Events]\nDialogue: 0,0:00:01,0:00:02,Default,,0,0,0,,別の話の日本語です。',
+    );
+    final transport = _JimakuTransport(files: const [], downloads: const {});
+    final repository = JimakuLearningSubtitleRepository(
+      transport: transport,
+      cacheDirectory: directory.path,
+    );
+
+    final match = await repository.findJapanese(
+      const LearningSubtitleQuery(
+        anilistId: 123,
+        episode: 7,
+        releaseName: 'Test Show - 07.mkv',
+      ),
+      credential: 'personal-key',
+    );
+
+    expect(match, isNull);
+    expect(transport.apiRequests, isNotEmpty);
   });
 
   test('surfaces authentication failures without response details', () async {

@@ -31,6 +31,7 @@ class _FakeEngine implements MediaEngine {
   String? addedSubtitleSource;
   String? addedSubtitleTitle;
   String? addedSubtitleLanguage;
+  PlaybackSnapshot? renderingState;
 
   @override
   Stream<PlaybackSnapshot> get state => states.stream;
@@ -100,8 +101,11 @@ class _FakeEngine implements MediaEngine {
   }) async => calls.add('subtitle:$trackId:$secondary');
 
   @override
-  Future<void> setSubtitleRendering(SubtitleRendering mode) async =>
-      calls.add('render:${mode.name}');
+  Future<void> setSubtitleRendering(SubtitleRendering mode) async {
+    calls.add('render:${mode.name}');
+    final next = renderingState;
+    if (next != null && next.subtitleRendering == mode) states.add(next);
+  }
 
   @override
   Future<void> setSubtitleDelay(
@@ -147,12 +151,14 @@ class _FakeBackend implements PlaybackBackend {
   Future<void> dispose() => engine.dispose();
 }
 
-Widget _app(Widget page, _FakeBackend backend) => ProviderScope(
+Widget _app(
+  Widget page,
+  _FakeBackend backend, {
+  Settings settings = const Settings(),
+}) => ProviderScope(
   overrides: [
     playbackBackendProvider.overrideWithValue(backend),
-    settingsRepositoryProvider.overrideWithValue(
-      _SettingsRepository(const Settings()),
-    ),
+    settingsRepositoryProvider.overrideWithValue(_SettingsRepository(settings)),
     credentialStoreProvider.overrideWithValue(_Credentials()),
     languageLearningToolsProvider.overrideWithValue(_FakeLearningTools()),
   ],
@@ -189,6 +195,32 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pump();
     expect(engine.calls, contains('seek:122'));
+  });
+
+  testWidgets('timeline dragging commits only the final seek position', (
+    tester,
+  ) async {
+    final engine = _FakeEngine();
+    const source = PlayerFile(
+      name: 'Episode 03.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      _app(const PlayerPage(initialSource: source), _FakeBackend(engine)),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final slider = tester.widget<Slider>(find.byType(Slider).first);
+    slider.onChangeStart!(Duration(minutes: 4).inMilliseconds.toDouble());
+    slider.onChanged!(Duration(minutes: 6).inMilliseconds.toDouble());
+    slider.onChanged!(Duration(minutes: 10).inMilliseconds.toDouble());
+    slider.onChangeEnd!(Duration(minutes: 10).inMilliseconds.toDouble());
+    await tester.pump();
+
+    expect(engine.calls.where((call) => call.startsWith('seek:')), [
+      'seek:600',
+    ]);
   });
 
   testWidgets('player without a resolved file stays in a calm empty state', (
@@ -439,13 +471,24 @@ void main() {
 
     await tester.tap(find.byTooltip('Subtitles'));
     await tester.pumpAndSettle();
-    expect(find.text('Subtitles & languages'), findsOneWidget);
-    expect(find.text('Primary'), findsOneWidget);
-    expect(find.text('Secondary'), findsOneWidget);
-    expect(find.text('Japanese'), findsNWidgets(2));
+    expect(find.text('Subtitles'), findsOneWidget);
+    expect(find.text('Advanced'), findsOneWidget);
+    expect(find.text('Primary track'), findsNothing);
 
-    await tester.tap(find.text('Japanese').last);
-    await tester.pump();
+    await tester.tap(find.text('Advanced'));
+    await tester.pumpAndSettle();
+    expect(find.text('Primary track'), findsOneWidget);
+    expect(find.text('Secondary track'), findsOneWidget);
+    await tester.tap(find.text('Secondary track'));
+    await tester.pumpAndSettle();
+    final japaneseChoice = find.ancestor(
+      of: find.textContaining('Japanese'),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is CheckedPopupMenuItem,
+      ),
+    );
+    await tester.tap(japaneseChoice);
+    await tester.pumpAndSettle();
     expect(engine.calls, contains('subtitle:sub-ja:true'));
 
     await tester.tap(find.text('Learning'));
@@ -455,13 +498,152 @@ void main() {
     expect(engine.calls, contains('subtitle:sub-ja:false'));
     expect(engine.calls, contains('subtitle:sub-en:true'));
 
+    await tester.ensureVisible(find.byTooltip('Later by 0.1 seconds').first);
     await tester.tap(find.byTooltip('Later by 0.1 seconds').first);
     await tester.pump();
     expect(engine.calls, contains('delay:100:false'));
 
+    await tester.ensureVisible(find.text('Styled'));
+    await tester.tap(find.text('Styled'));
+    await tester.pump();
+    await tester.tap(find.text('Learning'));
+    await tester.pumpAndSettle();
+    expect(
+      engine.calls.where((call) => call == 'subtitle:sub-ja:false'),
+      hasLength(2),
+    );
+
     await tester.tapAt(const Offset(10, 400));
     await tester.pumpAndSettle();
-    expect(find.text('Subtitles & languages'), findsNothing);
+    expect(find.text('Subtitles'), findsNothing);
+  });
+
+  testWidgets('Learning recognizes Japanese and translation track titles', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1000, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final engine = _FakeEngine();
+    const source = PlayerFile(
+      name: 'Episode 03.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      _app(const PlayerPage(initialSource: source), _FakeBackend(engine)),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    engine.states.add(
+      const PlaybackSnapshot(
+        generation: 1,
+        phase: PlaybackPhase.playing,
+        duration: Duration(minutes: 24),
+        audioTracks: [
+          MediaTrack(
+            id: 'audio-commentary',
+            kind: TrackKind.audio,
+            title: 'Japanese Commentary',
+            isDefault: true,
+          ),
+          MediaTrack(
+            id: 'audio-main',
+            kind: TrackKind.audio,
+            title: 'Japanese Original',
+          ),
+        ],
+        subtitleTracks: [
+          MediaTrack(
+            id: 'sub-ja-signs',
+            kind: TrackKind.subtitle,
+            title: 'Japanese Signs & Songs',
+            isDefault: true,
+            codec: 'ass',
+          ),
+          MediaTrack(
+            id: 'sub-ja-full',
+            kind: TrackKind.subtitle,
+            title: 'Japanese Full Dialogue',
+            codec: 'ass',
+          ),
+          MediaTrack(
+            id: 'sub-en-signs',
+            kind: TrackKind.subtitle,
+            title: 'English Signs & Songs',
+            isDefault: true,
+            codec: 'ass',
+          ),
+          MediaTrack(
+            id: 'sub-en-full',
+            kind: TrackKind.subtitle,
+            title: 'English Full Dialogue',
+            codec: 'ass',
+          ),
+        ],
+        selectedAudio: 'audio-commentary',
+        selectedPrimarySubtitle: 'sub-en-signs',
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('Subtitles'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Learning'));
+    await tester.pumpAndSettle();
+
+    expect(engine.calls, contains('audio:audio-main'));
+    expect(engine.calls, contains('subtitle:sub-ja-full:false'));
+    expect(engine.calls, contains('subtitle:sub-en-full:true'));
+
+    await tester.tap(find.byTooltip('Close'));
+    await tester.pumpAndSettle();
+    engine.states.add(
+      const PlaybackSnapshot(
+        generation: 1,
+        phase: PlaybackPhase.playing,
+        position: Duration(seconds: 12),
+        duration: Duration(minutes: 24),
+        subtitleRendering: SubtitleRendering.learning,
+        subtitleTracks: [
+          MediaTrack(
+            id: 'sub-ja-full',
+            kind: TrackKind.subtitle,
+            title: 'Japanese Full Dialogue',
+            codec: 'ass',
+          ),
+          MediaTrack(
+            id: 'sub-en-full',
+            kind: TrackKind.subtitle,
+            title: 'English Full Dialogue',
+            codec: 'ass',
+          ),
+        ],
+        selectedPrimarySubtitle: 'sub-ja-full',
+        selectedSecondarySubtitle: 'sub-en-full',
+      ),
+    );
+    engine.cues.add(
+      const SubtitleCue(
+        generation: 1,
+        trackId: 'sub-ja-full',
+        start: Duration(seconds: 10),
+        end: Duration(seconds: 15),
+        plainText: '日本語',
+      ),
+    );
+    engine.secondCues.add(
+      const SubtitleCue(
+        generation: 1,
+        trackId: 'sub-en-full',
+        start: Duration(seconds: 10),
+        end: Duration(seconds: 15),
+        plainText: 'Japanese language',
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Japanese language'), findsOneWidget);
   });
 
   testWidgets('learning mode renders native tokens and local definitions', (
@@ -527,6 +709,310 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.textContaining('Japanese language'), findsOneWidget);
+  });
+
+  testWidgets(
+    'a normal gap in the Japanese timing does not claim the track is missing',
+    (tester) async {
+      tester.view.physicalSize = const Size(640, 480);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final engine = _FakeEngine();
+      const source = PlayerFile(
+        name: 'Episode 04.mkv',
+        url: 'https://cdn.example/video.mkv',
+      );
+      await tester.pumpWidget(
+        _app(const PlayerPage(initialSource: source), _FakeBackend(engine)),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      engine.states.add(
+        const PlaybackSnapshot(
+          generation: 1,
+          phase: PlaybackPhase.playing,
+          position: Duration(seconds: 12),
+          duration: Duration(minutes: 24),
+          subtitleRendering: SubtitleRendering.learning,
+          subtitleTracks: [
+            MediaTrack(id: 'sub-ja', kind: TrackKind.subtitle, language: 'ja'),
+            MediaTrack(id: 'sub-en', kind: TrackKind.subtitle, language: 'en'),
+          ],
+          selectedPrimarySubtitle: 'sub-ja',
+          selectedSecondarySubtitle: 'sub-en',
+        ),
+      );
+      engine.secondCues.add(
+        const SubtitleCue(
+          generation: 1,
+          trackId: 'sub-en',
+          start: Duration(seconds: 10),
+          end: Duration(seconds: 15),
+          plainText: 'Study Japanese',
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Study Japanese'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('learning-text-track-required')),
+        findsNothing,
+      );
+      expect(
+        tester
+            .widget<Align>(
+              find.byKey(const ValueKey('learning-subtitle-overlay')),
+            )
+            .alignment,
+        Alignment.bottomCenter,
+      );
+    },
+  );
+
+  testWidgets('an open-ended cue cannot survive a distant forward seek', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(640, 480);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final engine = _FakeEngine();
+    const source = PlayerFile(
+      name: 'Episode 04.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      _app(const PlayerPage(initialSource: source), _FakeBackend(engine)),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    engine.states.add(
+      const PlaybackSnapshot(
+        generation: 1,
+        phase: PlaybackPhase.playing,
+        position: Duration(seconds: 12),
+        duration: Duration(minutes: 24),
+        subtitleRendering: SubtitleRendering.learning,
+        subtitleTracks: [
+          MediaTrack(id: 'sub-ja', kind: TrackKind.subtitle, language: 'ja'),
+        ],
+        selectedPrimarySubtitle: 'sub-ja',
+      ),
+    );
+    engine.cues.add(
+      const SubtitleCue(
+        generation: 1,
+        trackId: 'sub-ja',
+        start: Duration(seconds: 10),
+        plainText: '日本語を勉強する',
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('日本語'), findsOneWidget);
+
+    engine.states.add(
+      const PlaybackSnapshot(
+        generation: 1,
+        phase: PlaybackPhase.playing,
+        position: Duration(minutes: 12),
+        duration: Duration(minutes: 24),
+        subtitleRendering: SubtitleRendering.learning,
+        subtitleTracks: [
+          MediaTrack(id: 'sub-ja', kind: TrackKind.subtitle, language: 'ja'),
+        ],
+        selectedPrimarySubtitle: 'sub-ja',
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('日本語'), findsNothing);
+  });
+
+  testWidgets('learning text can show kana and romaji without kanji', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(640, 480);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final engine = _FakeEngine();
+    const source = PlayerFile(
+      name: 'Episode 04.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      _app(
+        const PlayerPage(initialSource: source),
+        _FakeBackend(engine),
+        settings: const Settings(
+          learningShowJapanese: false,
+          learningShowRomaji: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    engine.states.add(
+      const PlaybackSnapshot(
+        generation: 1,
+        phase: PlaybackPhase.playing,
+        position: Duration(seconds: 12),
+        duration: Duration(minutes: 24),
+        subtitleRendering: SubtitleRendering.learning,
+        subtitleTracks: [
+          MediaTrack(id: 'sub-ja', kind: TrackKind.subtitle, language: 'ja'),
+        ],
+        selectedPrimarySubtitle: 'sub-ja',
+      ),
+    );
+    engine.cues.add(
+      const SubtitleCue(
+        generation: 1,
+        trackId: 'sub-ja',
+        start: Duration(seconds: 10),
+        end: Duration(seconds: 15),
+        plainText: '日本語を勉強する',
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('日本語'), findsNothing);
+    expect(find.text('にほんご'), findsOneWidget);
+    expect(find.text('nihongo'), findsOneWidget);
+  });
+
+  testWidgets('Learning never substitutes a different translation language', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(640, 480);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final engine = _FakeEngine();
+    const source = PlayerFile(
+      name: 'Episode 04.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      _app(const PlayerPage(initialSource: source), _FakeBackend(engine)),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    engine.states.add(
+      const PlaybackSnapshot(
+        generation: 1,
+        phase: PlaybackPhase.playing,
+        position: Duration(seconds: 12),
+        duration: Duration(minutes: 24),
+        subtitleRendering: SubtitleRendering.learning,
+        subtitleTracks: [
+          MediaTrack(id: 'sub-ja', kind: TrackKind.subtitle, language: 'ja'),
+          MediaTrack(id: 'sub-pt', kind: TrackKind.subtitle, language: 'pt-BR'),
+        ],
+        selectedPrimarySubtitle: 'sub-ja',
+        selectedSecondarySubtitle: 'sub-pt',
+      ),
+    );
+    engine.cues.add(
+      const SubtitleCue(
+        generation: 1,
+        trackId: 'sub-ja',
+        start: Duration(seconds: 10),
+        end: Duration(seconds: 15),
+        plainText: '日本語を勉強する',
+      ),
+    );
+    engine.secondCues.add(
+      const SubtitleCue(
+        generation: 1,
+        trackId: 'sub-pt',
+        start: Duration(seconds: 10),
+        end: Duration(seconds: 15),
+        plainText: 'Estude japonês',
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('日本語'), findsOneWidget);
+    expect(find.text('Estude japonês'), findsNothing);
+    expect(find.byKey(const ValueKey('learning-translation')), findsNothing);
+  });
+
+  testWidgets('player chips toggle Kanji, Kana, Romaji, and Translation', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final engine = _FakeEngine();
+    final repository = _SettingsRepository(const Settings());
+    const source = PlayerFile(
+      name: 'Episode 04.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          playbackBackendProvider.overrideWithValue(_FakeBackend(engine)),
+          settingsRepositoryProvider.overrideWithValue(repository),
+          credentialStoreProvider.overrideWithValue(_Credentials()),
+          languageLearningToolsProvider.overrideWithValue(_FakeLearningTools()),
+        ],
+        child: MaterialApp(
+          theme: buildShiruTheme(),
+          home: const PlayerPage(initialSource: source),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    engine.states.add(
+      const PlaybackSnapshot(
+        generation: 1,
+        phase: PlaybackPhase.playing,
+        duration: Duration(minutes: 24),
+        subtitleRendering: SubtitleRendering.learning,
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Subtitles'));
+    await tester.pumpAndSettle();
+    expect(find.text('Learning layers'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilterChip>(
+            find.byKey(const ValueKey('learning-layer-kanji')),
+          )
+          .selected,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<FilterChip>(
+            find.byKey(const ValueKey('learning-layer-romaji')),
+          )
+          .selected,
+      isFalse,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('learning-layer-kanji')));
+    await tester.tap(find.byKey(const ValueKey('learning-layer-romaji')));
+    await tester.pump();
+
+    expect(repository.settings.learningShowJapanese, isFalse);
+    expect(repository.settings.learningShowFurigana, isTrue);
+    expect(repository.settings.learningShowRomaji, isTrue);
+    expect(repository.settings.learningShowTranslation, isTrue);
   });
 
   testWidgets(
@@ -600,6 +1086,24 @@ void main() {
           selectedPrimarySubtitle: 'sub-en',
         ),
       );
+      engine.renderingState = const PlaybackSnapshot(
+        generation: 1,
+        phase: PlaybackPhase.playing,
+        duration: Duration(minutes: 24),
+        audioTracks: [
+          MediaTrack(id: 'audio-ja', kind: TrackKind.audio, language: 'ja'),
+        ],
+        subtitleTracks: [
+          MediaTrack(
+            id: 'sub-en',
+            kind: TrackKind.subtitle,
+            language: 'en',
+            codec: 'ass',
+          ),
+        ],
+        selectedPrimarySubtitle: 'sub-en',
+        subtitleRendering: SubtitleRendering.learning,
+      );
       await tester.pump();
 
       await tester.tap(find.byTooltip('Subtitles'));
@@ -613,6 +1117,14 @@ void main() {
       expect(subtitles.credentials, ['jimaku-secret']);
       expect(engine.calls, contains('subtitle:sub-en:true'));
       expect(engine.calls, contains('add-subtitle'));
+      expect(
+        engine.calls.where((call) => call == 'audio:audio-ja'),
+        hasLength(1),
+      );
+      expect(
+        engine.calls.where((call) => call == 'subtitle:sub-en:true'),
+        hasLength(2),
+      );
       expect(engine.addedSubtitleSource, 'file:///cache/show-07.ass');
       expect(engine.addedSubtitleLanguage, 'ja');
       expect(find.textContaining('cached for this episode'), findsOneWidget);

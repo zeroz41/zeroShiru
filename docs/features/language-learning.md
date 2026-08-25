@@ -80,7 +80,9 @@ is enabled and an embedded Japanese text track is missing, Jimaku receives the
 public AniList ID and episode number. It does not receive subtitle cues,
 lookups, playback position, or debrid URLs. Download redirects are
 SSRF-checked, credentials are stripped across origins, and the Jimaku key is
-never sent to the returned file host.
+never sent to the returned file host. For episodic shows, a direct subtitle or
+archive member must explicitly name the requested episode before it can be
+attached or cached; an API filter match alone is not accepted.
 
 JMdict is created and maintained by the
 [Electronic Dictionary Research and Development Group](https://www.edrdg.org/jmdict/j_jmdict.html)
@@ -93,7 +95,9 @@ on Taku Kudo's TinySegmenter. Distribution notices live in
 ## User controls
 
 All study behavior is dormant until **Learning** is selected in the subtitle
-panel. Its settings control:
+panel. **Kanji**, **Kana**, **Romaji**, and **Translation** are direct toggles
+there. Manual primary/secondary tracks, timing, and sidecars stay in a
+collapsed **Advanced** section. Persistent settings also control:
 
 - automatic Japanese + translation text-track pairing;
 - automatic retrieval of a missing Japanese episode track;
@@ -101,10 +105,31 @@ panel. Its settings control:
 - pause on the first hover/tap lookup in each cue; and
 - learning-overlay scale, independent of normal subtitles.
 
+Before a manual track is chosen, playback infers missing language tags from
+track titles and prefers main/full-dialogue tracks over commentary, forced,
+or signs-and-songs variants. In Learning mode that yields Japanese audio and
+text plus the configured translation language; explicit compatible picks win
+on subsequent preparation.
+
 Hovering or tapping a token highlights it and opens its local base form,
 reading, romanization, part of speech, and English definitions. The overlay
 uses current primary and secondary cue timing independently, including each
-track's delay.
+track's delay. Timeline dragging previews locally and commits one seek; the
+player clears stale cue work during that seek and refreshes both active lines
+after MPV settles. Unknown-duration cues also have a bounded display fallback.
+The active Japanese line is bottom-anchored over the video with
+furigana above each word, optional romaji below it, and the translation on its
+own line. Only lookup results and actionable warnings use a surface; ordinary
+subtitles are rendered without a persistent opaque panel.
+
+When several Jimaku files name the requested episode, release-group and source
+markers such as WEB or BluRay are timing signals and outrank small format
+preferences. WEB/debrid episodes prefer streaming captions; NTV, AT-X, and
+other broadcast captions win only for a compatible broadcast release. The
+attached track and preparation result retain the selected catalog filename so
+a timing source is visible instead of becoming an anonymous cached file. The
+release-aware cache prevents an older mismatched candidate from being reused
+for the same video source.
 
 ## Product references and boundaries
 

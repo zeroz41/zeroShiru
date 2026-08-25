@@ -52,7 +52,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   bool _resolving = false;
   int _resolveGeneration = 0;
   Future<_LearningSubtitleLoadResult>? _learningSubtitleRequest;
+  Future<_LearningSubtitleLoadResult>? _learningPreparationRequest;
+  String? _learningPreparationIdentity;
+  String? _learningPreparationCompletedIdentity;
+  _LearningSubtitleLoadResult? _learningPreparationResult;
+  bool _learningPreparationPending = false;
   String? _learningAutoAttempt;
+  String? _pickedAudioTrack;
+  String? _pickedPrimarySubtitle;
+  String? _pickedSecondarySubtitle;
   SubtitleRendering _requestedSubtitleRendering = SubtitleRendering.standard;
   int _activePlaybackGeneration = 0;
   BoxFit _fit = BoxFit.contain;
@@ -99,6 +107,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     } else if (widget.initialSource != null &&
         oldWidget.initialSource?.url != widget.initialSource!.url) {
       _source = widget.initialSource;
+      _clearPickedTracks();
       unawaited(_open(widget.initialSource!));
     }
   }
@@ -106,7 +115,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   Future<void> _resolveLaunch(PlaybackLaunch launch) async {
     final generation = ++_resolveGeneration;
     _learningSubtitleRequest = null;
+    _learningPreparationRequest = null;
+    _learningPreparationIdentity = null;
+    _learningPreparationCompletedIdentity = null;
+    _learningPreparationResult = null;
+    _learningPreparationPending = false;
     _learningAutoAttempt = null;
+    _clearPickedTracks();
     _activePlaybackGeneration = 0;
     setState(() {
       _launch = launch;
@@ -232,6 +247,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
   }
 
+  void _clearPickedTracks() {
+    _pickedAudioTrack = null;
+    _pickedPrimarySubtitle = null;
+    _pickedSecondarySubtitle = null;
+  }
+
   Future<_LearningSubtitleLoadResult> _findJapaneseLearningSubtitle() {
     final running = _learningSubtitleRequest;
     if (running != null) return running;
@@ -253,6 +274,183 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     );
     return request;
   }
+
+  Future<_LearningSubtitleLoadResult> _prepareLearningTracks() {
+    final snapshot = _latest;
+    final launch = _launch;
+    if (_requestedSubtitleRendering != SubtitleRendering.learning ||
+        snapshot.phase == PlaybackPhase.idle ||
+        snapshot.phase == PlaybackPhase.opening ||
+        snapshot.phase == PlaybackPhase.failed) {
+      return Future.value(
+        const _LearningSubtitleLoadResult.unavailable(
+          'The player is not ready to prepare Learning subtitles yet.',
+        ),
+      );
+    }
+    final identity =
+        '${snapshot.generation}:${launch?.media.id ?? 'source'}:'
+        '${launch?.episode ?? 0}';
+    final running = _learningPreparationRequest;
+    if (running != null && _learningPreparationIdentity == identity) {
+      return running;
+    }
+    final completed = _learningPreparationResult;
+    if (_learningPreparationCompletedIdentity == identity &&
+        completed?.ready == true) {
+      return Future.value(completed);
+    }
+
+    final request = () async {
+      try {
+        final settings = await ref.read(settingsControllerProvider.future);
+        return await _performLearningTrackPreparation(snapshot, settings);
+      } catch (_) {
+        return const _LearningSubtitleLoadResult.unavailable(
+          'The Learning tracks could not be prepared. Try again or choose them manually.',
+        );
+      }
+    }();
+    _learningPreparationIdentity = identity;
+    _learningPreparationRequest = request;
+    if (mounted) {
+      setState(() {
+        _learningPreparationPending = true;
+        _learningPreparationResult = null;
+      });
+    }
+    unawaited(_recordLearningPreparation(request));
+    return request;
+  }
+
+  Future<void> _recordLearningPreparation(
+    Future<_LearningSubtitleLoadResult> request,
+  ) async {
+    final result = await request;
+    if (!mounted ||
+        _learningPreparationRequest != request ||
+        _requestedSubtitleRendering != SubtitleRendering.learning) {
+      return;
+    }
+    setState(() {
+      _learningPreparationPending = false;
+      _learningPreparationResult = result;
+      _learningPreparationCompletedIdentity = result.ready
+          ? _learningPreparationIdentity
+          : null;
+      _learningPreparationRequest = null;
+      _learningPreparationIdentity = null;
+    });
+  }
+
+  Future<_LearningSubtitleLoadResult> _performLearningTrackPreparation(
+    PlaybackSnapshot snapshot,
+    Settings settings,
+  ) async {
+    final warnings = <String>[];
+    final selectedTrackIds = {
+      snapshot.selectedAudio,
+      snapshot.selectedPrimarySubtitle,
+      snapshot.selectedSecondarySubtitle,
+    }..remove(null);
+    final pickedTrackIds = {
+      _pickedAudioTrack,
+      _pickedPrimarySubtitle,
+      _pickedSecondarySubtitle,
+    }..remove(null);
+    final japaneseAudio = _preferredLearningTrack(
+      snapshot.audioTracks,
+      'ja',
+      selectedIds: selectedTrackIds,
+      preferredIds: pickedTrackIds,
+    );
+    final textTracks = snapshot.subtitleTracks
+        .where((track) => !track.isBitmapSubtitle)
+        .toList();
+    final japanese = _preferredLearningTrack(
+      textTracks,
+      'ja',
+      selectedIds: selectedTrackIds,
+      preferredIds: pickedTrackIds,
+      subtitle: true,
+    );
+    final translationLanguage = _languageBase(
+      settings.learningTranslationLanguage,
+    );
+    final translation = _preferredLearningTrack(
+      textTracks.where((track) => track.id != japanese?.id),
+      translationLanguage,
+      selectedIds: selectedTrackIds,
+      preferredIds: pickedTrackIds,
+      subtitle: true,
+    );
+
+    try {
+      if (japaneseAudio != null && japaneseAudio.id != snapshot.selectedAudio) {
+        await _engine.selectAudio(japaneseAudio.id);
+      } else if (japaneseAudio == null &&
+          snapshot.audioTracks.any(
+            (track) => _trackLanguageBase(track) != null,
+          )) {
+        warnings.add(
+          'No Japanese audio track was found; the current audio stays selected.',
+        );
+      }
+      if (!_learningRequestIsCurrent(snapshot)) {
+        return const _LearningSubtitleLoadResult.unavailable(
+          'Playback changed before the Learning tracks were ready.',
+        );
+      }
+
+      if (japanese != null) {
+        await _engine.selectSubtitle(japanese.id);
+        await _engine.selectSubtitle(translation?.id, secondary: true);
+        if (translation == null && settings.learningShowTranslation) {
+          warnings.add(
+            'No matching ${_languageTitle(translationLanguage)} text track was found, so translation is hidden for this release.',
+          );
+        }
+        return _LearningSubtitleLoadResult.ready(
+          ['Japanese text is ready.', ...warnings].join(' '),
+        );
+      }
+
+      if (!settings.learningAutoFetchJapaneseSubtitles) {
+        return _LearningSubtitleLoadResult.unavailable(
+          [
+            ...warnings,
+            'No Japanese text track is embedded. Automatic fetching is disabled; add a local ASS, SRT, or VTT sidecar.',
+          ].join(' '),
+        );
+      }
+      await _engine.selectSubtitle(translation?.id, secondary: true);
+      if (translation == null && settings.learningShowTranslation) {
+        warnings.add(
+          'No matching ${_languageTitle(translationLanguage)} text track was found, so translation is hidden for this release.',
+        );
+      }
+      final fetched = await _findJapaneseLearningSubtitle();
+      // Loading an external primary subtitle may rebuild MPV's track list.
+      // Re-assert the requested translation afterwards so a shifted native
+      // secondary selection can never silently become another language.
+      if (fetched.ready && _learningRequestIsCurrent(snapshot)) {
+        await _engine.selectSubtitle(translation?.id, secondary: true);
+      }
+      return fetched.copyWithMessage([...warnings, fetched.message].join(' '));
+    } on PlaybackFailure catch (failure) {
+      return _LearningSubtitleLoadResult.unavailable(failure.message);
+    } catch (_) {
+      return const _LearningSubtitleLoadResult.unavailable(
+        'The Learning tracks could not be prepared. Try again or choose them manually.',
+      );
+    }
+  }
+
+  bool _learningRequestIsCurrent(PlaybackSnapshot snapshot) =>
+      mounted &&
+      _requestedSubtitleRendering == SubtitleRendering.learning &&
+      _latest.generation == snapshot.generation &&
+      _latest.phase != PlaybackPhase.failed;
 
   Future<_LearningSubtitleLoadResult>
   _performJapaneseLearningSubtitleLookup() async {
@@ -310,32 +508,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         );
       }
 
-      final translationLanguage = _languageBase(
-        settings.learningTranslationLanguage,
-      );
-      final translation = _latest.subtitleTracks
-          .where(
-            (track) =>
-                !track.isBitmapSubtitle &&
-                _languageBase(track.language) == translationLanguage,
-          )
-          .firstOrNull;
-      if (translation != null) {
-        await _engine.selectSubtitle(translation.id, secondary: true);
-      }
-      final japaneseAudio = _latest.audioTracks
-          .where((track) => _languageBase(track.language) == 'ja')
-          .firstOrNull;
-      if (japaneseAudio != null && japaneseAudio.id != _latest.selectedAudio) {
-        await _engine.selectAudio(japaneseAudio.id);
-      }
       await _engine.addSubtitle(
         match.source,
         title: match.title,
         language: 'ja',
       );
       return _LearningSubtitleLoadResult.ready(
-        'Japanese text attached from ${match.provider} and cached for this episode.',
+        'Japanese text attached from ${match.provider} and cached for this episode. Source: ${match.originalName}.',
       );
     } on LearningSubtitleFailure catch (failure) {
       return _LearningSubtitleLoadResult.unavailable(failure.message);
@@ -371,44 +550,28 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           _requestedSubtitleRendering != SubtitleRendering.learning) {
         return;
       }
-      unawaited(_autoPrepareLearningTracks(snapshot, settings));
+      unawaited(_autoPrepareLearningTracks(snapshot));
     });
   }
 
-  Future<void> _autoPrepareLearningTracks(
-    PlaybackSnapshot snapshot,
-    Settings settings,
-  ) async {
-    final japaneseAudio = snapshot.audioTracks
-        .where((track) => _languageBase(track.language) == 'ja')
-        .firstOrNull;
-    final textTracks = snapshot.subtitleTracks
-        .where((track) => !track.isBitmapSubtitle)
-        .toList();
-    final japanese = textTracks
-        .where((track) => _languageBase(track.language) == 'ja')
-        .firstOrNull;
-    final translation = textTracks
-        .where(
-          (track) =>
-              track.id != japanese?.id &&
-              _languageBase(track.language) ==
-                  _languageBase(settings.learningTranslationLanguage),
-        )
-        .firstOrNull;
-    try {
-      if (japaneseAudio != null && japaneseAudio.id != snapshot.selectedAudio) {
-        await _engine.selectAudio(japaneseAudio.id);
-      }
-      if (japanese != null) {
-        await _engine.selectSubtitle(japanese.id);
-        await _engine.selectSubtitle(translation?.id, secondary: true);
-      } else if (settings.learningAutoFetchJapaneseSubtitles) {
-        await _findJapaneseLearningSubtitle();
-      }
-    } on PlaybackFailure {
-      // The visible subtitle panel remains the explicit retry surface.
+  Future<void> _autoPrepareLearningTracks(PlaybackSnapshot snapshot) async {
+    if (!_learningRequestIsCurrent(snapshot)) return;
+    await _prepareLearningTracks();
+  }
+
+  Future<void> _setSubtitleRendering(SubtitleRendering mode) async {
+    _requestedSubtitleRendering = mode;
+    if (mode != SubtitleRendering.learning && mounted) {
+      setState(() {
+        _learningPreparationRequest = null;
+        _learningPreparationIdentity = null;
+        _learningPreparationCompletedIdentity = null;
+        _learningAutoAttempt = null;
+        _learningPreparationPending = false;
+        _learningPreparationResult = null;
+      });
     }
+    await _engine.setSubtitleRendering(mode);
   }
 
   void _run(Future<void> Function() command) {
@@ -598,6 +761,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 fit: _fit,
                 primaryCue: _primaryCue,
                 secondaryCue: _secondaryCue,
+                learningPreparationPending: _learningPreparationPending,
+                learningPreparationResult: _learningPreparationResult,
                 onBack: () => unawaited(_leave()),
                 onRetry: _source == null && _launch == null
                     ? null
@@ -616,16 +781,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 onVolume: (volume) => _run(() => _engine.setVolume(volume)),
                 onToggleMute: () => _run(_toggleMute),
                 onSpeed: (speed) => _run(() => _engine.setSpeed(speed)),
-                onAudio: (track) => _run(() => _engine.selectAudio(track)),
-                onSubtitle: (track) =>
-                    _run(() => _engine.selectSubtitle(track)),
-                onSecondarySubtitle: (track) =>
-                    _run(() => _engine.selectSubtitle(track, secondary: true)),
-                onSubtitleRendering: (mode) {
-                  _requestedSubtitleRendering = mode;
-                  _run(() => _engine.setSubtitleRendering(mode));
+                onAudio: (track) {
+                  _pickedAudioTrack = track;
+                  _run(() => _engine.selectAudio(track));
                 },
-                onFindJapaneseSubtitle: _findJapaneseLearningSubtitle,
+                onSubtitle: (track) {
+                  _pickedPrimarySubtitle = track;
+                  _run(() => _engine.selectSubtitle(track));
+                },
+                onSecondarySubtitle: (track) {
+                  _pickedSecondarySubtitle = track;
+                  _run(() => _engine.selectSubtitle(track, secondary: true));
+                },
+                onSubtitleRendering: _setSubtitleRendering,
+                onPrepareLearningTracks: _prepareLearningTracks,
                 onLearningLookup: () {
                   if (snapshot.phase == PlaybackPhase.playing ||
                       snapshot.phase == PlaybackPhase.buffering) {
@@ -675,6 +844,8 @@ class _PlayerStage extends StatelessWidget {
     required this.fit,
     required this.primaryCue,
     required this.secondaryCue,
+    required this.learningPreparationPending,
+    required this.learningPreparationResult,
     required this.onBack,
     required this.onRetry,
     required this.onTogglePlayback,
@@ -688,7 +859,7 @@ class _PlayerStage extends StatelessWidget {
     required this.onSubtitle,
     required this.onSecondarySubtitle,
     required this.onSubtitleRendering,
-    required this.onFindJapaneseSubtitle,
+    required this.onPrepareLearningTracks,
     required this.onLearningLookup,
     required this.onSubtitleDelay,
     required this.onAddSubtitle,
@@ -707,6 +878,8 @@ class _PlayerStage extends StatelessWidget {
   final BoxFit fit;
   final SubtitleCue? primaryCue;
   final SubtitleCue? secondaryCue;
+  final bool learningPreparationPending;
+  final _LearningSubtitleLoadResult? learningPreparationResult;
   final VoidCallback onBack;
   final VoidCallback? onRetry;
   final VoidCallback onTogglePlayback;
@@ -719,8 +892,8 @@ class _PlayerStage extends StatelessWidget {
   final ValueChanged<String?> onAudio;
   final ValueChanged<String?> onSubtitle;
   final ValueChanged<String?> onSecondarySubtitle;
-  final ValueChanged<SubtitleRendering> onSubtitleRendering;
-  final Future<_LearningSubtitleLoadResult> Function() onFindJapaneseSubtitle;
+  final Future<void> Function(SubtitleRendering) onSubtitleRendering;
+  final Future<_LearningSubtitleLoadResult> Function() onPrepareLearningTracks;
   final VoidCallback onLearningLookup;
   final void Function(Duration delay, bool secondary) onSubtitleDelay;
   final ValueChanged<_ExternalSubtitleRequest> onAddSubtitle;
@@ -808,7 +981,7 @@ class _PlayerStage extends StatelessWidget {
                     onSubtitle: onSubtitle,
                     onSecondarySubtitle: onSecondarySubtitle,
                     onSubtitleRendering: onSubtitleRendering,
-                    onFindJapaneseSubtitle: onFindJapaneseSubtitle,
+                    onPrepareLearningTracks: onPrepareLearningTracks,
                     onSubtitleDelay: onSubtitleDelay,
                     onAddSubtitle: onAddSubtitle,
                     onToggleFit: onToggleFit,
@@ -821,6 +994,9 @@ class _PlayerStage extends StatelessWidget {
               primary: primaryCue,
               secondary: secondaryCue,
               settings: learningSettings,
+              preparationPending: learningPreparationPending,
+              preparationResult: learningPreparationResult,
+              onRetryPreparation: onPrepareLearningTracks,
               onLookup: onLearningLookup,
             ),
         ],
@@ -1345,7 +1521,7 @@ class _PlayerControls extends StatelessWidget {
     required this.onSubtitle,
     required this.onSecondarySubtitle,
     required this.onSubtitleRendering,
-    required this.onFindJapaneseSubtitle,
+    required this.onPrepareLearningTracks,
     required this.onSubtitleDelay,
     required this.onAddSubtitle,
     required this.onToggleFit,
@@ -1365,8 +1541,8 @@ class _PlayerControls extends StatelessWidget {
   final ValueChanged<String?> onAudio;
   final ValueChanged<String?> onSubtitle;
   final ValueChanged<String?> onSecondarySubtitle;
-  final ValueChanged<SubtitleRendering> onSubtitleRendering;
-  final Future<_LearningSubtitleLoadResult> Function() onFindJapaneseSubtitle;
+  final Future<void> Function(SubtitleRendering) onSubtitleRendering;
+  final Future<_LearningSubtitleLoadResult> Function() onPrepareLearningTracks;
   final void Function(Duration delay, bool secondary) onSubtitleDelay;
   final ValueChanged<_ExternalSubtitleRequest> onAddSubtitle;
   final VoidCallback onToggleFit;
@@ -1479,7 +1655,7 @@ class _PlayerControls extends StatelessWidget {
                         onPrimary: onSubtitle,
                         onSecondary: onSecondarySubtitle,
                         onRendering: onSubtitleRendering,
-                        onFindJapaneseSubtitle: onFindJapaneseSubtitle,
+                        onPrepareLearningTracks: onPrepareLearningTracks,
                         onDelay: onSubtitleDelay,
                         onAddSubtitle: onAddSubtitle,
                       ),
@@ -1508,7 +1684,7 @@ class _PlayerControls extends StatelessWidget {
   }
 }
 
-class _SeekBar extends StatelessWidget {
+class _SeekBar extends StatefulWidget {
   const _SeekBar({
     required this.position,
     required this.buffered,
@@ -1522,13 +1698,71 @@ class _SeekBar extends StatelessWidget {
   final ValueChanged<Duration> onSeek;
 
   @override
+  State<_SeekBar> createState() => _SeekBarState();
+}
+
+class _SeekBarState extends State<_SeekBar> {
+  double? _previewMilliseconds;
+  bool _dragging = false;
+  Timer? _previewReset;
+
+  @override
+  void didUpdateWidget(_SeekBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final preview = _previewMilliseconds;
+    if (!_dragging && preview != null) {
+      final distance = (widget.position.inMilliseconds - preview).abs();
+      if (distance <= 750) {
+        _previewMilliseconds = null;
+        _previewReset?.cancel();
+      }
+    }
+  }
+
+  void _startSeek(double value) {
+    _previewReset?.cancel();
+    setState(() {
+      _dragging = true;
+      _previewMilliseconds = value;
+    });
+  }
+
+  void _previewSeek(double value) {
+    setState(() => _previewMilliseconds = value);
+  }
+
+  void _commitSeek(double value) {
+    setState(() {
+      _dragging = false;
+      _previewMilliseconds = value;
+    });
+    widget.onSeek(Duration(milliseconds: value.round()));
+    _previewReset?.cancel();
+    _previewReset = Timer(const Duration(seconds: 2), () {
+      if (mounted && !_dragging) {
+        setState(() => _previewMilliseconds = null);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _previewReset?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final end = duration.inMilliseconds
+    final end = widget.duration.inMilliseconds
         .toDouble()
         .clamp(1, double.infinity)
         .toDouble();
-    final played = position.inMilliseconds.toDouble().clamp(0, end).toDouble();
-    final loaded = buffered.inMilliseconds.toDouble().clamp(0, end) / end;
+    final played =
+        (_previewMilliseconds ?? widget.position.inMilliseconds.toDouble())
+            .clamp(0, end)
+            .toDouble();
+    final loaded =
+        widget.buffered.inMilliseconds.toDouble().clamp(0, end) / end;
     return SizedBox(
       height: 20,
       child: Stack(
@@ -1558,9 +1792,11 @@ class _SeekBar extends StatelessWidget {
             child: Slider(
               value: played,
               max: end,
-              onChanged: duration > Duration.zero
-                  ? (value) => onSeek(Duration(milliseconds: value.round()))
+              onChangeStart: widget.duration > Duration.zero
+                  ? _startSeek
                   : null,
+              onChanged: widget.duration > Duration.zero ? _previewSeek : null,
+              onChangeEnd: widget.duration > Duration.zero ? _commitSeek : null,
             ),
           ),
         ],
@@ -1569,12 +1805,32 @@ class _SeekBar extends StatelessWidget {
   }
 }
 
+const _subtitleShadows = [
+  Shadow(color: Color(0xF0000000), blurRadius: 3, offset: Offset(0, 1)),
+  Shadow(color: Colors.black, blurRadius: 9),
+  Shadow(color: Colors.black, blurRadius: 16),
+];
+
+const _maximumUnknownSubtitleCueDuration = Duration(seconds: 20);
+
+TextStyle _learningMainTextStyle(double scale) => TextStyle(
+  fontFamily: ShiruTokens.fontFamilyStats,
+  fontSize: 32 * scale,
+  fontWeight: FontWeight.w600,
+  height: 1.12,
+  color: Colors.white,
+  shadows: _subtitleShadows,
+);
+
 class _LearningSubtitleOverlay extends ConsumerStatefulWidget {
   const _LearningSubtitleOverlay({
     required this.snapshot,
     required this.primary,
     required this.secondary,
     required this.settings,
+    required this.preparationPending,
+    required this.preparationResult,
+    required this.onRetryPreparation,
     required this.onLookup,
   });
 
@@ -1582,6 +1838,9 @@ class _LearningSubtitleOverlay extends ConsumerStatefulWidget {
   final SubtitleCue? primary;
   final SubtitleCue? secondary;
   final Settings settings;
+  final bool preparationPending;
+  final _LearningSubtitleLoadResult? preparationResult;
+  final Future<_LearningSubtitleLoadResult> Function() onRetryPreparation;
   final VoidCallback onLookup;
 
   @override
@@ -1597,13 +1856,18 @@ class _LearningSubtitleOverlayState
   Future<List<LearningDefinition>>? _definitions;
   bool _pausedForCue = false;
 
-  bool _visible(SubtitleCue? cue, Duration delay) {
+  bool _visible(SubtitleCue? cue, Duration delay, String? selectedTrack) {
     if (cue == null || cue.generation != widget.snapshot.generation) {
       return false;
     }
+    if (selectedTrack == null || cue.trackId != selectedTrack) return false;
     final position = widget.snapshot.position - delay;
     if (position < cue.start) return false;
-    return cue.end == null || position <= cue.end!;
+    final reportedEnd = cue.end;
+    final effectiveEnd = reportedEnd == null || reportedEnd < cue.start
+        ? cue.start + _maximumUnknownSubtitleCueDuration
+        : reportedEnd;
+    return position <= effectiveEnd;
   }
 
   MediaTrack? _trackFor(SubtitleCue cue) => widget.snapshot.subtitleTracks
@@ -1642,12 +1906,23 @@ class _LearningSubtitleOverlayState
       if (showPrimary && widget.primary != null) widget.primary!,
       if (showSecondary && widget.secondary != null) widget.secondary!,
     ].where((cue) => cue.identity != japanese?.identity).toList();
-    return candidates
-            .where(
-              (cue) => _languageBase(_trackFor(cue)?.language) == preferred,
-            )
-            .firstOrNull ??
-        candidates.firstOrNull;
+    return candidates.where((cue) {
+      final track = _trackFor(cue);
+      return track != null && _trackLanguageBase(track) == preferred;
+    }).firstOrNull;
+  }
+
+  bool get _hasSelectedJapaneseTextTrack {
+    final selected = {
+      widget.snapshot.selectedPrimarySubtitle,
+      widget.snapshot.selectedSecondarySubtitle,
+    }..remove(null);
+    return widget.snapshot.subtitleTracks.any(
+      (track) =>
+          selected.contains(track.id) &&
+          !track.isBitmapSubtitle &&
+          _trackLanguageBase(track) == 'ja',
+    );
   }
 
   void _ensureAnalyzed(SubtitleCue cue) {
@@ -1678,130 +1953,123 @@ class _LearningSubtitleOverlayState
     final showPrimary = _visible(
       widget.primary,
       widget.snapshot.primarySubtitleDelay,
+      widget.snapshot.selectedPrimarySubtitle,
     );
     final showSecondary = _visible(
       widget.secondary,
       widget.snapshot.secondarySubtitleDelay,
+      widget.snapshot.selectedSecondarySubtitle,
     );
     if (!showPrimary && !showSecondary) return const SizedBox.shrink();
     final japanese = _japaneseCue(showPrimary, showSecondary);
     final translation = _translationCue(showPrimary, showSecondary, japanese);
     if (japanese != null) _ensureAnalyzed(japanese);
     final scale = widget.settings.learningSubtitleScale;
+    final showMissingTrackNotice =
+        japanese == null &&
+        !_hasSelectedJapaneseTextTrack &&
+        widget.preparationResult?.ready != true;
     return Align(
-      alignment: const Alignment(0, 0.58),
+      key: const ValueKey('learning-subtitle-overlay'),
+      alignment: Alignment.bottomCenter,
       child: SafeArea(
         minimum: const EdgeInsets.fromLTRB(
           ShiruTokens.space5,
-          ShiruTokens.space6,
           ShiruTokens.space5,
-          112,
+          ShiruTokens.space5,
+          88,
         ),
-        child: LayoutBuilder(
-          builder: (context, constraints) => ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: 980,
-              maxHeight: constraints.maxHeight,
-            ),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: const Color(0xE6090A0B),
-                border: Border.all(color: const Color(0x4D96B9FF)),
-                borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
-                boxShadow: const [
-                  BoxShadow(color: Color(0xB3000000), blurRadius: 24),
-                  BoxShadow(color: Color(0x182F75E4), blurRadius: 18),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 1080,
+            maxHeight: MediaQuery.sizeOf(context).height * 0.58,
+          ),
+          child: SingleChildScrollView(
+            reverse: true,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_selected != null) ...[
+                  _DefinitionPanel(
+                    token: _selected!,
+                    definitions: _definitions,
+                    status:
+                        ref.watch(learningDictionaryStatusProvider).value ??
+                        ref
+                            .read(languageLearningToolsProvider)
+                            .dictionaryStatus,
+                  ),
+                  const SizedBox(height: ShiruTokens.space3),
                 ],
-              ),
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: ShiruTokens.space5,
-                  vertical: ShiruTokens.space3,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (japanese == null)
-                      _LearningNotice(
-                        message: 'Choose a Japanese text subtitle track to make this line interactive. Bitmap subtitles need a text sidecar.',
-                      )
-                    else
-                      FutureBuilder<List<LearningToken>>(
-                        future: _tokens,
-                        builder: (context, state) {
-                          if (state.hasError) {
-                            return Text(
-                              japanese.plainText,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 22 * scale,
-                                color: ShiruTokens.highlight,
-                              ),
-                            );
-                          }
-                          final tokens = state.data;
-                          if (tokens == null) {
-                            return const Padding(
-                              padding: EdgeInsets.all(ShiruTokens.space2),
-                              child: SizedBox.square(
-                                dimension: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                            );
-                          }
-                          return Wrap(
-                            alignment: WrapAlignment.center,
-                            crossAxisAlignment: WrapCrossAlignment.end,
-                            spacing: 1,
-                            runSpacing: ShiruTokens.space2,
-                            children: [
-                              for (final token in tokens)
-                                _LearningWord(
-                                  token: token,
-                                  selected: token.key == _selected?.key,
-                                  settings: widget.settings,
-                                  scale: scale,
-                                  onLookup: () => _lookup(token),
-                                ),
-                            ],
-                          );
-                        },
-                      ),
-                    if (translation != null &&
-                        widget.settings.learningShowTranslation) ...[
-                      const SizedBox(height: ShiruTokens.space2),
-                      Text(
-                        translation.plainText,
-                        key: const ValueKey('learning-translation'),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontFamily: ShiruTokens.fontFamilyStats,
-                          fontSize: 16 * scale,
-                          height: 1.25,
-                          color: ShiruTokens.accentVeryLight,
-                          shadows: const [
-                            Shadow(color: Colors.black, blurRadius: 4),
-                          ],
-                        ),
-                      ),
-                    ],
-                    if (_selected != null) ...[
-                      const SizedBox(height: ShiruTokens.space3),
-                      _DefinitionPanel(
-                        token: _selected!,
-                        definitions: _definitions,
-                        status:
-                            ref.watch(learningDictionaryStatusProvider).value ??
-                            ref
-                                .read(languageLearningToolsProvider)
-                                .dictionaryStatus,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
+                if (showMissingTrackNotice) ...[
+                  _LearningNotice(
+                    message: widget.preparationPending
+                        ? 'Finding Japanese text for this episode…'
+                        : widget.preparationResult?.message ?? 'Japanese text is not selected. Open subtitle settings to choose a text track or add a sidecar.',
+                    loading: widget.preparationPending,
+                    onRetry: widget.preparationResult?.ready == false
+                        ? () => unawaited(widget.onRetryPreparation())
+                        : null,
+                  ),
+                  const SizedBox(height: ShiruTokens.space2),
+                ],
+                if (japanese != null)
+                  FutureBuilder<List<LearningToken>>(
+                    future: _tokens,
+                    builder: (context, state) {
+                      if (state.hasError) {
+                        return Text(
+                          japanese.plainText,
+                          textAlign: TextAlign.center,
+                          style: _learningMainTextStyle(scale),
+                        );
+                      }
+                      final tokens = state.data;
+                      if (tokens == null) {
+                        return const Padding(
+                          padding: EdgeInsets.all(ShiruTokens.space2),
+                          child: SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        );
+                      }
+                      return Wrap(
+                        alignment: WrapAlignment.center,
+                        crossAxisAlignment: WrapCrossAlignment.end,
+                        spacing: 1,
+                        runSpacing: ShiruTokens.space2,
+                        children: [
+                          for (final token in tokens)
+                            _LearningWord(
+                              token: token,
+                              selected: token.key == _selected?.key,
+                              settings: widget.settings,
+                              scale: scale,
+                              onLookup: () => _lookup(token),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                if (translation != null &&
+                    widget.settings.learningShowTranslation) ...[
+                  const SizedBox(height: ShiruTokens.space2),
+                  Text(
+                    translation.plainText,
+                    key: const ValueKey('learning-translation'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: ShiruTokens.fontFamilyStats,
+                      fontSize: 20 * scale,
+                      fontWeight: FontWeight.w500,
+                      height: 1.25,
+                      color: const Color(0xFFD6E5FF),
+                      shadows: _subtitleShadows,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ),
@@ -1827,19 +2095,20 @@ class _LearningWord extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final reading = token.reading;
+    final reading = token.reading ?? token.pronunciation;
+    final showKanji = settings.learningShowJapanese;
+    final showKana = settings.learningShowFurigana;
+    final showRomaji = settings.learningShowRomaji;
+    if (!showKanji && !showKana && !showRomaji) {
+      return const SizedBox.shrink();
+    }
     final showRuby =
-        settings.learningShowFurigana &&
-        settings.learningShowJapanese &&
-        token.containsKanji &&
-        reading != null;
-    final showMain =
-        settings.learningShowJapanese ||
-        !settings.learningShowRomaji ||
-        reading == null;
-    final main = settings.learningShowJapanese
+        showKana && showKanji && token.containsKanji && reading != null;
+    final main = showKanji
         ? token.surface
-        : reading ?? token.surface;
+        : showKana
+        ? reading ?? token.surface
+        : token.romanization ?? token.surface;
     final content = AnimatedContainer(
       key: ValueKey('learning-token-${token.key}'),
       duration: ShiruTokens.motionQuick,
@@ -1857,41 +2126,50 @@ class _LearningWord extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (showRuby)
-            Text(
-              reading,
-              style: TextStyle(
-                fontFamily: ShiruTokens.fontFamilyStats,
-                fontSize: 10 * scale,
-                height: 1.05,
-                color: ShiruTokens.accentVeryLight,
-              ),
+          if (showKana && showKanji)
+            SizedBox(
+              height: 17 * scale,
+              child: showRuby
+                  ? Text(
+                      reading,
+                      style: TextStyle(
+                        fontFamily: ShiruTokens.fontFamilyStats,
+                        fontSize: 13.5 * scale,
+                        fontWeight: FontWeight.w500,
+                        height: 1.05,
+                        color: const Color(0xFFD6E5FF),
+                        shadows: _subtitleShadows,
+                      ),
+                    )
+                  : null,
             ),
-          if (showMain)
-            Text(
-              main,
-              style: TextStyle(
-                fontFamily: ShiruTokens.fontFamilyStats,
-                fontSize: 22 * scale,
-                fontWeight: FontWeight.w500,
-                height: 1.15,
-                color: selected
-                    ? Colors.white
-                    : token.lookupable
-                    ? ShiruTokens.highlight
-                    : ShiruTokens.textLight,
-                shadows: const [Shadow(color: Colors.black, blurRadius: 5)],
-              ),
+          Text(
+            main,
+            style: _learningMainTextStyle(scale).copyWith(
+              color: selected
+                  ? Colors.white
+                  : token.lookupable
+                  ? ShiruTokens.highlight
+                  : const Color(0xFFE8E8E8),
             ),
-          if (settings.learningShowRomaji && token.romanization != null)
-            Text(
-              token.romanization!,
-              style: TextStyle(
-                fontFamily: ShiruTokens.fontFamilyStats,
-                fontSize: 9.5 * scale,
-                height: 1.05,
-                color: ShiruTokens.textLight,
-              ),
+          ),
+          if (showRomaji && (showKanji || showKana))
+            SizedBox(
+              height: 16 * scale,
+              child: token.romanization == null
+                  ? null
+                  : Text(
+                      token.romanization!,
+                      style: TextStyle(
+                        fontFamily: ShiruTokens.fontFamilyStats,
+                        fontSize: 12.5 * scale,
+                        fontWeight: FontWeight.w500,
+                        height: 1.05,
+                        letterSpacing: 0.15,
+                        color: const Color(0xFFD0D0D0),
+                        shadows: _subtitleShadows,
+                      ),
+                    ),
             ),
         ],
       ),
@@ -2012,28 +2290,59 @@ class _DefinitionPanel extends StatelessWidget {
 }
 
 class _LearningNotice extends StatelessWidget {
-  const _LearningNotice({required this.message});
+  const _LearningNotice({
+    required this.message,
+    this.loading = false,
+    this.onRetry,
+  });
 
   final String message;
+  final bool loading;
+  final VoidCallback? onRetry;
 
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      const Icon(
-        Icons.subtitles_off_rounded,
-        size: 18,
-        color: ShiruTokens.warning,
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: const Color(0xB3121416),
+      border: Border.all(color: const Color(0x38FFFFFF)),
+      borderRadius: BorderRadius.circular(ShiruTokens.radiusPill),
+      boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 10)],
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: ShiruTokens.space3,
+        vertical: ShiruTokens.space2,
       ),
-      const SizedBox(width: ShiruTokens.space2),
-      Flexible(
-        child: Text(
-          message,
-          key: const ValueKey('learning-text-track-required'),
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (loading)
+            const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            const Icon(
+              Icons.subtitles_off_rounded,
+              size: 17,
+              color: ShiruTokens.warning,
+            ),
+          const SizedBox(width: ShiruTokens.space2),
+          Flexible(
+            child: Text(
+              message,
+              key: const ValueKey('learning-text-track-required'),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(shadows: _subtitleShadows),
+            ),
+          ),
+          if (onRetry != null) ...[
+            const SizedBox(width: ShiruTokens.space2),
+            TextButton(onPressed: onRetry, child: const Text('Retry')),
+          ],
+        ],
       ),
-    ],
+    ),
   );
 }
 
@@ -2044,6 +2353,10 @@ class _LearningSubtitleLoadResult {
 
   final bool ready;
   final String message;
+
+  _LearningSubtitleLoadResult copyWithMessage(String message) => ready
+      ? _LearningSubtitleLoadResult.ready(message)
+      : _LearningSubtitleLoadResult.unavailable(message);
 }
 
 class _ExternalSubtitleRequest {
@@ -2067,7 +2380,7 @@ class _SubtitleButton extends StatelessWidget {
     required this.onPrimary,
     required this.onSecondary,
     required this.onRendering,
-    required this.onFindJapaneseSubtitle,
+    required this.onPrepareLearningTracks,
     required this.onDelay,
     required this.onAddSubtitle,
   });
@@ -2078,8 +2391,8 @@ class _SubtitleButton extends StatelessWidget {
   final ValueChanged<String?> onAudio;
   final ValueChanged<String?> onPrimary;
   final ValueChanged<String?> onSecondary;
-  final ValueChanged<SubtitleRendering> onRendering;
-  final Future<_LearningSubtitleLoadResult> Function() onFindJapaneseSubtitle;
+  final Future<void> Function(SubtitleRendering) onRendering;
+  final Future<_LearningSubtitleLoadResult> Function() onPrepareLearningTracks;
   final void Function(Duration delay, bool secondary) onDelay;
   final ValueChanged<_ExternalSubtitleRequest> onAddSubtitle;
 
@@ -2097,7 +2410,7 @@ class _SubtitleButton extends StatelessWidget {
           onPrimary: onPrimary,
           onSecondary: onSecondary,
           onRendering: onRendering,
-          onFindJapaneseSubtitle: onFindJapaneseSubtitle,
+          onPrepareLearningTracks: onPrepareLearningTracks,
           onDelay: onDelay,
           onAddSubtitle: onAddSubtitle,
         ),
@@ -2112,7 +2425,7 @@ class _SubtitleButton extends StatelessWidget {
   }
 }
 
-class _SubtitlePanel extends StatefulWidget {
+class _SubtitlePanel extends ConsumerStatefulWidget {
   const _SubtitlePanel({
     required this.snapshot,
     required this.snapshots,
@@ -2121,7 +2434,7 @@ class _SubtitlePanel extends StatefulWidget {
     required this.onPrimary,
     required this.onSecondary,
     required this.onRendering,
-    required this.onFindJapaneseSubtitle,
+    required this.onPrepareLearningTracks,
     required this.onDelay,
     required this.onAddSubtitle,
   });
@@ -2132,16 +2445,18 @@ class _SubtitlePanel extends StatefulWidget {
   final ValueChanged<String?> onAudio;
   final ValueChanged<String?> onPrimary;
   final ValueChanged<String?> onSecondary;
-  final ValueChanged<SubtitleRendering> onRendering;
-  final Future<_LearningSubtitleLoadResult> Function() onFindJapaneseSubtitle;
+  final Future<void> Function(SubtitleRendering) onRendering;
+  final Future<_LearningSubtitleLoadResult> Function() onPrepareLearningTracks;
   final void Function(Duration delay, bool secondary) onDelay;
   final ValueChanged<_ExternalSubtitleRequest> onAddSubtitle;
 
   @override
-  State<_SubtitlePanel> createState() => _SubtitlePanelState();
+  ConsumerState<_SubtitlePanel> createState() => _SubtitlePanelState();
 }
 
-class _SubtitlePanelState extends State<_SubtitlePanel> {
+enum _LearningLayer { kanji, kana, romaji, translation }
+
+class _SubtitlePanelState extends ConsumerState<_SubtitlePanel> {
   late final StreamSubscription<PlaybackSnapshot> _subscription;
   late PlaybackSnapshot _snapshot = widget.snapshot;
   late String? _primary = widget.snapshot.selectedPrimarySubtitle;
@@ -2149,6 +2464,10 @@ class _SubtitlePanelState extends State<_SubtitlePanel> {
   late SubtitleRendering _rendering = widget.snapshot.subtitleRendering;
   late Duration _primaryDelay = widget.snapshot.primarySubtitleDelay;
   late Duration _secondaryDelay = widget.snapshot.secondarySubtitleDelay;
+  late bool _showKanji = widget.learningSettings.learningShowJapanese;
+  late bool _showKana = widget.learningSettings.learningShowFurigana;
+  late bool _showRomaji = widget.learningSettings.learningShowRomaji;
+  late bool _showTranslation = widget.learningSettings.learningShowTranslation;
   String? _learningWarning;
   bool _learningMessagePositive = false;
   bool _findingJapanese = false;
@@ -2195,86 +2514,73 @@ class _SubtitlePanelState extends State<_SubtitlePanel> {
     widget.onDelay(value, secondary);
   }
 
-  void _setRendering(SubtitleRendering mode) {
-    _learningRequest++;
+  void _setLearningLayer(_LearningLayer layer, bool selected) {
+    setState(() {
+      switch (layer) {
+        case _LearningLayer.kanji:
+          _showKanji = selected;
+          break;
+        case _LearningLayer.kana:
+          _showKana = selected;
+          break;
+        case _LearningLayer.romaji:
+          _showRomaji = selected;
+          break;
+        case _LearningLayer.translation:
+          _showTranslation = selected;
+          break;
+      }
+    });
+    final showKanji = _showKanji;
+    final showKana = _showKana;
+    final showRomaji = _showRomaji;
+    final showTranslation = _showTranslation;
+    unawaited(
+      ref
+          .read(settingsControllerProvider.notifier)
+          .persist(
+            (current) => current.copyWith(
+              learningShowJapanese: showKanji,
+              learningShowFurigana: showKana,
+              learningShowRomaji: showRomaji,
+              learningShowTranslation: showTranslation,
+            ),
+          ),
+    );
+  }
+
+  Future<void> _setRendering(SubtitleRendering mode) async {
+    final request = ++_learningRequest;
     setState(() {
       _rendering = mode;
       _learningWarning = null;
       _learningMessagePositive = false;
       _learningCanRetry = false;
     });
-    widget.onRendering(mode);
+    try {
+      await widget.onRendering(mode);
+    } on PlaybackFailure catch (failure) {
+      if (!mounted || request != _learningRequest) return;
+      setState(() {
+        _learningWarning = failure.message;
+        _learningCanRetry = true;
+      });
+      return;
+    }
     if (mode == SubtitleRendering.learning &&
         widget.learningSettings.learningAutoSelectTracks) {
-      unawaited(_prepareLearningTracks());
+      await _prepareLearningTracks();
     }
   }
 
   Future<void> _prepareLearningTracks() async {
     final request = ++_learningRequest;
-    final warnings = <String>[];
-    final japaneseAudio = _snapshot.audioTracks
-        .where((track) => _languageBase(track.language) == 'ja')
-        .firstOrNull;
-    if (japaneseAudio != null && japaneseAudio.id != _snapshot.selectedAudio) {
-      widget.onAudio(japaneseAudio.id);
-    } else if (japaneseAudio == null &&
-        _snapshot.audioTracks.any(
-          (track) => _languageBase(track.language) != null,
-        )) {
-      warnings.add(
-        'No Japanese audio track was found; the current audio stays selected.',
-      );
-    }
-
-    final textTracks = _snapshot.subtitleTracks
-        .where((track) => !track.isBitmapSubtitle)
-        .toList();
-    final japanese = textTracks
-        .where((track) => _languageBase(track.language) == 'ja')
-        .firstOrNull;
-    final translationLanguage = _languageBase(
-      widget.learningSettings.learningTranslationLanguage,
-    );
-    final translation = textTracks
-        .where(
-          (track) =>
-              track.id != japanese?.id &&
-              _languageBase(track.language) == translationLanguage,
-        )
-        .firstOrNull;
-    if (japanese != null) {
-      _selectPrimary(japanese.id);
-      _selectSecondary(translation?.id);
-      if (translation == null &&
-          widget.learningSettings.learningShowTranslation) {
-        warnings.add(
-          'Japanese is ready. No matching ${_languageTitle(translationLanguage)} text track was found, so translation is hidden for this release.',
-        );
-      }
-      if (warnings.isNotEmpty && mounted) {
-        setState(() => _learningWarning = warnings.join(' '));
-      }
-      return;
-    }
-
-    if (!widget.learningSettings.learningAutoFetchJapaneseSubtitles) {
-      warnings.add(
-        'No Japanese text track is embedded. Automatic fetching is disabled; add a local ASS, SRT, or VTT sidecar.',
-      );
-      if (mounted) setState(() => _learningWarning = warnings.join(' '));
-      return;
-    }
-
     setState(() {
       _findingJapanese = true;
       _learningCanRetry = false;
-      _learningWarning = [
-        ...warnings,
-        'Finding a Japanese text track for this episode…',
-      ].join(' ');
+      _learningWarning = 'Preparing Japanese text and translation tracks…';
     });
-    final result = await widget.onFindJapaneseSubtitle();
+    final result = await widget.onPrepareLearningTracks();
     if (!mounted ||
         request != _learningRequest ||
         _rendering != SubtitleRendering.learning) {
@@ -2284,22 +2590,22 @@ class _SubtitlePanelState extends State<_SubtitlePanel> {
       _findingJapanese = false;
       _learningMessagePositive = result.ready;
       _learningCanRetry = !result.ready;
-      _learningWarning = [...warnings, result.message].join(' ');
+      _learningWarning = result.message;
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 820, maxHeight: 680),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: ShiruTokens.surfaceShell,
-          border: Border.all(color: ShiruTokens.surfaceBorder),
+      constraints: const BoxConstraints(maxWidth: 640, maxHeight: 680),
+      child: Material(
+        color: ShiruTokens.surfaceShell,
+        elevation: 24,
+        shadowColor: Colors.black,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          side: const BorderSide(color: ShiruTokens.surfaceBorder),
           borderRadius: BorderRadius.circular(ShiruTokens.radiusSurfaceTop),
-          boxShadow: const [
-            BoxShadow(color: Color(0xD9000000), blurRadius: 36),
-          ],
         ),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(ShiruTokens.space5),
@@ -2315,7 +2621,7 @@ class _SubtitlePanelState extends State<_SubtitlePanel> {
                   const SizedBox(width: ShiruTokens.space2),
                   Expanded(
                     child: Text(
-                      'Subtitles & languages',
+                      'Subtitles',
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
                   ),
@@ -2352,6 +2658,48 @@ class _SubtitlePanelState extends State<_SubtitlePanel> {
                 onSelectionChanged: (selection) =>
                     _setRendering(selection.single),
               ),
+              if (_rendering == SubtitleRendering.learning) ...[
+                const SizedBox(height: ShiruTokens.space4),
+                Text(
+                  'Learning layers',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: ShiruTokens.space2),
+                Wrap(
+                  spacing: ShiruTokens.space2,
+                  runSpacing: ShiruTokens.space2,
+                  children: [
+                    FilterChip(
+                      key: const ValueKey('learning-layer-kanji'),
+                      label: const Text('Kanji'),
+                      selected: _showKanji,
+                      onSelected: (value) =>
+                          _setLearningLayer(_LearningLayer.kanji, value),
+                    ),
+                    FilterChip(
+                      key: const ValueKey('learning-layer-kana'),
+                      label: const Text('Kana'),
+                      selected: _showKana,
+                      onSelected: (value) =>
+                          _setLearningLayer(_LearningLayer.kana, value),
+                    ),
+                    FilterChip(
+                      key: const ValueKey('learning-layer-romaji'),
+                      label: const Text('Romaji'),
+                      selected: _showRomaji,
+                      onSelected: (value) =>
+                          _setLearningLayer(_LearningLayer.romaji, value),
+                    ),
+                    FilterChip(
+                      key: const ValueKey('learning-layer-translation'),
+                      label: const Text('Translation'),
+                      selected: _showTranslation,
+                      onSelected: (value) =>
+                          _setLearningLayer(_LearningLayer.translation, value),
+                    ),
+                  ],
+                ),
+              ],
               if (_learningWarning != null) ...[
                 const SizedBox(height: ShiruTokens.space3),
                 DecoratedBox(
@@ -2415,61 +2763,61 @@ class _SubtitlePanelState extends State<_SubtitlePanel> {
                   ),
                 ),
               ],
-              const SizedBox(height: ShiruTokens.space5),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final compact = constraints.maxWidth < 650;
-                  final primary = _TrackSection(
-                    title: 'Primary',
-                    tracks: _snapshot.subtitleTracks,
-                    selected: _primary,
-                    onSelected: _selectPrimary,
-                  );
-                  final secondary = _TrackSection(
-                    title: 'Secondary',
-                    subtitle: 'Optional dual-language line',
-                    tracks: _snapshot.subtitleTracks,
-                    selected: _secondary,
-                    onSelected: _selectSecondary,
-                  );
-                  if (compact) {
-                    return Column(
-                      children: [
-                        primary,
-                        const SizedBox(height: ShiruTokens.space4),
-                        secondary,
-                      ],
-                    );
-                  }
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: primary),
-                      const SizedBox(width: ShiruTokens.space4),
-                      Expanded(child: secondary),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: ShiruTokens.space5),
-              _DelayRow(
-                label: 'Primary timing',
-                value: _primaryDelay,
-                onChanged: (value) => _setDelay(value, secondary: false),
-              ),
-              _DelayRow(
-                label: 'Secondary timing',
-                value: _secondaryDelay,
-                onChanged: (value) => _setDelay(value, secondary: true),
-              ),
               const SizedBox(height: ShiruTokens.space3),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  final request = await _showExternalSubtitleDialog(context);
-                  if (request != null) widget.onAddSubtitle(request);
-                },
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('Add sidecar subtitle'),
+              Theme(
+                data: Theme.of(context)
+                    .copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  key: const ValueKey('advanced-subtitle-settings'),
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: const EdgeInsets.only(
+                    bottom: ShiruTokens.space2,
+                  ),
+                  leading: const Icon(Icons.tune_rounded, size: 20),
+                  title: const Text('Advanced'),
+                  subtitle: const Text('Manual tracks, timing, and sidecars'),
+                  children: [
+                    _TrackPickerRow(
+                      title: 'Primary track',
+                      tracks: _snapshot.subtitleTracks,
+                      selected: _primary,
+                      onSelected: _selectPrimary,
+                    ),
+                    const SizedBox(height: ShiruTokens.space2),
+                    _TrackPickerRow(
+                      title: 'Secondary track',
+                      subtitle: 'Optional translation line',
+                      tracks: _snapshot.subtitleTracks,
+                      selected: _secondary,
+                      onSelected: _selectSecondary,
+                    ),
+                    const SizedBox(height: ShiruTokens.space3),
+                    _DelayRow(
+                      label: 'Primary timing',
+                      value: _primaryDelay,
+                      onChanged: (value) => _setDelay(value, secondary: false),
+                    ),
+                    _DelayRow(
+                      label: 'Secondary timing',
+                      value: _secondaryDelay,
+                      onChanged: (value) => _setDelay(value, secondary: true),
+                    ),
+                    const SizedBox(height: ShiruTokens.space2),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          final request = await _showExternalSubtitleDialog(
+                            context,
+                          );
+                          if (request != null) widget.onAddSubtitle(request);
+                        },
+                        icon: const Icon(Icons.add_rounded),
+                        label: const Text('Add sidecar subtitle'),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -2508,8 +2856,8 @@ Future<void> _showSubtitlePanel(BuildContext context, {required Widget panel}) {
   );
 }
 
-class _TrackSection extends StatelessWidget {
-  const _TrackSection({
+class _TrackPickerRow extends StatelessWidget {
+  const _TrackPickerRow({
     required this.title,
     required this.tracks,
     required this.selected,
@@ -2525,96 +2873,60 @@ class _TrackSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: ShiruTokens.surfacePanel,
-        border: Border.all(color: ShiruTokens.surfaceBorder),
-        borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(ShiruTokens.space3),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
-            if (subtitle != null)
-              Text(subtitle!, style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: ShiruTokens.space2),
-            _TrackOption(
-              label: 'Off',
-              selected: selected == null,
-              onTap: () => onSelected(null),
-            ),
-            for (var index = 0; index < tracks.length; index++)
-              _TrackOption(
-                label: _trackLabel(tracks[index], index),
-                detail: _trackDetail(tracks[index]),
-                selected: selected == tracks[index].id,
-                onTap: () => onSelected(tracks[index].id),
-              ),
-          ],
+    final selectedIndex = tracks.indexWhere((track) => track.id == selected);
+    final selectedLabel = selected == null
+        ? 'Off'
+        : selectedIndex < 0
+        ? 'Unavailable track'
+        : _fullTrackLabel(tracks[selectedIndex], selectedIndex);
+    return PopupMenuButton<_TrackChoice>(
+      tooltip: 'Choose $title',
+      onSelected: (choice) => onSelected(choice.id),
+      itemBuilder: (context) => [
+        CheckedPopupMenuItem(
+          value: const _TrackChoice(null),
+          checked: selected == null,
+          child: const Text('Off'),
         ),
-      ),
-    );
-  }
-}
-
-class _TrackOption extends StatelessWidget {
-  const _TrackOption({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    this.detail,
-  });
-
-  final String label;
-  final String? detail;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? const Color(0x3D2F75E4) : Colors.transparent,
-      borderRadius: BorderRadius.circular(ShiruTokens.radiusBase),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(ShiruTokens.radiusBase),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: ShiruTokens.space2,
-            vertical: ShiruTokens.space2,
+        for (var index = 0; index < tracks.length; index++)
+          CheckedPopupMenuItem(
+            value: _TrackChoice(tracks[index].id),
+            checked: selected == tracks[index].id,
+            child: Text(_fullTrackLabel(tracks[index], index)),
           ),
+      ],
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: ShiruTokens.surfacePanel,
+          border: Border.all(color: ShiruTokens.surfaceBorder),
+          borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(ShiruTokens.space3),
           child: Row(
             children: [
-              Icon(
-                selected ? Icons.radio_button_checked : Icons.radio_button_off,
-                size: 18,
-                color: selected
-                    ? ShiruTokens.accentVeryLight
-                    : ShiruTokens.textMuted,
-              ),
-              const SizedBox(width: ShiruTokens.space2),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                    if (detail != null)
+                    Text(title, style: Theme.of(context).textTheme.titleSmall),
+                    if (subtitle != null)
                       Text(
-                        detail!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        subtitle!,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
+                    const SizedBox(height: ShiruTokens.space1),
+                    Text(
+                      selectedLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium
+                          ?.copyWith(color: ShiruTokens.accentVeryLight),
+                    ),
                   ],
                 ),
               ),
+              const Icon(Icons.expand_more_rounded),
             ],
           ),
         ),
@@ -2883,30 +3195,170 @@ String? _languageBase(String? code) {
   final base = code.trim().toLowerCase().replaceAll('_', '-').split('-').first;
   const iso3 = {
     'ara': 'ar',
+    'arabic': 'ar',
     'deu': 'de',
     'ger': 'de',
+    'german': 'de',
     'eng': 'en',
+    'english': 'en',
     'spa': 'es',
+    'spanish': 'es',
     'fra': 'fr',
     'fre': 'fr',
+    'french': 'fr',
     'hin': 'hi',
+    'hindi': 'hi',
     'ind': 'id',
+    'indonesian': 'id',
     'ita': 'it',
+    'italian': 'it',
+    'ja': 'ja',
+    'jp': 'ja',
+    'jap': 'ja',
     'jpn': 'ja',
+    'japanese': 'ja',
     'kor': 'ko',
+    'korean': 'ko',
     'nld': 'nl',
     'dut': 'nl',
+    'dutch': 'nl',
     'pol': 'pl',
+    'polish': 'pl',
     'por': 'pt',
+    'portuguese': 'pt',
     'rus': 'ru',
+    'russian': 'ru',
     'tha': 'th',
+    'thai': 'th',
     'tur': 'tr',
+    'turkish': 'tr',
     'ukr': 'uk',
+    'ukrainian': 'uk',
     'vie': 'vi',
+    'vietnamese': 'vi',
     'zho': 'zh',
     'chi': 'zh',
+    'chinese': 'zh',
   };
   return iso3[base] ?? base;
+}
+
+String? _trackLanguageBase(MediaTrack track) {
+  final tagged = _languageBase(track.language);
+  if (tagged != null) return tagged;
+  final title = track.title?.toLowerCase();
+  if (title == null || title.trim().isEmpty) return null;
+  final words = RegExp(r'[a-z]{2,}')
+      .allMatches(title)
+      .map((match) => match.group(0)!)
+      .toSet();
+  const aliases = <String, String>{
+    'ja': 'ja',
+    'jp': 'ja',
+    'jpn': 'ja',
+    'japanese': 'ja',
+    'en': 'en',
+    'eng': 'en',
+    'english': 'en',
+    'es': 'es',
+    'spa': 'es',
+    'spanish': 'es',
+    'pt': 'pt',
+    'por': 'pt',
+    'portuguese': 'pt',
+    'de': 'de',
+    'deu': 'de',
+    'ger': 'de',
+    'german': 'de',
+    'fr': 'fr',
+    'fra': 'fr',
+    'fre': 'fr',
+    'french': 'fr',
+    'it': 'it',
+    'ita': 'it',
+    'italian': 'it',
+    'ko': 'ko',
+    'kor': 'ko',
+    'korean': 'ko',
+    'zh': 'zh',
+    'zho': 'zh',
+    'chi': 'zh',
+    'chinese': 'zh',
+    'ru': 'ru',
+    'rus': 'ru',
+    'russian': 'ru',
+    'ar': 'ar',
+    'ara': 'ar',
+    'arabic': 'ar',
+    'hi': 'hi',
+    'hin': 'hi',
+    'hindi': 'hi',
+    'id': 'id',
+    'ind': 'id',
+    'indonesian': 'id',
+    'pl': 'pl',
+    'pol': 'pl',
+    'polish': 'pl',
+    'th': 'th',
+    'tha': 'th',
+    'thai': 'th',
+    'tr': 'tr',
+    'tur': 'tr',
+    'turkish': 'tr',
+    'uk': 'uk',
+    'ukr': 'uk',
+    'ukrainian': 'uk',
+    'vi': 'vi',
+    'vie': 'vi',
+    'vietnamese': 'vi',
+  };
+  for (final word in words) {
+    final language = aliases[word];
+    if (language != null) return language;
+  }
+  return null;
+}
+
+MediaTrack? _preferredLearningTrack(
+  Iterable<MediaTrack> tracks,
+  String? language, {
+  Iterable<String?> selectedIds = const [],
+  Iterable<String?> preferredIds = const [],
+  bool subtitle = false,
+}) {
+  final wanted = _languageBase(language);
+  if (wanted == null) return null;
+  final selected = selectedIds.whereType<String>().toSet();
+  final preferred = preferredIds.whereType<String>().toSet();
+  MediaTrack? best;
+  int? bestScore;
+  for (final track in tracks) {
+    if (_trackLanguageBase(track) != wanted) continue;
+    final title = track.title?.toLowerCase() ?? '';
+    var score = track.isDefault ? 25 : 0;
+    if (selected.contains(track.id)) score += 15;
+    if (preferred.contains(track.id)) score += 1000;
+    if (subtitle) {
+      if (RegExp(r'\b(full|dialogue|dialog|complete)\b').hasMatch(title)) {
+        score += 80;
+      }
+      if (track.isForced ||
+          RegExp(r'\b(signs?|songs?|forced)\b').hasMatch(title)) {
+        score -= 140;
+      }
+      if (RegExp(r'\b(jimaku|learning)\b').hasMatch(title)) score += 40;
+    } else {
+      if (RegExp(r'\b(main|original)\b').hasMatch(title)) score += 30;
+      if (RegExp(r'\b(commentary|descriptive|description)\b').hasMatch(title)) {
+        score -= 140;
+      }
+    }
+    if (bestScore == null || score > bestScore) {
+      best = track;
+      bestScore = score;
+    }
+  }
+  return best;
 }
 
 String _languageTitle(String? code) =>

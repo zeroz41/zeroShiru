@@ -66,10 +66,14 @@ class MediaKitEngine implements MediaEngine {
   Duration _secondarySubtitleDelay = Duration.zero;
   Timer? _metricTimer;
   var _generation = 0;
+  var _seekRequest = 0;
   var _primaryCueRequest = 0;
   var _secondaryCueRequest = 0;
+  String? _blockedPrimarySubtitleText;
+  String? _blockedSecondarySubtitleText;
   var _disposed = false;
   var _pollingMetrics = false;
+  DateTime? _recoverableBackendErrorsThrough;
 
   @override
   Stream<PlaybackSnapshot> get state => _states.stream;
@@ -90,6 +94,8 @@ class MediaKitEngine implements MediaEngine {
     PlaybackPreferences? preferences,
   }) async {
     _ensureAlive();
+    _seekRequest++;
+    _recoverableBackendErrorsThrough = null;
     if (!isAllowedPlaybackSource(source.url)) {
       final failure = PlaybackFailure(
         PlaybackFailureKind.unsafeSource,
@@ -106,6 +112,8 @@ class MediaKitEngine implements MediaEngine {
     _phase = PlaybackPhase.opening;
     _failure = null;
     _selectedSecondary = null;
+    _blockedPrimarySubtitleText = null;
+    _blockedSecondarySubtitleText = null;
     _primarySubtitleDelay = Duration.zero;
     _secondarySubtitleDelay = Duration.zero;
     _emit();
@@ -164,9 +172,35 @@ class MediaKitEngine implements MediaEngine {
     final target = position < Duration.zero
         ? Duration.zero
         : (position > upper ? upper : position);
-    await _command(
-      () => _player.seek(target),
-      'The player could not seek to that position.',
+    final origin = _player.state.position;
+    final request = ++_seekRequest;
+    final generation = _generation;
+    // media_kit deliberately de-duplicates equal subtitle text. Clear the app
+    // cues before a discontinuous seek so an open-ended line or an in-flight
+    // timing lookup cannot survive at an unrelated playback position.
+    _blockedPrimarySubtitleText = _subtitleTextAt(0);
+    _blockedSecondarySubtitleText = _subtitleTextAt(1);
+    _clearCue(secondary: false);
+    _clearCue(secondary: true);
+    try {
+      await _command(
+        () => _player.seek(target),
+        'The player could not seek to that position.',
+      );
+    } catch (_) {
+      if (!_disposed && request == _seekRequest && generation == _generation) {
+        _resumeCurrentCue(secondary: false);
+        _resumeCurrentCue(secondary: true);
+      }
+      rethrow;
+    }
+    unawaited(
+      _refreshCuesAfterSeek(
+        request,
+        generation,
+        origin: origin,
+        target: target,
+      ),
     );
   }
 
@@ -191,6 +225,7 @@ class MediaKitEngine implements MediaEngine {
   @override
   Future<void> selectAudio(String? trackId) async {
     _ensureAlive();
+    _allowTransientTrackErrors();
     if (trackId == null) {
       await _command(
         () => _player.setAudioTrack(kit.AudioTrack.auto()),
@@ -214,6 +249,8 @@ class MediaKitEngine implements MediaEngine {
   @override
   Future<void> selectSubtitle(String? trackId, {bool secondary = false}) async {
     _ensureAlive();
+    _seekRequest++;
+    _allowTransientTrackErrors();
     if (secondary) {
       if (trackId != null &&
           !_player.state.tracks.subtitle.any((e) => e.id == trackId)) {
@@ -222,44 +259,78 @@ class MediaKitEngine implements MediaEngine {
           'That subtitle track is no longer available.',
         );
       }
+      final previous = _selectedSecondary;
+      _selectedSecondary = trackId;
+      _blockedSecondarySubtitleText = _subtitleTextAt(1);
+      _clearCue(secondary: true, trackId: trackId);
+      _emit();
       final changed = await _setNativeProperty(
         'secondary-sid',
         trackId ?? 'no',
       );
       if (!changed) {
+        _selectedSecondary = previous;
+        _resumeCurrentCue(secondary: true);
+        _emit();
         throw const PlaybackFailure(
           PlaybackFailureKind.unsupported,
           'Secondary subtitles are unavailable on this player.',
         );
       }
-      _selectedSecondary = trackId;
+      final effective = await _nativeProperty('secondary-sid');
+      if (effective != null &&
+          !nativeTrackSelectionMatches(effective, trackId)) {
+        await _setNativeProperty('secondary-sid', 'no');
+        _selectedSecondary = null;
+        _blockedSecondarySubtitleText = _subtitleTextAt(1);
+        _clearCue(secondary: true);
+        _emit();
+        throw const PlaybackFailure(
+          PlaybackFailureKind.backend,
+          'The player selected a different secondary subtitle track.',
+        );
+      }
       _emit();
       return;
     }
 
-    if (trackId == null) {
-      await _command(
-        () => _player.setSubtitleTrack(kit.SubtitleTrack.no()),
-        'The player could not change subtitle tracks.',
-      );
-      return;
-    }
-    final track = _player.state.tracks.subtitle.where((e) => e.id == trackId);
-    if (track.isEmpty) {
+    if (trackId != null &&
+        !_player.state.tracks.subtitle.any((track) => track.id == trackId)) {
       throw const PlaybackFailure(
         PlaybackFailureKind.unsupported,
         'That subtitle track is no longer available.',
       );
     }
-    await _command(
-      () => _player.setSubtitleTrack(track.first),
-      'The player could not change subtitle tracks.',
-    );
+    _blockedPrimarySubtitleText = _subtitleTextAt(0);
+    _clearCue(secondary: false, trackId: trackId);
+    if (trackId == null) {
+      try {
+        await _command(
+          () => _player.setSubtitleTrack(kit.SubtitleTrack.no()),
+          'The player could not change subtitle tracks.',
+        );
+      } catch (_) {
+        _resumeCurrentCue(secondary: false);
+        rethrow;
+      }
+      return;
+    }
+    final track = _player.state.tracks.subtitle.where((e) => e.id == trackId);
+    try {
+      await _command(
+        () => _player.setSubtitleTrack(track.first),
+        'The player could not change subtitle tracks.',
+      );
+    } catch (_) {
+      _resumeCurrentCue(secondary: false);
+      rethrow;
+    }
   }
 
   @override
   Future<void> setSubtitleRendering(SubtitleRendering mode) async {
     _ensureAlive();
+    _allowTransientTrackErrors();
     _subtitleRendering = mode;
     await _applySubtitleVisibility();
     _emit();
@@ -315,22 +386,31 @@ class MediaKitEngine implements MediaEngine {
     String? language,
   }) async {
     _ensureAlive();
+    _seekRequest++;
+    _allowTransientTrackErrors(const Duration(seconds: 3));
     if (!isAllowedSubtitleSource(source)) {
       throw const PlaybackFailure(
         PlaybackFailureKind.unsafeSource,
         'That subtitle source is unsupported or insecure.',
       );
     }
-    await _command(
-      () => _player.setSubtitleTrack(
-        kit.SubtitleTrack.uri(
-          source,
-          title: title,
-          language: normalizeTrackLanguage(language),
+    _blockedPrimarySubtitleText = _subtitleTextAt(0);
+    _clearCue(secondary: false, trackId: source);
+    try {
+      await _command(
+        () => _player.setSubtitleTrack(
+          kit.SubtitleTrack.uri(
+            source,
+            title: title,
+            language: normalizeTrackLanguage(language),
+          ),
         ),
-      ),
-      'The subtitle file could not be loaded.',
-    );
+        'The subtitle file could not be loaded.',
+      );
+    } catch (_) {
+      _resumeCurrentCue(secondary: false);
+      rethrow;
+    }
     // Loading a track must not re-enable libass behind the native Learning
     // overlay. Some libmpv builds adjust visibility while selecting a URI.
     await _applySubtitleVisibility();
@@ -341,12 +421,21 @@ class MediaKitEngine implements MediaEngine {
     final audio = preferredKitTrack(
       _player.state.tracks.audio,
       preferences.audioLanguage,
-      (track) => track.language,
+      (track) => inferredTrackLanguage(track.language, track.title),
+      scoreOf: (track) => automaticTrackScore(
+        title: track.title,
+        isDefault: track.isDefault ?? false,
+      ),
     );
     final subtitle = preferredKitTrack(
       _player.state.tracks.subtitle,
       preferences.subtitleLanguage,
-      (track) => track.language,
+      (track) => inferredTrackLanguage(track.language, track.title),
+      scoreOf: (track) => automaticTrackScore(
+        title: track.title,
+        isDefault: track.isDefault ?? false,
+        subtitle: true,
+      ),
     );
     // Preference failure should never make an otherwise playable file fail to
     // open. libmpv's own default remains the safe fallback.
@@ -376,12 +465,23 @@ class MediaKitEngine implements MediaEngine {
     if (_selectedSecondary != null &&
         !tracks.subtitle.any((track) => track.id == _selectedSecondary)) {
       _selectedSecondary = null;
+      _blockedSecondarySubtitleText = _subtitleTextAt(1);
+      _clearCue(secondary: true);
     }
     _emit();
   }
 
   void _onBackendError(String _) {
-    if (_phase == PlaybackPhase.idle || _phase == PlaybackPhase.failed) return;
+    if (!shouldFailPlaybackForBackendError(
+      phase: _phase,
+      recoverableThrough: _recoverableBackendErrorsThrough,
+      now: DateTime.now(),
+    )) {
+      // media_kit also forwards libmpv log errors from optional track changes.
+      // A rejected subtitle or a brief decoder reconfigure must not replace a
+      // healthy video with the full-screen fatal playback state.
+      return;
+    }
     _failure = const PlaybackFailure(
       PlaybackFailureKind.backend,
       'Playback stopped because the media backend reported an error.',
@@ -390,17 +490,219 @@ class MediaKitEngine implements MediaEngine {
     _emit();
   }
 
+  void _allowTransientTrackErrors([
+    Duration grace = const Duration(seconds: 2),
+  ]) {
+    final through = DateTime.now().add(grace);
+    final current = _recoverableBackendErrorsThrough;
+    if (current == null || through.isAfter(current)) {
+      _recoverableBackendErrorsThrough = through;
+    }
+  }
+
   void _onSubtitle(List<String> text) {
     if (_disposed) return;
-    final primaryRequest = ++_primaryCueRequest;
-    final secondaryRequest = ++_secondaryCueRequest;
-    if (text.isNotEmpty) {
-      unawaited(
-        _emitCue(text.first, secondary: false, request: primaryRequest),
-      );
+    final primary = text.isEmpty ? '' : text.first;
+    final secondary = text.length < 2 ? '' : text[1];
+    _handleSubtitleText(primary, secondary: false);
+    _handleSubtitleText(secondary, secondary: true);
+  }
+
+  void _handleSubtitleText(String raw, {required bool secondary}) {
+    final blocked = secondary
+        ? _blockedSecondarySubtitleText
+        : _blockedPrimarySubtitleText;
+    if (blocked != null) {
+      if (raw == blocked) return;
+      if (secondary) {
+        _blockedSecondarySubtitleText = null;
+      } else {
+        _blockedPrimarySubtitleText = null;
+      }
     }
-    if (text.length > 1) {
-      unawaited(_emitCue(text[1], secondary: true, request: secondaryRequest));
+    final request = secondary ? ++_secondaryCueRequest : ++_primaryCueRequest;
+    if (plainSubtitleText(raw).isEmpty) {
+      _clearCue(secondary: secondary, cancelPending: false);
+    } else {
+      unawaited(_emitCue(raw, secondary: secondary, request: request));
+    }
+  }
+
+  String _subtitleTextAt(int index) {
+    final text = _player.state.subtitle;
+    return index < text.length ? text[index] : '';
+  }
+
+  void _resumeCurrentCue({required bool secondary}) {
+    if (secondary) {
+      _blockedSecondarySubtitleText = null;
+    } else {
+      _blockedPrimarySubtitleText = null;
+    }
+    _handleSubtitleText(
+      _subtitleTextAt(secondary ? 1 : 0),
+      secondary: secondary,
+    );
+  }
+
+  Future<void> _refreshCuesAfterSeek(
+    int request,
+    int generation, {
+    required Duration origin,
+    required Duration target,
+  }) async {
+    // Player.seek completes when MPV accepts the command, before demuxing is
+    // guaranteed to reach the destination. In particular, `seeking` can still
+    // report `no` from the old position at that point. Require the native
+    // playhead to cross the requested target, then sample text on both sides
+    // of its timing properties so a transition cannot combine an old line
+    // with the destination's timestamps.
+    var primaryRefreshed = false;
+    var secondaryRefreshed = false;
+    for (var attempt = 0; attempt < 60; attempt++) {
+      if (_disposed || request != _seekRequest || generation != _generation) {
+        return;
+      }
+      final seeking = await _nativeProperty('seeking', keepNo: true);
+      final nativePosition = _secondsOrNull(
+        _toDouble(await _nativeProperty('time-pos')),
+      );
+      final nativePropertiesAvailable =
+          seeking != null || nativePosition != null;
+      final currentPosition = nativePosition ?? _player.state.position;
+      if (!seekTargetReached(
+            origin: origin,
+            target: target,
+            current: currentPosition,
+          ) ||
+          (seeking != null && _nativeFlag(seeking))) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        continue;
+      }
+
+      if (!nativePropertiesAvailable) {
+        // Web and simple test platforms do not expose MPV properties. Let
+        // their state stream catch up and use its latest subtitle snapshot.
+        await Future<void>.delayed(const Duration(milliseconds: 32));
+        _blockedPrimarySubtitleText = null;
+        _blockedSecondarySubtitleText = null;
+        _handleSubtitleText(_subtitleTextAt(0), secondary: false);
+        _handleSubtitleText(_subtitleTextAt(1), secondary: true);
+        return;
+      }
+
+      if (!primaryRefreshed) {
+        final sample = await _readNativeCueSample(secondary: false);
+        if (_disposed || request != _seekRequest || generation != _generation) {
+          return;
+        }
+        if (nativeSubtitleSampleIsCurrent(
+          sample,
+          position: currentPosition,
+          delay: _primarySubtitleDelay,
+        )) {
+          _publishNativeCueSample(sample, secondary: false);
+          primaryRefreshed = true;
+        }
+      }
+      if (!secondaryRefreshed) {
+        final sample = await _readNativeCueSample(secondary: true);
+        if (_disposed || request != _seekRequest || generation != _generation) {
+          return;
+        }
+        if (nativeSubtitleSampleIsCurrent(
+          sample,
+          position: currentPosition,
+          delay: _secondarySubtitleDelay,
+        )) {
+          _publishNativeCueSample(sample, secondary: true);
+          secondaryRefreshed = true;
+        }
+      }
+      if (primaryRefreshed && secondaryRefreshed) return;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+
+  Future<NativeSubtitleSample> _readNativeCueSample({
+    required bool secondary,
+  }) async {
+    final prefix = secondary ? 'secondary-sub' : 'sub';
+    final textBefore = await _nativeProperty('$prefix-text', keepNo: true);
+    final startSeconds = _toDouble(await _nativeProperty('$prefix-start'));
+    final endSeconds = _toDouble(await _nativeProperty('$prefix-end'));
+    final textAfter = await _nativeProperty('$prefix-text', keepNo: true);
+    return NativeSubtitleSample(
+      textBefore: textBefore,
+      textAfter: textAfter,
+      startSeconds: startSeconds,
+      endSeconds: endSeconds,
+    );
+  }
+
+  void _publishNativeCueSample(
+    NativeSubtitleSample sample, {
+    required bool secondary,
+  }) {
+    if (_disposed) return;
+    if (secondary) {
+      _blockedSecondarySubtitleText = null;
+      _secondaryCueRequest++;
+    } else {
+      _blockedPrimarySubtitleText = null;
+      _primaryCueRequest++;
+    }
+    final plain = plainSubtitleText(sample.textAfter ?? '');
+    final trackId = secondary
+        ? _selectedSecondary
+        : selectedKitTrackId(_player.state.track.subtitle.id);
+    if (plain.isEmpty || sample.startSeconds == null || trackId == null) {
+      _clearCue(secondary: secondary);
+      return;
+    }
+    final cue = SubtitleCue(
+      generation: _generation,
+      trackId: trackId,
+      start: _seconds(sample.startSeconds!),
+      end: _secondsOrNull(sample.endSeconds),
+      plainText: plain,
+    );
+    if (secondary) {
+      _secondaryCues.add(cue);
+    } else {
+      _primaryCues.add(cue);
+    }
+  }
+
+  void _clearCue({
+    required bool secondary,
+    String? trackId,
+    bool cancelPending = true,
+  }) {
+    if (_disposed) return;
+    if (cancelPending) {
+      if (secondary) {
+        _secondaryCueRequest++;
+      } else {
+        _primaryCueRequest++;
+      }
+    }
+    final cue = SubtitleCue(
+      generation: _generation,
+      trackId:
+          trackId ??
+          (secondary
+              ? _selectedSecondary
+              : selectedKitTrackId(_player.state.track.subtitle.id)) ??
+          'none',
+      start: Duration.zero,
+      end: Duration.zero,
+      plainText: '',
+    );
+    if (secondary) {
+      _secondaryCues.add(cue);
+    } else {
+      _primaryCues.add(cue);
     }
   }
 
@@ -512,11 +814,11 @@ class MediaKitEngine implements MediaEngine {
     }
   }
 
-  Future<String?> _nativeProperty(String name) async {
+  Future<String?> _nativeProperty(String name, {bool keepNo = false}) async {
     try {
       final dynamic platform = _player.platform;
       final value = await platform.getProperty(name);
-      return _present(value?.toString());
+      return _present(value?.toString(), keepNo: keepNo);
     } on NoSuchMethodError {
       return null;
     } on UnsupportedError {
@@ -548,6 +850,7 @@ class MediaKitEngine implements MediaEngine {
     if (_disposed) return;
     _disposed = true;
     _generation++;
+    _seekRequest++;
     _metricTimer?.cancel();
     PlaybackFailure? failure;
     try {
@@ -570,6 +873,70 @@ class MediaKitEngine implements MediaEngine {
     }
     if (failure != null) throw failure;
   }
+}
+
+bool shouldFailPlaybackForBackendError({
+  required PlaybackPhase phase,
+  required DateTime? recoverableThrough,
+  required DateTime now,
+}) {
+  if (phase == PlaybackPhase.idle || phase == PlaybackPhase.failed) {
+    return false;
+  }
+  return recoverableThrough == null || !now.isBefore(recoverableThrough);
+}
+
+const _subtitleSampleTolerance = Duration(milliseconds: 250);
+
+class NativeSubtitleSample {
+  const NativeSubtitleSample({
+    required this.textBefore,
+    required this.textAfter,
+    required this.startSeconds,
+    required this.endSeconds,
+  });
+
+  final String? textBefore;
+  final String? textAfter;
+  final double? startSeconds;
+  final double? endSeconds;
+}
+
+bool seekTargetReached({
+  required Duration origin,
+  required Duration target,
+  required Duration current,
+}) {
+  if ((target - origin).abs() <= _subtitleSampleTolerance) {
+    return (current - target).abs() <= _subtitleSampleTolerance;
+  }
+  if (target > origin) {
+    return current >= target - _subtitleSampleTolerance;
+  }
+  return current <= target + _subtitleSampleTolerance;
+}
+
+bool nativeSubtitleSampleIsCurrent(
+  NativeSubtitleSample sample, {
+  required Duration position,
+  Duration delay = Duration.zero,
+}) {
+  if (sample.textBefore != sample.textAfter) return false;
+  final plain = plainSubtitleText(sample.textAfter ?? '');
+  if (plain.isEmpty) return sample.startSeconds == null;
+  final startSeconds = sample.startSeconds;
+  if (startSeconds == null) return false;
+  final effectivePosition = position - delay;
+  final toleranceSeconds =
+      _subtitleSampleTolerance.inMicroseconds / Duration.microsecondsPerSecond;
+  final positionSeconds =
+      effectivePosition.inMicroseconds / Duration.microsecondsPerSecond;
+  if (positionSeconds + toleranceSeconds < startSeconds) return false;
+  final endSeconds = sample.endSeconds;
+  if (endSeconds != null && positionSeconds - toleranceSeconds > endSeconds) {
+    return false;
+  }
+  return true;
 }
 
 PlaybackSnapshot mapMediaKitState(
@@ -630,7 +997,7 @@ PlaybackSnapshot mapMediaKitState(
 MediaTrack mapAudioTrack(kit.AudioTrack track) => MediaTrack(
   id: track.id,
   kind: TrackKind.audio,
-  language: normalizeTrackLanguage(track.language),
+  language: inferredTrackLanguage(track.language, track.title),
   languageOriginal: _originalLanguage(track.language),
   title: track.title,
   codec: track.codec,
@@ -641,7 +1008,7 @@ MediaTrack mapAudioTrack(kit.AudioTrack track) => MediaTrack(
 MediaTrack mapSubtitleTrack(kit.SubtitleTrack track) => MediaTrack(
   id: track.id,
   kind: TrackKind.subtitle,
-  language: normalizeTrackLanguage(track.language),
+  language: inferredTrackLanguage(track.language, track.title),
   languageOriginal: _originalLanguage(track.language),
   title: track.title,
   codec: track.codec,
@@ -652,6 +1019,12 @@ MediaTrack mapSubtitleTrack(kit.SubtitleTrack track) => MediaTrack(
 
 String? selectedKitTrackId(String id) =>
     _automaticTrackIds.contains(id) ? null : id;
+
+bool nativeTrackSelectionMatches(String effective, String? requested) {
+  final value = effective.trim().toLowerCase();
+  if (requested == null) return value == 'no' || value == 'none';
+  return value == requested.trim().toLowerCase();
+}
 
 /// libmpv may report `auto` while visibly rendering the container's default
 /// subtitle. Surface that effective choice instead of presenting it as Off.
@@ -678,6 +1051,7 @@ String? normalizeTrackLanguage(String? raw) {
   final normalized = source.replaceAll('_', '-').toLowerCase();
   const iso639 = {
     'ara': 'ar',
+    'arabic': 'ar',
     'arm': 'hy',
     'hye': 'hy',
     'baq': 'eu',
@@ -687,42 +1061,62 @@ String? normalizeTrackLanguage(String? raw) {
     'cat': 'ca',
     'chi': 'zh',
     'zho': 'zh',
+    'chinese': 'zh',
     'cze': 'cs',
     'ces': 'cs',
     'dan': 'da',
     'dut': 'nl',
     'nld': 'nl',
+    'dutch': 'nl',
     'eng': 'en',
+    'english': 'en',
     'fin': 'fi',
     'fre': 'fr',
     'fra': 'fr',
+    'french': 'fr',
     'ger': 'de',
     'deu': 'de',
+    'german': 'de',
     'gre': 'el',
     'ell': 'el',
     'heb': 'he',
     'hin': 'hi',
+    'hindi': 'hi',
     'hun': 'hu',
     'ice': 'is',
     'isl': 'is',
     'ind': 'id',
+    'indonesian': 'id',
     'ita': 'it',
+    'italian': 'it',
+    'jp': 'ja',
+    'jap': 'ja',
     'jpn': 'ja',
+    'japanese': 'ja',
     'kor': 'ko',
+    'korean': 'ko',
     'may': 'ms',
     'msa': 'ms',
     'nor': 'no',
     'pol': 'pl',
+    'polish': 'pl',
     'por': 'pt',
+    'portuguese': 'pt',
     'rum': 'ro',
     'ron': 'ro',
     'rus': 'ru',
+    'russian': 'ru',
     'spa': 'es',
+    'spanish': 'es',
     'swe': 'sv',
     'tha': 'th',
+    'thai': 'th',
     'tur': 'tr',
+    'turkish': 'tr',
     'ukr': 'uk',
+    'ukrainian': 'uk',
     'vie': 'vi',
+    'vietnamese': 'vi',
   };
   final parts = normalized.split('-');
   parts[0] = iso639[parts[0]] ?? parts[0];
@@ -735,20 +1129,131 @@ String? normalizeTrackLanguage(String? raw) {
 T? preferredKitTrack<T>(
   Iterable<T> tracks,
   String? preferredLanguage,
-  String? Function(T track) languageOf,
-) {
+  String? Function(T track) languageOf, {
+  int Function(T track)? scoreOf,
+}) {
   final preferred = normalizeTrackLanguage(preferredLanguage);
   if (preferred == null) return null;
   final base = preferred.split('-').first;
-  T? baseMatch;
+  T? best;
+  int? bestScore;
   for (final track in tracks) {
     final language = normalizeTrackLanguage(languageOf(track));
-    if (language == preferred) return track;
-    if (baseMatch == null && language?.split('-').first == base) {
-      baseMatch = track;
+    final quality = language == preferred
+        ? 2
+        : language?.split('-').first == base
+        ? 1
+        : 0;
+    if (quality == 0) continue;
+    final score = quality * 10000 + (scoreOf?.call(track) ?? 0);
+    if (bestScore == null || score > bestScore) {
+      best = track;
+      bestScore = score;
     }
   }
-  return baseMatch;
+  return best;
+}
+
+String? inferredTrackLanguage(String? language, String? title) {
+  final tagged = normalizeTrackLanguage(language);
+  if (tagged != null) return tagged;
+  final words = RegExp(r'[a-z]{2,}')
+      .allMatches(title?.toLowerCase() ?? '')
+      .map((match) => match.group(0)!)
+      .toSet();
+  const aliases = <String, String>{
+    'ja': 'ja',
+    'jp': 'ja',
+    'jap': 'ja',
+    'jpn': 'ja',
+    'japanese': 'ja',
+    'en': 'en',
+    'eng': 'en',
+    'english': 'en',
+    'es': 'es',
+    'spa': 'es',
+    'spanish': 'es',
+    'pt': 'pt',
+    'por': 'pt',
+    'portuguese': 'pt',
+    'de': 'de',
+    'deu': 'de',
+    'ger': 'de',
+    'german': 'de',
+    'fr': 'fr',
+    'fra': 'fr',
+    'fre': 'fr',
+    'french': 'fr',
+    'it': 'it',
+    'ita': 'it',
+    'italian': 'it',
+    'ko': 'ko',
+    'kor': 'ko',
+    'korean': 'ko',
+    'zh': 'zh',
+    'zho': 'zh',
+    'chi': 'zh',
+    'chinese': 'zh',
+    'ru': 'ru',
+    'rus': 'ru',
+    'russian': 'ru',
+    'ar': 'ar',
+    'ara': 'ar',
+    'arabic': 'ar',
+    'hi': 'hi',
+    'hin': 'hi',
+    'hindi': 'hi',
+    'id': 'id',
+    'ind': 'id',
+    'indonesian': 'id',
+    'nl': 'nl',
+    'nld': 'nl',
+    'dutch': 'nl',
+    'pl': 'pl',
+    'pol': 'pl',
+    'polish': 'pl',
+    'th': 'th',
+    'tha': 'th',
+    'thai': 'th',
+    'tr': 'tr',
+    'tur': 'tr',
+    'turkish': 'tr',
+    'uk': 'uk',
+    'ukr': 'uk',
+    'ukrainian': 'uk',
+    'vi': 'vi',
+    'vie': 'vi',
+    'vietnamese': 'vi',
+  };
+  for (final word in words) {
+    final inferred = aliases[word];
+    if (inferred != null) return inferred;
+  }
+  return null;
+}
+
+int automaticTrackScore({
+  String? title,
+  bool isDefault = false,
+  bool isForced = false,
+  bool subtitle = false,
+}) {
+  final name = title?.toLowerCase() ?? '';
+  var score = isDefault ? 25 : 0;
+  if (subtitle) {
+    if (RegExp(r'\b(full|dialogue|dialog|complete)\b').hasMatch(name)) {
+      score += 60;
+    }
+    if (isForced || RegExp(r'\b(signs?|songs?|forced)\b').hasMatch(name)) {
+      score -= 100;
+    }
+  } else {
+    if (RegExp(r'\b(main|original)\b').hasMatch(name)) score += 20;
+    if (RegExp(r'\b(commentary|descriptive|description)\b').hasMatch(name)) {
+      score -= 100;
+    }
+  }
+  return score;
 }
 
 String plainSubtitleText(String raw) => raw
@@ -792,13 +1297,19 @@ String? _originalLanguage(String? raw) {
       : value;
 }
 
-String? _present(String? value) {
+String? _present(String? value, {bool keepNo = false}) {
   final text = value?.trim();
-  if (text == null || text.isEmpty || text == 'N/A' || text == 'no') {
+  if (text == null ||
+      text.isEmpty ||
+      text == 'N/A' ||
+      (!keepNo && text == 'no')) {
     return null;
   }
   return text;
 }
+
+bool _nativeFlag(String value) =>
+    const {'1', 'true', 'yes'}.contains(value.trim().toLowerCase());
 
 double? _toDouble(String? value) => double.tryParse(value ?? '');
 

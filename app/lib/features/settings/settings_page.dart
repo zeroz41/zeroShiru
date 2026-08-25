@@ -774,8 +774,9 @@ class _LearningSettingsCardState extends ConsumerState<_LearningSettingsCard> {
           ),
         ),
         _SwitchRow(
-          label: 'Show furigana',
-          description: 'Place each word’s kana reading above its kanji.',
+          label: 'Show kana readings',
+          description:
+              'Show kana alone or above kanji when both layers are on.',
           value: settings.learningShowFurigana,
           onChanged: (value) => unawaited(
             controller.persist(

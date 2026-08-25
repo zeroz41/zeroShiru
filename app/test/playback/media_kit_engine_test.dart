@@ -86,6 +86,106 @@ void main() {
   });
 
   group('player boundary rules', () {
+    test('a seek is not settled while the playhead is still at its origin', () {
+      expect(
+        seekTargetReached(
+          origin: const Duration(seconds: 30),
+          target: const Duration(minutes: 6),
+          current: const Duration(seconds: 30),
+        ),
+        isFalse,
+      );
+      expect(
+        seekTargetReached(
+          origin: const Duration(seconds: 30),
+          target: const Duration(minutes: 6),
+          current: const Duration(minutes: 6),
+        ),
+        isTrue,
+      );
+      expect(
+        seekTargetReached(
+          origin: const Duration(minutes: 10),
+          target: const Duration(minutes: 6),
+          current: const Duration(minutes: 6),
+        ),
+        isTrue,
+      );
+    });
+
+    test('seek refresh rejects mixed subtitle text and timing snapshots', () {
+      const position = Duration(minutes: 6, seconds: 9);
+
+      expect(
+        nativeSubtitleSampleIsCurrent(
+          const NativeSubtitleSample(
+            textBefore: 'old Japanese line',
+            textAfter: 'new Japanese line',
+            startSeconds: 368,
+            endSeconds: 372,
+          ),
+          position: position,
+        ),
+        isFalse,
+      );
+      expect(
+        nativeSubtitleSampleIsCurrent(
+          const NativeSubtitleSample(
+            textBefore: 'old Japanese line',
+            textAfter: 'old Japanese line',
+            startSeconds: 20,
+            endSeconds: 24,
+          ),
+          position: position,
+        ),
+        isFalse,
+      );
+      expect(
+        nativeSubtitleSampleIsCurrent(
+          const NativeSubtitleSample(
+            textBefore: 'current Japanese line',
+            textAfter: 'current Japanese line',
+            startSeconds: 368,
+            endSeconds: 372,
+          ),
+          position: position,
+        ),
+        isTrue,
+      );
+    });
+
+    test(
+      'track-transition backend logs are not promoted to media failures',
+      () {
+        final now = DateTime.utc(2026, 8, 25, 12);
+
+        expect(
+          shouldFailPlaybackForBackendError(
+            phase: PlaybackPhase.playing,
+            recoverableThrough: now.add(const Duration(seconds: 1)),
+            now: now,
+          ),
+          isFalse,
+        );
+        expect(
+          shouldFailPlaybackForBackendError(
+            phase: PlaybackPhase.playing,
+            recoverableThrough: now.subtract(const Duration(milliseconds: 1)),
+            now: now,
+          ),
+          isTrue,
+        );
+        expect(
+          shouldFailPlaybackForBackendError(
+            phase: PlaybackPhase.opening,
+            recoverableThrough: null,
+            now: now,
+          ),
+          isTrue,
+        );
+      },
+    );
+
     test('only HTTPS, files, and HTTP loopback enter libmpv', () {
       expect(
         isAllowedPlaybackSource('https://cdn.example/video.mkv?t=secret'),
@@ -104,6 +204,8 @@ void main() {
 
     test('normalizes tags without inventing unknown languages', () {
       expect(normalizeTrackLanguage('jpn'), 'ja');
+      expect(normalizeTrackLanguage('jp'), 'ja');
+      expect(normalizeTrackLanguage('English'), 'en');
       expect(normalizeTrackLanguage('pt_br'), 'pt-BR');
       expect(normalizeTrackLanguage('und'), isNull);
       expect(normalizeTrackLanguage(null), isNull);
@@ -129,6 +231,43 @@ void main() {
       );
     });
 
+    test('first-run defaults infer titles and avoid signs or commentary', () {
+      const subtitles = [
+        kit.SubtitleTrack('1', 'English Signs & Songs', null, isDefault: true),
+        kit.SubtitleTrack('2', 'English Full Dialogue', null),
+      ];
+      const audio = [
+        kit.AudioTrack('3', 'Japanese Commentary', null, isDefault: true),
+        kit.AudioTrack('4', 'Japanese Original', null),
+      ];
+
+      expect(
+        preferredKitTrack(
+          subtitles,
+          'eng',
+          (track) => inferredTrackLanguage(track.language, track.title),
+          scoreOf: (track) => automaticTrackScore(
+            title: track.title,
+            isDefault: track.isDefault ?? false,
+            subtitle: true,
+          ),
+        )?.id,
+        '2',
+      );
+      expect(
+        preferredKitTrack(
+          audio,
+          'jpn',
+          (track) => inferredTrackLanguage(track.language, track.title),
+          scoreOf: (track) => automaticTrackScore(
+            title: track.title,
+            isDefault: track.isDefault ?? false,
+          ),
+        )?.id,
+        '4',
+      );
+    });
+
     test('sidecar subtitles enforce both transport and format boundaries', () {
       expect(isAllowedSubtitleSource('file:///tmp/dialogue.ass'), isTrue);
       expect(
@@ -144,6 +283,13 @@ void main() {
 
     test('turns formatted subtitle payloads into plain text', () {
       expect(plainSubtitleText(r'{\an8}<i>Hello</i>\Nworld'), 'Hello\nworld');
+    });
+
+    test('verifies the native secondary subtitle selection exactly', () {
+      expect(nativeTrackSelectionMatches('7', '7'), isTrue);
+      expect(nativeTrackSelectionMatches('8', '7'), isFalse);
+      expect(nativeTrackSelectionMatches('no', null), isTrue);
+      expect(nativeTrackSelectionMatches('7', null), isFalse);
     });
   });
 }
