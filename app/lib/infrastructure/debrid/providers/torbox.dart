@@ -12,7 +12,9 @@ import 'provider.dart';
 
 const _api = 'https://api.torbox.app/v1/api';
 const _accountTimeoutMs = 10000;
-const _optionalLinkGraceMs = 2000;
+// The selected episode is requested first. Give already-finishing neighbors a
+// tiny window for playlist continuity without holding playback for seconds.
+const _optionalLinkGraceMs = 150;
 const _listLimit = 1000;
 const _seedNever = 3;
 
@@ -435,6 +437,37 @@ class TorBoxProvider implements DebridProvider {
     return answers;
   }
 
+  /// TorBox can return cached member names as part of the same inexpensive
+  /// cache lookup. The picker uses them to prove a batch contains the episode
+  /// before it can be selected.
+  Future<Map<String, DebridAvailabilityDetail>> inspectAvailabilityBatch(
+    List<String> hashes, {
+    CancelToken? cancel,
+  }) async {
+    final query = [for (final hash in hashes) 'hash=$hash'].join('&');
+    final data = await _request(
+      '$_api/torrents/checkcached?$query&format=list&list_files=true',
+      const RequestOpts(),
+      cancel,
+    );
+    final entries = _cacheEntries(data);
+    final answers = {
+      for (final hash in hashes)
+        hash: const DebridAvailabilityDetail(Availability.available),
+    };
+    for (final entry in entries) {
+      final hash = (jsonString(field(entry, 'hash')) ?? '').toLowerCase();
+      if (!answers.containsKey(hash)) continue;
+      answers[hash] = DebridAvailabilityDetail(
+        Availability.cached,
+        files: _cachedFiles(entry),
+      );
+      final name = jsonString(field(entry, 'name'));
+      if (name != null) client.rememberRelease(hash, name);
+    }
+    return answers;
+  }
+
   @override
   Future<Availability> probeAvailability(String hash, {CancelToken? cancel}) =>
       Future.error(
@@ -583,4 +616,41 @@ int _largestWanted(List<_WantedFile> files) {
     if (files[index].size > files[best].size) best = index;
   }
   return best;
+}
+
+List<Object?> _cacheEntries(Object? data) {
+  if (data is List) return jsonList(data);
+  if (data is! Map) return const [];
+  return [
+    for (final raw in data.entries)
+      (() {
+        final entry = Map<String, Object?>.from(jsonMap(raw.value));
+        entry.putIfAbsent('hash', () => '${raw.key}');
+        return entry;
+      })(),
+  ];
+}
+
+List<DebridCachedFile>? _cachedFiles(Object? entry) {
+  final raw = field(entry, 'files');
+  if (raw == null) return null;
+  if (raw is! List) return const [];
+  return [
+    for (final file in raw)
+      if (file is String && file.trim().isNotEmpty)
+        DebridCachedFile(path: file.trim())
+      else if (file is Map &&
+          (nonEmptyString(field(file, 'name')) ??
+                  nonEmptyString(field(file, 'path'))) !=
+              null)
+        DebridCachedFile(
+          path:
+              nonEmptyString(field(file, 'name')) ??
+              nonEmptyString(field(file, 'path'))!,
+          size:
+              jsonInt(field(file, 'size')) ??
+              jsonInt(field(file, 'length')) ??
+              0,
+        ),
+  ];
 }

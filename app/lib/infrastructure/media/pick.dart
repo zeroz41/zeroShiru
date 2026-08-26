@@ -19,9 +19,14 @@ class PackFile {
 /// finite number the name answers to ("01-12" parses to [1, 12]); [isExtra] is the
 /// anitomy anime_type flag (NCOP/NCED/OVA/special).
 class ParsedName {
-  const ParsedName({this.episodeNumbers = const [], this.isExtra = false});
+  const ParsedName({
+    this.episodeNumbers = const [],
+    this.episodeSpans = const [],
+    this.isExtra = false,
+  });
 
   final List<double> episodeNumbers;
+  final List<FilenameEpisodeSpan> episodeSpans;
   final bool isExtra;
 }
 
@@ -33,7 +38,16 @@ typedef PackParser = List<ParsedName?> Function(List<String> names);
 /// parsed to an episode number and none of them covers it. Raised instead of
 /// guessing, because the guess used to be "largest file" — asking a 459-516 pack
 /// for episode 23 played episode 475.
-class EpisodeNotInPack implements Exception {
+abstract class EpisodeSelectionFailure implements Exception {
+  const EpisodeSelectionFailure();
+
+  String get message;
+
+  @override
+  String toString() => message;
+}
+
+class EpisodeNotInPack extends EpisodeSelectionFailure {
   const EpisodeNotInPack({
     required this.episode,
     required this.first,
@@ -44,12 +58,10 @@ class EpisodeNotInPack implements Exception {
   final double first;
   final double last;
 
+  @override
   String get message =>
       'This release holds ${_spanText(first, last)}, not episode ${_plain(episode)}. '
       'Pick a release that has it.';
-
-  @override
-  String toString() => message;
 
   @override
   bool operator ==(Object other) =>
@@ -60,6 +72,21 @@ class EpisodeNotInPack implements Exception {
 
   @override
   int get hashCode => Object.hash(episode, first, last);
+}
+
+/// The requested episode could not be identified without guessing. This is
+/// distinct from [EpisodeNotInPack]: some file names were unnumbered or the
+/// parser failed, so the release's true span is unknown, but playing the
+/// largest video would still be unsafe.
+class EpisodeNotIdentified extends EpisodeSelectionFailure {
+  const EpisodeNotIdentified(this.episode);
+
+  final double episode;
+
+  @override
+  String get message =>
+      'This release does not identify a safe file for episode ${_plain(episode)}. '
+      'Pick a release whose files are numbered.';
 }
 
 String _spanText(double first, double last) => first == last
@@ -76,7 +103,16 @@ enum _Match { exact, range }
 /// Whether a file's episode numbers cover the requested episode. More than one
 /// number means a multi-episode file, which counts as a range containing
 /// everything between.
-_Match? _matchesEpisode(List<double> numbers, double episode) {
+_Match? _matchesEpisode(ParsedName? entry, double episode) {
+  final spans = entry?.episodeSpans ?? const <FilenameEpisodeSpan>[];
+  if (spans.isNotEmpty) {
+    for (final span in spans) {
+      if (!span.contains(episode)) continue;
+      return span.first == span.last ? _Match.exact : _Match.range;
+    }
+    return null;
+  }
+  final numbers = entry?.episodeNumbers ?? const <double>[];
   if (numbers.isEmpty) return null;
   if (numbers.length == 1) {
     return numbers.first == episode ? _Match.exact : null;
@@ -95,98 +131,91 @@ int? pickEpisodeFile(List<PackFile> files, double episode, PackParser parse) {
     for (var index = 0; index < files.length; index++)
       if (isVideoPath(files[index].path)) index,
   ];
-  if (videoIndices.length <= 1) {
-    if (videoIndices.isNotEmpty) return videoIndices.first;
-    return files.isEmpty ? null : 0;
+  if (videoIndices.isEmpty) {
+    if (files.isEmpty) return null;
+    throw EpisodeNotIdentified(episode);
   }
 
   final names = [
     for (final index in videoIndices) files[index].path.split('/').last,
   ];
 
-  var candidates = List<int>.of(videoIndices);
   List<ParsedName?>? parsed;
   try {
     parsed = parse(names);
   } catch (_) {
-    parsed = null; // a broken parser still yields a playable fallback
+    if (videoIndices.length == 1) return videoIndices.first;
+    throw EpisodeNotIdentified(episode);
   }
-  if (parsed != null) {
-    // rank 0: episode, exact. 1: episode, range. 2: extra, exact. 3: extra, range.
-    // First file in torrent order wins within a rank, so duplicate resolutions stay stable.
-    final ranks = List<int?>.filled(4, null);
-    final held = <double>[]; // every episode number the pack's files answer to
-    var unnumbered = 0;
-    for (var position = 0; position < parsed.length; position++) {
-      final entry = parsed[position];
-      final numbers = entry?.episodeNumbers ?? const <double>[];
-      if (numbers.isEmpty) {
-        unnumbered++;
-      } else {
-        held.addAll(numbers);
-      }
-      final matched = _matchesEpisode(numbers, episode);
-      if (matched == null) continue;
-      final isExtra = entry?.isExtra ?? false;
-      final rank = (isExtra ? 2 : 0) + (matched == _Match.range ? 1 : 0);
-      ranks[rank] ??= position;
-    }
-    for (final position in ranks) {
-      if (position != null) return videoIndices[position];
-    }
-    final episodes = [
-      for (var position = 0; position < videoIndices.length; position++)
-        if (!((position < parsed.length ? parsed[position] : null)?.isExtra ??
-            false))
-          position,
-    ];
-    // every video answered with a number and none covers the episode: the release
-    // cannot serve this request, and no fallback can make it
-    if (parsed.length == videoIndices.length &&
-        unnumbered == 0 &&
-        held.isNotEmpty) {
-      // the reported span reads off the real episodes where any exist, so an NCOP1
-      // in the pack does not make a 459-516 release claim to start at episode 1
-      final span = episodes.isEmpty
-          ? held
-          : [
-              for (final position in episodes)
-                ...parsed[position]?.episodeNumbers ?? const <double>[],
-            ];
-      final first = span.reduce((a, b) => a < b ? a : b);
-      final last = span.reduce((a, b) => a > b ? a : b);
-      throw EpisodeNotInPack(episode: episode, first: first, last: last);
-    }
-    // nothing matched but nothing is proven either: never fall back onto an extra
-    // while real episodes exist
-    if (episodes.isNotEmpty) {
-      candidates = [for (final position in episodes) videoIndices[position]];
-    }
+  if (videoIndices.length == 1 &&
+      (parsed.isEmpty || (parsed.first?.episodeNumbers.isEmpty ?? true))) {
+    return videoIndices.first;
   }
-  // best guess: the largest episode-like video, first in torrent order on ties
-  int? best;
-  for (final index in candidates) {
-    if (best == null || files[index].size > files[best].size) best = index;
+
+  // rank 0: episode, exact. 1: episode, range. 2: extra, exact. 3: extra, range.
+  // First file in torrent order wins within a rank, so duplicate resolutions stay stable.
+  final ranks = List<int?>.filled(4, null);
+  final held = <double>[]; // every episode number the pack's files answer to
+  var unnumbered = 0;
+  for (var position = 0; position < parsed.length; position++) {
+    final entry = parsed[position];
+    final numbers = entry?.episodeNumbers ?? const <double>[];
+    if (numbers.isEmpty) {
+      unnumbered++;
+    } else {
+      held.addAll(numbers);
+    }
+    final matched = _matchesEpisode(entry, episode);
+    if (matched == null) continue;
+    final isExtra = entry?.isExtra ?? false;
+    final rank = (isExtra ? 2 : 0) + (matched == _Match.range ? 1 : 0);
+    ranks[rank] ??= position;
   }
-  return best;
+  for (final position in ranks) {
+    if (position != null) return videoIndices[position];
+  }
+
+  final episodes = [
+    for (var position = 0; position < videoIndices.length; position++)
+      if (!((position < parsed.length ? parsed[position] : null)?.isExtra ??
+          false))
+        position,
+  ];
+  // every video answered with a number and none covers the episode: the release
+  // cannot serve this request, and no fallback can make it
+  if (parsed.length == videoIndices.length &&
+      unnumbered == 0 &&
+      held.isNotEmpty) {
+    // the reported span reads off the real episodes where any exist, so an NCOP1
+    // in the pack does not make a 459-516 release claim to start at episode 1
+    final span = episodes.isEmpty
+        ? held
+        : [
+            for (final position in episodes)
+              ...parsed[position]?.episodeNumbers ?? const <double>[],
+          ];
+    final first = span.reduce((a, b) => a < b ? a : b);
+    final last = span.reduce((a, b) => a > b ? a : b);
+    throw EpisodeNotInPack(episode: episode, first: first, last: last);
+  }
+
+  // A partial parse is not permission to choose the largest video. That was
+  // the final unsafe fallback which could still turn an unnumbered batch into
+  // the wrong episode.
+  throw EpisodeNotIdentified(episode);
 }
 
-/// Picks the episode for a debrid resolve, refusing only when refusing costs
-/// nothing: when every file reaches the player anyway (no windowing), handing the
-/// whole release over lets the side that knows season offsets decide.
-/// Null with no throw hands the choice to the player.
+/// Picks the episode for a debrid resolve. [maxFiles] remains in the signature
+/// for provider compatibility, but an explicit episode is never handed off as
+/// an unselected pack: the player cannot safely infer the user's intent from a
+/// window or from torrent order.
 int? pickPackFile(
   List<PackFile> files,
   double episode,
   PackParser parse,
   int maxFiles,
 ) {
-  try {
-    return pickEpisodeFile(files, episode, parse);
-  } on EpisodeNotInPack {
-    if (files.length <= maxFiles) return null;
-    rethrow;
-  }
+  return pickEpisodeFile(files, episode, parse);
 }
 
 /// Reads names with the shared recognizer. The picker's own contract applies: a
@@ -201,6 +230,7 @@ ParsedName? _parsedNameOf(String name) {
   if (parsed.episodeNumbers.isEmpty && parsed.kind == null) return null;
   return ParsedName(
     episodeNumbers: parsed.episodeNumbers,
+    episodeSpans: parsed.episodeSpans,
     isExtra: parsed.isExtra,
   );
 }

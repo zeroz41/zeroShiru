@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:koni_archive/koni_archive.dart' as koni;
 import 'package:zeroshiru/domain/ports/learning_subtitles.dart';
 import 'package:zeroshiru/infrastructure/learning/jimaku_learning_subtitle_repository.dart';
 import 'package:zeroshiru/infrastructure/network/transport.dart';
@@ -51,7 +52,7 @@ void main() {
       expect(second?.source, first?.source);
       final cached = File.fromUri(Uri.parse(first!.source));
       expect(await cached.exists(), isTrue);
-      expect(cached.path, contains('v4-source-aware'));
+      expect(cached.path, contains('v6-archive-formats'));
       expect(first.originalName, '[JP] Test Show - 07.ass');
       expect(second?.originalName, '[JP] Test Show - 07.ass');
       expect(first.title, contains('[JP] Test Show - 07.ass'));
@@ -232,6 +233,253 @@ void main() {
     );
   });
 
+  test(
+    'uses archive release metadata when members have generic names',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zeroshiru-jimaku-archive-release-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      Uint8List archive(String line) {
+        final value = Archive()
+          ..add(
+            ArchiveFile.string(
+              'Test Show - 07.srt',
+              '1\n00:00:01,000 --> 00:00:03,000\n$line',
+            ),
+          );
+        return Uint8List.fromList(ZipEncoder().encodeBytes(value));
+      }
+
+      final transport = _JimakuTransport(
+        files: const [
+          {
+            'name': '[Netflix] Test Show 01-12.zip',
+            'url': 'https://files.example/netflix.zip',
+            'last_modified': '2026-08-24T00:00:00Z',
+          },
+          {
+            'name': '[SubsPlease] Test Show 01-12.zip',
+            'url': 'https://files.example/subsplease.zip',
+            'last_modified': '2026-08-24T00:00:00Z',
+          },
+        ],
+        downloads: {
+          '/netflix.zip': archive('別の配信版の日本語です。'),
+          '/subsplease.zip': archive('同じ配信版の日本語です。'),
+        },
+      );
+      final repository = JimakuLearningSubtitleRepository(
+        transport: transport,
+        cacheDirectory: directory.path,
+      );
+
+      final match = await repository.findJapanese(
+        const LearningSubtitleQuery(
+          anilistId: 123,
+          episode: 7,
+          releaseName: '[SubsPlease] Test Show - 07 1080p.mkv',
+        ),
+        credential: 'personal-key',
+      );
+
+      expect(match?.originalName, startsWith('[SubsPlease]'));
+      expect(transport.downloadRequests.single.url.path, '/subsplease.zip');
+      expect(
+        await File.fromUri(Uri.parse(match!.source)).readAsString(),
+        contains('同じ配信版'),
+      );
+    },
+  );
+
+  test(
+    'extracts an exact release from 7z instead of guessing a named WEB cut',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zeroshiru-jimaku-7z-release-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final archive = await _sevenZip({
+        'Naruto - 002 [DarkDream].srt':
+            '1\n00:00:01,000 --> 00:00:03,000\n二話の日本語字幕です。',
+        'Naruto - 003 [DarkDream].srt':
+            '1\n00:00:01,000 --> 00:00:03,000\n三話の正しい日本語字幕です。',
+      });
+      final transport = _JimakuTransport(
+        files: const [
+          {
+            'name': 'Naruto.S01E03.WEB-DL.Hulu.ja.srt',
+            'url': 'https://files.example/hulu.srt',
+            'last_modified': '2026-08-24T00:00:00Z',
+          },
+          {
+            'name': '[DarkDream] Naruto 1-220.7z',
+            'url': 'https://files.example/darkdream.7z',
+            'last_modified': '2026-08-24T00:00:00Z',
+          },
+        ],
+        downloads: {
+          '/hulu.srt': utf8.encode(
+            '1\n00:00:01,000 --> 00:00:03,000\n別編集の日本語字幕です。',
+          ),
+          '/darkdream.7z': archive,
+        },
+      );
+      final repository = JimakuLearningSubtitleRepository(
+        transport: transport,
+        cacheDirectory: directory.path,
+      );
+
+      final match = await repository.findJapanese(
+        const LearningSubtitleQuery(
+          anilistId: 123,
+          episode: 3,
+          releaseName:
+              'Naruto Complete Dual Audio / Naruto - 003 [DarkDream].mkv',
+        ),
+        credential: 'personal-key',
+      );
+
+      expect(match?.originalName, startsWith('[DarkDream]'));
+      expect(transport.downloadRequests.single.url.path, '/darkdream.7z');
+      expect(
+        await File.fromUri(Uri.parse(match!.source)).readAsString(),
+        contains('三話の正しい'),
+      );
+    },
+  );
+
+  test('an explicit retime target beats a generic source guess', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zeroshiru-jimaku-retime-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final transport = _JimakuTransport(
+      files: const [
+        {
+          'name': 'Test Show - 07 WEBRip Netflix.ja.srt',
+          'url': 'https://files.example/netflix.srt',
+          'last_modified': '2026-08-24T00:00:00Z',
+        },
+        {
+          'name': 'Test Show - 07 synced to EMBER.srt',
+          'url': 'https://files.example/ember.srt',
+          'last_modified': '2026-08-24T00:00:00Z',
+        },
+      ],
+      downloads: {
+        '/netflix.srt': utf8.encode(
+          '1\n00:00:01,000 --> 00:00:03,000\n違う時間の日本語です。',
+        ),
+        '/ember.srt': utf8.encode(
+          '1\n00:00:01,000 --> 00:00:03,000\n調整した日本語です。',
+        ),
+      },
+    );
+    final repository = JimakuLearningSubtitleRepository(
+      transport: transport,
+      cacheDirectory: directory.path,
+    );
+
+    final match = await repository.findJapanese(
+      const LearningSubtitleQuery(
+        anilistId: 123,
+        episode: 7,
+        releaseName: '[EMBER] Test Show - 07 1080p HEVC.mkv',
+      ),
+      credential: 'personal-key',
+    );
+
+    expect(match?.originalName, contains('synced to EMBER'));
+    expect(transport.downloadRequests.single.url.path, '/ember.srt');
+  });
+
+  test('rejects subgen files in favor of authored Japanese text', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zeroshiru-jimaku-generated-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final transport = _JimakuTransport(
+      files: const [
+        {
+          'name': '[ExactGroup] Test Show - 07.subgen.large-v3.jpn.srt',
+          'url': 'https://files.example/subgen.srt',
+          'last_modified': '2026-08-24T00:00:00Z',
+        },
+        {
+          'name': 'Test Show - 07 WEB.ja.srt',
+          'url': 'https://files.example/authored.srt',
+          'last_modified': '2026-08-24T00:00:00Z',
+        },
+      ],
+      downloads: {
+        '/authored.srt': utf8.encode(
+          '1\n00:00:01,000 --> 00:00:03,000\n人が作った日本語です。',
+        ),
+      },
+    );
+    final repository = JimakuLearningSubtitleRepository(
+      transport: transport,
+      cacheDirectory: directory.path,
+    );
+
+    final match = await repository.findJapanese(
+      const LearningSubtitleQuery(
+        anilistId: 123,
+        episode: 7,
+        releaseName: '[ExactGroup] Test Show - 07.mkv',
+      ),
+      credential: 'personal-key',
+    );
+
+    expect(match?.originalName, contains('WEB.ja.srt'));
+    expect(transport.downloadRequests.single.url.path, '/authored.srt');
+  });
+
+  test('falls back to an unfiltered archive when Jimaku omits it from episode search', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zeroshiru-jimaku-unfiltered-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final archive = Archive()
+      ..add(
+        ArchiveFile.string(
+          'Test Show - 07.srt',
+          '1\n00:00:01,000 --> 00:00:03,000\n七話の日本語字幕です。',
+        ),
+      );
+    final transport = _JimakuTransport(
+      files: const [],
+      unfilteredFiles: const [
+        {
+          'name': '[Group] Test Show complete.zip',
+          'url': 'https://files.example/complete.zip',
+          'last_modified': '2026-08-24T00:00:00Z',
+        },
+      ],
+      downloads: {
+        '/complete.zip': Uint8List.fromList(ZipEncoder().encodeBytes(archive)),
+      },
+    );
+    final repository = JimakuLearningSubtitleRepository(
+      transport: transport,
+      cacheDirectory: directory.path,
+    );
+
+    final match = await repository.findJapanese(
+      const LearningSubtitleQuery(
+        anilistId: 123,
+        episode: 7,
+        releaseName: '[Group] Test Show - 07.mkv',
+      ),
+      credential: 'personal-key',
+    );
+
+    expect(match, isNotNull);
+    expect(transport.fileEpisodeQueries, ['7', null]);
+    expect(transport.downloadRequests.single.url.path, '/complete.zip');
+  });
+
   test('rejects ambiguous and wrong-episode direct files even when the API returns them', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zeroshiru-jimaku-strict-',
@@ -324,10 +572,32 @@ void main() {
   });
 }
 
+Future<Uint8List> _sevenZip(Map<String, String> files) async {
+  final sink = koni.BytesBuilderSink();
+  final writer = koni.Archive.create(
+    sink,
+    format: const koni.SevenZWriteFormat(),
+  );
+  for (final entry in files.entries) {
+    await writer.addBytes(
+      koni.ArchiveEntrySpec(path: entry.key),
+      Uint8List.fromList(utf8.encode(entry.value)),
+    );
+  }
+  await writer.close();
+  await sink.close();
+  return sink.takeBytes();
+}
+
 class _JimakuTransport implements HttpTransport {
-  _JimakuTransport({required this.files, required this.downloads});
+  _JimakuTransport({
+    required this.files,
+    this.unfilteredFiles,
+    required this.downloads,
+  });
 
   final List<Map<String, Object>> files;
+  final List<Map<String, Object>>? unfilteredFiles;
   final Map<String, List<int>> downloads;
   final apiRequests = <HttpRequest>[];
   final downloadRequests = <HttpRequest>[];
@@ -354,8 +624,9 @@ class _JimakuTransport implements HttpTransport {
       ]);
     }
     if (request.url.path == '/api/entries/9/files') {
-      fileEpisodeQueries.add(request.url.queryParameters['episode']);
-      return _jsonResponse(files);
+      final episode = request.url.queryParameters['episode'];
+      fileEpisodeQueries.add(episode);
+      return _jsonResponse(episode == null ? unfilteredFiles ?? files : files);
     }
     return HttpResponse(404, const {}, Uint8List(0));
   }

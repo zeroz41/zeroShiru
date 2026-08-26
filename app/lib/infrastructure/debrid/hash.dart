@@ -35,6 +35,24 @@ String? toMagnet(String magnetOrHash) {
   return hash == null ? null : 'magnet:?xt=urn:btih:$hash';
 }
 
+/// Validates the two identity fields source adapters commonly return. A valid
+/// hash in either field is enough, but two different valid hashes are rejected
+/// rather than silently resolving a different torrent than the row describes.
+String? validatedTorrentHash({String? declaredHash, required String link}) {
+  final declared = declaredHash == null ? null : parseHash(declaredHash);
+  final linked = parseHash(link);
+  if (declared != null && linked != null && declared != linked) return null;
+  return declared ?? linked;
+}
+
+/// A minimal canonical magnet for a validated source result. Tracker and title
+/// parameters are deliberately discarded at the debrid boundary; the info hash
+/// is the complete identity TorBox and the other providers require.
+String? validatedTorrentMagnet({String? declaredHash, required String link}) {
+  final hash = validatedTorrentHash(declaredHash: declaredHash, link: link);
+  return hash == null ? null : 'magnet:?xt=urn:btih:$hash';
+}
+
 /// The watch-progress identity of one playable file:
 /// `sha1Hex("$infoHash:$name:$size")`. Must be byte-identical between the
 /// torrent and debrid lanes or resume silently restarts.

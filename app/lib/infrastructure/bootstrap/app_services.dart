@@ -2,6 +2,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
 import '../../application/playback/backend.dart';
+import '../../application/playback/preferences.dart';
 import '../../domain/ports/ports.dart';
 import '../database/database.dart';
 import '../database/query_cache_impl.dart';
@@ -61,6 +62,7 @@ class AppServices {
   final AppDatabase _sharedDatabase;
   final SqliteQueryCache _queryCache;
   final PackageHttpTransport _transport;
+  Future<void>? _closeFuture;
 
   static Future<AppServices> open() async {
     final support = await getApplicationSupportDirectory();
@@ -97,10 +99,7 @@ class AppServices {
     final playback = MediaKitPlaybackBackend(
       preferences: () {
         final current = settings.readSettings();
-        return PlaybackPreferences(
-          audioLanguage: current.audioLanguage,
-          subtitleLanguage: current.subtitleLanguage,
-        );
+        return playbackPreferencesFor(current);
       },
     );
     final debrid = {
@@ -128,11 +127,15 @@ class AppServices {
     );
   }
 
-  Future<void> close() async {
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
     try {
-      await playback.dispose();
+      await Future.wait([
+        playback.dispose(),
+        learning.dispose(),
+      ], eagerError: false);
     } finally {
-      await learning.dispose();
       if (settings case final SqliteSettingsRepository repository) {
         repository.dispose();
       }

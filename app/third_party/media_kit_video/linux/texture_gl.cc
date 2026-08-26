@@ -70,38 +70,54 @@ static void texture_gl_dispose(GObject* object) {
   EGLSurface current_draw = eglGetCurrentSurface(EGL_DRAW);
   EGLSurface current_read = eglGetCurrentSurface(EGL_READ);
 
-  // Clean up Flutter's texture (in Flutter's context)
+  EGLDisplay egl_display = video_output != NULL
+      ? video_output_get_egl_display(video_output)
+      : EGL_NO_DISPLAY;
+  EGLContext egl_context = video_output != NULL
+      ? video_output_get_egl_context(video_output)
+      : EGL_NO_CONTEXT;
+
+  // This texture name belongs to Flutter's context. If that context is not
+  // current, its destruction will reclaim the name; issuing GL calls without
+  // a context would abort inside libepoxy.
   if (self->name != 0) {
-    glDeleteTextures(1, &self->name);
+    if (current_context != EGL_NO_CONTEXT && current_context != egl_context) {
+      glDeleteTextures(1, &self->name);
+    }
     self->name = 0;
   }
 
   // Clean up EGLImage
   if (self->egl_image != EGL_NO_IMAGE_KHR && video_output != NULL) {
-    EGLDisplay egl_display = video_output_get_egl_display(video_output);
     eglDestroyImageKHR(egl_display, self->egl_image);
     self->egl_image = EGL_NO_IMAGE_KHR;
   }
 
   // Clean up mpv's OpenGL resources (in mpv's isolated context)
   if (video_output != NULL) {
-    EGLDisplay egl_display = video_output_get_egl_display(video_output);
-    EGLContext egl_context = video_output_get_egl_context(video_output);
-
     if (egl_context != EGL_NO_CONTEXT) {
-      eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, egl_context);
+      if (eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                         egl_context)) {
+        if (self->mpv_texture != 0) {
+          glDeleteTextures(1, &self->mpv_texture);
+          self->mpv_texture = 0;
+        }
+        if (self->fbo != 0) {
+          glDeleteFramebuffers(1, &self->fbo);
+          self->fbo = 0;
+        }
 
-      if (self->mpv_texture != 0) {
-        glDeleteTextures(1, &self->mpv_texture);
-        self->mpv_texture = 0;
+        // Restore the previous context, or explicitly release ours so
+        // eglDestroyContext can destroy it immediately instead of deferring.
+        if (current_display != EGL_NO_DISPLAY &&
+            current_context != EGL_NO_CONTEXT) {
+          eglMakeCurrent(current_display, current_draw, current_read,
+                         current_context);
+        } else {
+          eglMakeCurrent(egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                         EGL_NO_CONTEXT);
+        }
       }
-      if (self->fbo != 0) {
-        glDeleteFramebuffers(1, &self->fbo);
-        self->fbo = 0;
-      }
-
-      // Restore previous context
-      eglMakeCurrent(current_display, current_draw, current_read, current_context);
     }
   }
 
@@ -240,9 +256,11 @@ gboolean texture_gl_populate_texture(FlTextureGL* texture,
     // Render mpv frame to mpv's texture
     mpv_opengl_fbo fbo{(gint32)self->fbo, required_width, required_height, 0};
     int flip_y = 0;
+    int block_for_target_time = 0;
     mpv_render_param params[] = {
         {MPV_RENDER_PARAM_OPENGL_FBO, &fbo},
         {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
+        {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &block_for_target_time},
         {MPV_RENDER_PARAM_INVALID, NULL},
     };
     mpv_render_context_render(render_context, params);

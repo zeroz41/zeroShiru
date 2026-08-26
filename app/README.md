@@ -116,6 +116,15 @@ ZEROSHIRU_LIVE_TORBOX_KEY='…' \
   flutter test test/debrid/live_torbox_test.dart
 ```
 
+The Jimaku smoke test is also opt-in and read-only. It validates the account,
+queries a stable AniList episode, verifies exact-release ranking, and downloads
+one subtitle into a temporary test cache:
+
+```bash
+ZEROSHIRU_LIVE_JIMAKU_KEY='…' \
+  flutter test test/learning/live_jimaku_test.dart
+```
+
 ## Release builds
 
 Build on the operating system being targeted:

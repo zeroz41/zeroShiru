@@ -49,16 +49,12 @@ ReleaseSpan? releaseSpan(Object? episodeNumber) {
   );
 }
 
-/// Whether a release should still be offered for an episode. False only when its
-/// title proves it cannot hold it; everything unproven stays listed, since a
-/// release wrongly hidden is worse than one wrongly shown.
-///
-/// Two things keep it honest. A title that names no episodes — a season pack, a
-/// complete series — proves nothing and is always kept. And a title numbered
-/// past the end of the show is speaking a different numbering than the request:
-/// an absolute numbered release of a split cour season, say. When the caller
-/// could not supply the absolute number to compare against, that is unjudgeable
-/// rather than wrong, so it is kept too.
+/// Whether a release should still be offered for an episode. A title that names
+/// no episodes proves nothing and remains eligible for file-list inspection.
+/// Once a title does make a claim, however, it must cover either the local or
+/// mapped absolute episode. Guessing that every out-of-range number is an
+/// alternate numbering scheme is how unrelated partial batches reached the
+/// picker.
 ///
 /// [parse] is the parse of the release title: a [ParsedFilename] from the
 /// recognizer, or the raw episode-number value(s) a foreign parser produced.
@@ -74,17 +70,38 @@ bool releaseHoldsEpisode(
   if (wanted.isEmpty) {
     return true; // nothing was asked for, so nothing can be ruled out
   }
-  final span = releaseSpan(_episodeNumberOf(parse));
-  if (span == null) return true;
-  if (wanted.any(span.contains)) return true;
-  // numbered past the end of the show, with no absolute number to compare
-  // against: this is a numbering we cannot map, not a release we can rule out
-  final count = _finite(episodeCount);
-  if (_finite(absoluteEpisode) == null &&
-      (count == null || count <= 0 || span.last > count)) {
-    return true;
+  final spans = _episodeSpansOf(parse);
+  if (spans.isEmpty) return true;
+  return wanted.any((episode) => spans.any((span) => span.contains(episode)));
+}
+
+/// Which number should be handed to the torrent's file picker. Local numbering
+/// wins when both forms are present; otherwise a mapped absolute number is used.
+/// Null means the title did not prove a match.
+double? releaseEpisodeFor(
+  Object? parse, {
+  Object? episode,
+  Object? absoluteEpisode,
+}) {
+  final spans = _episodeSpansOf(parse);
+  if (spans.isEmpty) return null;
+  for (final value in [episode, absoluteEpisode]) {
+    final candidate = _finite(value);
+    if (candidate != null && spans.any((span) => span.contains(candidate))) {
+      return candidate;
+    }
   }
-  return false;
+  return null;
+}
+
+List<ReleaseSpan> _episodeSpansOf(Object? parse) {
+  if (parse is ParsedFilename) {
+    return [
+      for (final span in parse.episodeSpans) ReleaseSpan(span.first, span.last),
+    ];
+  }
+  final span = releaseSpan(_episodeNumberOf(parse));
+  return span == null ? const [] : [span];
 }
 
 Object? _episodeNumberOf(Object? parse) =>

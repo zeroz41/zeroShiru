@@ -166,15 +166,20 @@ class ResumePoint {
   final Duration position;
 }
 
-/// Per-open track preferences. The adapter applies a preference only when a
-/// matching track exists, leaving libmpv's container/default choice intact
-/// otherwise.
+/// Per-open track preferences. Audio falls back to the container default when
+/// a requested language is unavailable. Subtitles instead fall back to Off so
+/// a different language is never presented as the user's requested language.
 class PlaybackPreferences {
-  const PlaybackPreferences({this.audioLanguage, this.subtitleLanguage});
+  const PlaybackPreferences({
+    this.audioLanguage,
+    this.subtitleLanguage,
+    this.subtitlesEnabled = true,
+  });
 
   /// BCP 47 or ISO 639 language code (for example `ja`, `jpn`, `en-US`).
   final String? audioLanguage;
   final String? subtitleLanguage;
+  final bool subtitlesEnabled;
 }
 
 /// The one seam between the app and any video backend (libmpv/media_kit on
@@ -201,7 +206,8 @@ abstract interface class MediaEngine {
   Future<void> setSubtitleRendering(SubtitleRendering mode);
   Future<void> setSubtitleDelay(Duration delay, {bool secondary = false});
 
-  /// Loads and selects an external text/bitmap subtitle supported by libmpv.
-  Future<void> addSubtitle(String source, {String? title, String? language});
+  /// Loads and selects an external text/bitmap subtitle supported by libmpv,
+  /// returning the stable track id exposed by the current player generation.
+  Future<String> addSubtitle(String source, {String? title, String? language});
   Future<void> dispose();
 }

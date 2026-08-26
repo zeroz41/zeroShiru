@@ -6,7 +6,7 @@ import '../../domain/models/torrent.dart';
 int releaseLanguagePreferenceScore(
   TorrentResult result, {
   required String audioLanguage,
-  required String subtitleLanguage,
+  required String? subtitleLanguage,
 }) {
   final audio = _base(audioLanguage);
   final subtitles = _base(subtitleLanguage);

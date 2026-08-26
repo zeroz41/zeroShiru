@@ -25,12 +25,17 @@ class PlaybackLaunch {
     required this.episode,
     required this.magnet,
     required this.service,
+    this.releaseEpisode,
   });
 
   final Media media;
   final int episode;
   final String magnet;
   final DebridService service;
+
+  /// Episode number used by the release's files when it differs from the
+  /// library episode (typically absolute numbering for a later season).
+  final int? releaseEpisode;
 }
 
 /// The episode the user asked for, and which show they asked it of.

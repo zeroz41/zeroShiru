@@ -30,6 +30,7 @@ extension SettingsJson on Settings {
     'externalPlayerPath': externalPlayerPath,
     'audioLanguage': audioLanguage,
     'subtitleLanguage': subtitleLanguage,
+    'playerSubtitleMode': playerSubtitleMode,
     'learningTranslationLanguage': learningTranslationLanguage,
     'learningAutoSelectTracks': learningAutoSelectTracks,
     'learningAutoFetchJapaneseSubtitles': learningAutoFetchJapaneseSubtitles,
@@ -96,6 +97,11 @@ Settings settingsFromJson(Map<String, dynamic> json) {
     subtitleLanguage: _string(
       json['subtitleLanguage'],
       defaults.subtitleLanguage,
+    ),
+    playerSubtitleMode: _choiceString(
+      json['playerSubtitleMode'],
+      defaults.playerSubtitleMode,
+      const {'standard', 'learning', 'off'},
     ),
     learningTranslationLanguage: _choiceString(
       json['learningTranslationLanguage'],

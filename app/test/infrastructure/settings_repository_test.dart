@@ -94,6 +94,7 @@ void main() {
         externalPlayerPath: '/usr/bin/mpv',
         audioLanguage: 'eng',
         subtitleLanguage: 'spa',
+        playerSubtitleMode: 'learning',
         learningTranslationLanguage: 'de',
         learningAutoSelectTracks: false,
         learningAutoFetchJapaneseSubtitles: false,

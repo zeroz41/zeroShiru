@@ -39,6 +39,10 @@ G_DEFINE_TYPE(VideoOutput, video_output, G_TYPE_OBJECT)
 
 static void video_output_dispose(GObject* object) {
   VideoOutput* self = VIDEO_OUTPUT(object);
+  if (self->destroyed) {
+    G_OBJECT_CLASS(video_output_parent_class)->dispose(object);
+    return;
+  }
   self->destroyed = TRUE;
 
   // Make sure that no more callbacks are invoked from mpv.
@@ -50,6 +54,10 @@ static void video_output_dispose(GObject* object) {
   if (self->texture_gl) {
     fl_texture_registrar_unregister_texture(self->texture_registrar,
                                             FL_TEXTURE(self->texture_gl));
+
+    // TextureGL owns the EGLImage, FBO & texture. Release those while the
+    // isolated context is still alive.
+    g_clear_object(&self->texture_gl);
 
     // Save Flutter's current context before cleanup
     EGLDisplay current_display = eglGetCurrentDisplay();
@@ -66,25 +74,31 @@ static void video_output_dispose(GObject* object) {
       self->render_context = NULL;
 
       // Restore Flutter's context
-      if (flutter_context != EGL_NO_CONTEXT) {
+      if (current_display != EGL_NO_DISPLAY &&
+          flutter_context != EGL_NO_CONTEXT) {
         eglMakeCurrent(current_display, flutter_draw_surface, flutter_read_surface, flutter_context);
+      } else {
+        eglMakeCurrent(self->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                       EGL_NO_CONTEXT);
       }
     }
 
     // Clean up EGL resources
     if (self->egl_context != EGL_NO_CONTEXT) {
+      if (eglGetCurrentContext() == self->egl_context) {
+        eglMakeCurrent(self->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                       EGL_NO_CONTEXT);
+      }
       eglDestroyContext(self->egl_display, self->egl_context);
       self->egl_context = EGL_NO_CONTEXT;
     }
-
-    g_object_unref(self->texture_gl);
   }
   // S/W
   if (self->texture_sw) {
     fl_texture_registrar_unregister_texture(self->texture_registrar,
                                             FL_TEXTURE(self->texture_sw));
-    g_free(self->pixel_buffer);
-    g_object_unref(self->texture_sw);
+    g_clear_pointer(&self->pixel_buffer, g_free);
+    g_clear_object(&self->texture_sw);
     if (self->render_context != NULL) {
       mpv_render_context_free(self->render_context);
       self->render_context = NULL;

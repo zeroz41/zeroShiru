@@ -21,6 +21,32 @@ void main() {
     expect(parseHash('magnet:?xt=urn:btih:zzz'), isNull);
   });
 
+  test('source identity rejects missing and contradictory hashes', () {
+    const other = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    expect(
+      validatedTorrentHash(declaredHash: hash, link: 'https://tracker/file'),
+      hash,
+    );
+    expect(
+      validatedTorrentHash(
+        declaredHash: null,
+        link: 'magnet:?xt=urn:btih:$hash',
+      ),
+      hash,
+    );
+    expect(
+      validatedTorrentHash(declaredHash: null, link: 'https://tracker/file'),
+      isNull,
+    );
+    expect(
+      validatedTorrentHash(
+        declaredHash: hash,
+        link: 'magnet:?xt=urn:btih:$other',
+      ),
+      isNull,
+    );
+  });
+
   test('toMagnet passes magnets through and wraps hashes', () {
     final magnet = 'magnet:?xt=urn:btih:$hash';
     expect(toMagnet(magnet), magnet);

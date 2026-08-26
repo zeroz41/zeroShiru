@@ -113,4 +113,129 @@ void main() {
       );
     },
   );
+
+  test('TorBox batch resolution targets the exact requested episode', () async {
+    final files = [
+      for (var episode = 1; episode <= 30; episode++)
+        {
+          'id': episode,
+          'name': 'Batch/Show - ${episode.toString().padLeft(2, '0')}.mkv',
+          'size': 1000 + episode,
+          'mimetype': 'video/x-matroska',
+        },
+    ];
+    final transport = MockTransport([
+      Route.json(
+        '/torrents/mylist',
+        200,
+        jsonEncode({
+          'success': true,
+          'data': [
+            {
+              'id': 42,
+              'hash': hashA,
+              'name': 'Show batch',
+              'download_state': 'completed',
+              'download_finished': true,
+              'download_present': true,
+              'progress': 1,
+              'files': files,
+            },
+          ],
+        }),
+      ),
+      Route.json(
+        '/torrents/requestdl',
+        200,
+        jsonEncode({'success': true, 'data': 'https://cdn.test/video'}),
+      ),
+    ]);
+    final client = ProviderDebridClient(
+      DebridService.torbox,
+      transport,
+      ManualClock(),
+    );
+
+    final resolved = await client.resolve('account', hashA, episode: 23);
+
+    expect(resolved.target?.path, '/Batch/Show - 23.mkv');
+    final linkRequests = transport.requests
+        .where((request) => request.url.path.endsWith('/requestdl'))
+        .toList();
+    expect(linkRequests, isNotEmpty);
+    expect(
+      linkRequests.first.url.queryParameters['file_id'],
+      '23',
+      reason: 'the target link is requested before optional neighbor links',
+    );
+  });
+
+  test('TorBox inspection warms the account lookup used by a click', () async {
+    final files = [
+      {
+        'id': 1,
+        'name': 'Show/Show - 01.mkv',
+        'size': 1000,
+        'mimetype': 'video/x-matroska',
+      },
+    ];
+    final transport = MockTransport([
+      Route.json(
+        '/torrents/checkcached',
+        200,
+        jsonEncode({
+          'success': true,
+          'data': [
+            {'hash': hashA, 'name': 'Show', 'files': files},
+          ],
+        }),
+      ),
+      Route.json(
+        '/torrents/mylist',
+        200,
+        jsonEncode({
+          'success': true,
+          'data': [
+            {
+              'id': 42,
+              'hash': hashA,
+              'name': 'Show',
+              'download_state': 'completed',
+              'download_finished': true,
+              'download_present': true,
+              'progress': 1,
+              'files': files,
+            },
+          ],
+        }),
+      ),
+      Route.json(
+        '/torrents/requestdl',
+        200,
+        jsonEncode({'success': true, 'data': 'https://cdn.test/video'}),
+      ),
+    ]);
+    final client = ProviderDebridClient(
+      DebridService.torbox,
+      transport,
+      ManualClock(),
+    );
+
+    await client.inspectAvailability('account', [hashA]);
+    final resolved = await client.resolve('account', hashA, episode: 1);
+
+    expect(resolved.target?.path, '/Show/Show - 01.mkv');
+    expect(
+      transport.requests.where(
+        (request) => request.url.path.endsWith('/torrents/mylist'),
+      ),
+      hasLength(1),
+    );
+    expect(
+      transport.requests.where(
+        (request) => request.url.path.endsWith('/torrents/checkcached'),
+      ),
+      hasLength(1),
+    );
+  });
 }

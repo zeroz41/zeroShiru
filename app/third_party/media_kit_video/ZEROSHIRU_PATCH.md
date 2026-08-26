@@ -15,30 +15,21 @@ native display and driver, the existing plugin creates its isolated mpv EGL
 context, and the temporary context is released. No driver name, GPU vendor, or
 session environment override is used.
 
-## Known Linux shutdown issue (unresolved)
+The Linux texture callback also passes
+`MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME=0`. Flutter invokes that callback on
+its raster thread, so libmpv must return the rendered texture immediately
+instead of holding the UI compositor until the media presentation time. This
+matches current upstream source while remaining unreleased in 2.0.1.
 
-On the current NVIDIA 610.43.03 system, the hardware path initializes
-successfully (`H/W rendering with isolated EGL context`), but closing the app
-after `Ctrl-C` can still end in `SIGSEGV`. Captured cores place the main thread
-inside `libnvidia-eglcore.so` / `libEGL_nvidia.so` during libc process-exit
-cleanup. The shutdown output also includes Flutter 3.47 attempting to remove
-its implicit Linux view:
+## Linux shutdown ownership
 
-```text
-FlutterEngineRemoveView returned kInvalidArguments
-The implicit view cannot be removed.
-```
+The texture used to outlive its isolated EGL context, so its EGLImage, FBO and
+OpenGL texture could not be released. When no Flutter context was current, the
+isolated context also remained current while `eglDestroyContext` was called;
+EGL therefore deferred the destruction until process exit.
 
-Resource-ordering changes, deferred libmpv shutdown, lazy texture-context
-initialization, and an engine-aware application exit were tested on
-2026-08-24 and did not eliminate the crash; those experiments were reverted.
-Do not reapply them without a smaller reproduction. A minimal Flutter Linux
-app exited on `SIGINT` without producing a core, so the remaining interaction
-is specific to zeroShiru's plugin/window shutdown path. The startup ATK and
-blank cursor-theme messages are separate Flutter/GTK warnings and are not
-evidence of software rendering.
-
-Separately, this machine's `/usr/bin/flutter` installation had a stale
-`flutter_tools.snapshot` (`Wrong full snapshot version`). The working SDK used
-for builds was `/home/td/flutter/bin/flutter`; updating/reinstalling the system
-Flutter package is an environment repair, not a repository change.
+Shutdown now unregisters the Flutter texture, releases all texture-owned GPU
+objects, frees the mpv render context, explicitly unbinds the isolated EGL
+context, and only then destroys it. The application awaits this teardown before
+destroying its window. The accompanying `media_kit` patch synchronously joins
+the in-process mpv core, so no child renderer or delayed GPU owner remains.

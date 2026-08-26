@@ -351,6 +351,7 @@ class MediaKitEngine implements MediaEngine {
       _applySubtitleVisibility(),
       _setNativeProperty('sub-delay', '0'),
       _setNativeProperty('secondary-sub-delay', '0'),
+      _setNativeProperty('secondary-sid', 'no'),
     ]);
   }
 
@@ -380,7 +381,7 @@ class MediaKitEngine implements MediaEngine {
   }
 
   @override
-  Future<void> addSubtitle(
+  Future<String> addSubtitle(
     String source, {
     String? title,
     String? language,
@@ -394,6 +395,9 @@ class MediaKitEngine implements MediaEngine {
         'That subtitle source is unsupported or insecure.',
       );
     }
+    final previousTrackIds = {
+      for (final track in _player.state.tracks.subtitle) track.id,
+    };
     _blockedPrimarySubtitleText = _subtitleTextAt(0);
     _clearCue(secondary: false, trackId: source);
     try {
@@ -411,10 +415,47 @@ class MediaKitEngine implements MediaEngine {
       _resumeCurrentCue(secondary: false);
       rethrow;
     }
+    var loaded = loadedExternalKitSubtitleTrack(
+      _player.state.tracks,
+      previousTrackIds: previousTrackIds,
+      title: title,
+      language: language,
+    );
+    if (loaded == null) {
+      try {
+        loaded = await _player.stream.tracks
+            .map(
+              (tracks) => loadedExternalKitSubtitleTrack(
+                tracks,
+                previousTrackIds: previousTrackIds,
+                title: title,
+                language: language,
+              ),
+            )
+            .firstWhere((track) => track != null)
+            .timeout(const Duration(seconds: 2));
+      } on TimeoutException {
+        // media_kit still selects the URI track even when libmpv takes longer
+        // to publish its numeric track id. Keep playback usable and reconcile
+        // on the next native track event.
+      }
+    }
+    if (loaded != null && _player.state.track.subtitle.id != loaded.id) {
+      await _command(
+        () => _player.setSubtitleTrack(loaded!),
+        'The subtitle file loaded but could not be selected.',
+      );
+    }
     // Loading a track must not re-enable libass behind the native Learning
     // overlay. Some libmpv builds adjust visibility while selecting a URI.
     await _applySubtitleVisibility();
     _emit();
+    return loaded?.id ??
+        selectedKitSubtitleTrackId(
+          _player.state.track.subtitle.id,
+          _player.state.tracks.subtitle,
+        ) ??
+        source;
   }
 
   Future<void> _applyTrackPreferences(PlaybackPreferences preferences) async {
@@ -438,12 +479,21 @@ class MediaKitEngine implements MediaEngine {
       ),
     );
     // Preference failure should never make an otherwise playable file fail to
-    // open. libmpv's own default remains the safe fallback.
+    // open. Audio keeps libmpv's default; an unavailable explicit subtitle
+    // language resolves to Off rather than a different language.
     try {
       if (audio != null) await _player.setAudioTrack(audio);
     } catch (_) {}
     try {
-      if (subtitle != null) await _player.setSubtitleTrack(subtitle);
+      if (!preferences.subtitlesEnabled) {
+        await _player.setSubtitleTrack(kit.SubtitleTrack.no());
+      } else if (subtitle != null) {
+        await _player.setSubtitleTrack(subtitle);
+      } else if (hasExplicitTrackLanguagePreference(
+        preferences.subtitleLanguage,
+      )) {
+        await _player.setSubtitleTrack(kit.SubtitleTrack.no());
+      }
     } catch (_) {}
   }
 
@@ -1043,6 +1093,34 @@ String? selectedKitSubtitleTrackId(
   return fallback?.id;
 }
 
+kit.SubtitleTrack? loadedExternalKitSubtitleTrack(
+  kit.Tracks tracks, {
+  required Set<String> previousTrackIds,
+  String? title,
+  String? language,
+}) {
+  final added = tracks.subtitle
+      .where((track) => !previousTrackIds.contains(track.id))
+      .toList();
+  if (added.isEmpty) return null;
+  final wantedTitle = title?.trim();
+  if (wantedTitle != null && wantedTitle.isNotEmpty) {
+    for (final track in added) {
+      if (track.title?.trim() == wantedTitle) return track;
+    }
+  }
+  final wantedLanguage = normalizeTrackLanguage(language);
+  if (wantedLanguage != null) {
+    final matching = added
+        .where(
+          (track) => normalizeTrackLanguage(track.language) == wantedLanguage,
+        )
+        .toList();
+    if (matching.length == 1) return matching.single;
+  }
+  return added.length == 1 ? added.single : null;
+}
+
 String? normalizeTrackLanguage(String? raw) {
   final source = raw?.trim();
   if (source == null || source.isEmpty || source.toLowerCase() == 'und') {
@@ -1153,6 +1231,9 @@ T? preferredKitTrack<T>(
   }
   return best;
 }
+
+bool hasExplicitTrackLanguagePreference(String? language) =>
+    normalizeTrackLanguage(language) != null;
 
 String? inferredTrackLanguage(String? language, String? title) {
   final tagged = normalizeTrackLanguage(language);

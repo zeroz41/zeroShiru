@@ -20,7 +20,7 @@ void main() {
   final apiKey = Platform.environment['ZEROSHIRU_LIVE_TORBOX_KEY']?.trim();
 
   test(
-    'TorBox accepts the account and answers a read-only availability batch',
+    'TorBox accepts the account and exposes read-only cached file metadata',
     () async {
       final transport = PackageHttpTransport();
       addTearDown(transport.close);
@@ -38,6 +38,26 @@ void main() {
         availability.values,
         everyElement(anyOf(Availability.cached, Availability.available)),
       );
+
+      final inspected = await client.inspectAvailability(
+        apiKey,
+        _publicSampleHashes,
+      );
+      expect(inspected.keys, containsAll(_publicSampleHashes));
+      expect(
+        inspected.values.map((detail) => detail.availability),
+        everyElement(anyOf(Availability.cached, Availability.available)),
+      );
+      for (final detail in inspected.values) {
+        if (detail.availability == Availability.cached) {
+          expect(
+            detail.files,
+            isNotNull,
+            reason: 'list_files=true should include cached member metadata',
+          );
+          expect(detail.files, isNotEmpty);
+        }
+      }
     },
     skip: apiKey == null || apiKey.isEmpty
         ? 'Set ZEROSHIRU_LIVE_TORBOX_KEY to opt into live account testing.'

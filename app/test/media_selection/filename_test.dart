@@ -42,6 +42,15 @@ void main() {
     expect(episodes('Show S01E01-E12.mkv'), [1.0, 12.0]);
   });
 
+  test('keeps plus-separated fix episodes discrete', () {
+    final parsed = parseFilename('[F-R] One Piece 0487+0490 v3');
+    expect(parsed.episodeNumbers, [487.0, 490.0]);
+    expect(parsed.coversEpisode(487), isTrue);
+    expect(parsed.coversEpisode(488), isFalse);
+    expect(parsed.coversEpisode(489), isFalse);
+    expect(parsed.coversEpisode(490), isTrue);
+  });
+
   test('keeps decimal episodes whole', () {
     expect(episodes('Show - 12.5.mkv'), [12.5]);
     expect(episodes('Show - 12.mkv'), [12.0]);

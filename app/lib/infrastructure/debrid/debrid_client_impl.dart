@@ -114,6 +114,49 @@ class ProviderDebridClient implements DebridClient {
   }
 
   @override
+  Future<Map<String, DebridAvailabilityDetail>> inspectAvailability(
+    String apiKey,
+    List<String> hashes,
+  ) async {
+    final managed = _managed(apiKey);
+    final normalized = DebridApiClient.normalizeHashes(
+      hashes,
+      managed.provider.config.maxAsk,
+    );
+    final provider = managed.provider;
+    if (provider is! TorBoxProvider) {
+      final states = await availability(apiKey, normalized);
+      return {
+        for (final entry in states.entries)
+          entry.key: DebridAvailabilityDetail(entry.value),
+      };
+    }
+
+    final answers = <String, DebridAvailabilityDetail>{};
+    final maxBatch = provider.config.maxBatch;
+    final work = <Future<void>>[];
+    for (var start = 0; start < normalized.length; start += maxBatch) {
+      final end = (start + maxBatch).clamp(0, normalized.length);
+      final chunk = normalized.sublist(start, end);
+      work.add(() async {
+        final inspected = await provider.inspectAvailabilityBatch(chunk);
+        answers.addAll(inspected);
+        for (final entry in inspected.entries) {
+          managed.client.remember(entry.key, entry.value.availability);
+        }
+      }());
+    }
+    await Future.wait(work);
+    // Resolution starts by checking the account list for an existing torrent.
+    // Warm that read while the user is choosing; a click shares the same
+    // in-flight/cache entry, so this never creates a duplicate request.
+    unawaited(
+      managed.listAvailability().then<void>((_) {}, onError: (Object _) {}),
+    );
+    return answers;
+  }
+
+  @override
   Future<ResolvedDebrid> resolve(
     String apiKey,
     String magnet, {
@@ -148,7 +191,7 @@ class ProviderDebridClient implements DebridClient {
                   episode.toDouble(),
                   maxFiles,
                 );
-              } on EpisodeNotInPack catch (error) {
+              } on EpisodeSelectionFailure catch (error) {
                 throw DebridFailure.rejected(error.message);
               }
             },
@@ -249,7 +292,7 @@ ResolvedFiles? _retarget(ResolvedFiles resolved, int? episode) {
       episode.toDouble(),
       parseNames,
     );
-  } on EpisodeNotInPack {
+  } on EpisodeSelectionFailure {
     return null;
   }
   final target = picked == null

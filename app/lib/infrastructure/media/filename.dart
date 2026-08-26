@@ -33,10 +33,23 @@ enum ReleaseKind {
   bool get isExtra => true;
 }
 
+/// One contiguous claim made by a release name. Separate claims stay
+/// separate: `487+490` produces two one-episode spans, while `01-12` produces
+/// one span covering the full range.
+class FilenameEpisodeSpan {
+  const FilenameEpisodeSpan(this.first, this.last);
+
+  final double first;
+  final double last;
+
+  bool contains(double episode) => first <= episode && episode <= last;
+}
+
 /// What a file name says about itself.
 class ParsedFilename {
   const ParsedFilename({
     this.episodeNumbers = const [],
+    this.episodeSpans = const [],
     this.kind,
     this.version,
   });
@@ -46,6 +59,11 @@ class ParsedFilename {
   /// everything between. Empty when the name carries no readable number.
   final List<double> episodeNumbers;
 
+  /// Contiguous spans represented by [episodeNumbers]. This preserves the
+  /// difference between a range (`01-12`) and a discrete fix release
+  /// (`01+04`), which must never be treated as containing episodes 2 and 3.
+  final List<FilenameEpisodeSpan> episodeSpans;
+
   /// The release kind, when the name names one.
   final ReleaseKind? kind;
 
@@ -54,6 +72,9 @@ class ParsedFilename {
 
   /// Whether this file is an extra rather than an episode.
   bool get isExtra => kind?.isExtra ?? false;
+
+  bool coversEpisode(double episode) =>
+      episodeSpans.any((span) => span.contains(episode));
 }
 
 /// Reads one file name (a bare name or a full path — only the last segment is read).
@@ -62,12 +83,47 @@ ParsedFilename parseFilename(String name) {
   final stem = _stripExtension(base);
   final tokens = _tokenize(stem);
   final kind = _releaseKind(tokens);
-  final (episodeNumbers, version) = _episodeNumbers(tokens);
+  final (parsedNumbers, version) = _episodeNumbers(tokens);
+  final discreteNumbers = _plusEpisodeNumbers(stem);
+  final episodeNumbers = discreteNumbers ?? parsedNumbers;
+  final episodeSpans = discreteNumbers != null
+      ? [
+          for (final episode in discreteNumbers)
+            FilenameEpisodeSpan(episode, episode),
+        ]
+      : _spansOf(parsedNumbers);
   return ParsedFilename(
     episodeNumbers: episodeNumbers,
+    episodeSpans: episodeSpans,
     kind: kind,
     version: version,
   );
+}
+
+List<FilenameEpisodeSpan> _spansOf(List<double> numbers) {
+  if (numbers.isEmpty) return const [];
+  if (numbers.length == 1) {
+    return [FilenameEpisodeSpan(numbers.first, numbers.first)];
+  }
+  final first = numbers.reduce((a, b) => a < b ? a : b);
+  final last = numbers.reduce((a, b) => a > b ? a : b);
+  return [FilenameEpisodeSpan(first, last)];
+}
+
+/// Discrete multi-episode fix releases use plus signs instead of a range,
+/// e.g. `One Piece 0487+0490`. Treating the two endpoints as a span made that
+/// release appear to contain 488 and 489 as well.
+List<double>? _plusEpisodeNumbers(String stem) {
+  final match = RegExp(r'(?:^|[^\d.])((?:\d{1,4}\s*\+\s*)+\d{1,4})(?![\d.])')
+      .firstMatch(stem);
+  if (match == null) return null;
+  final values = [
+    for (final part in match.group(1)!.split('+'))
+      ?double.tryParse(part.trim()),
+  ];
+  return values.length >= 2 && values.every((value) => value.isFinite)
+      ? values
+      : null;
 }
 
 /// Reads a batch of names, in order.

@@ -35,6 +35,7 @@ Future<void> main() async {
   };
 
   await windowManager.ensureInitialized();
+  await windowManager.setPreventClose(true);
   const windowOptions = WindowOptions(
     size: Size(1280, 800),
     minimumSize: Size(320, 390),
@@ -88,9 +89,37 @@ class _ServiceHost extends StatefulWidget {
   State<_ServiceHost> createState() => _ServiceHostState();
 }
 
-class _ServiceHostState extends State<_ServiceHost> {
+class _ServiceHostState extends State<_ServiceHost> with WindowListener {
+  bool _closing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    windowManager.addListener(this);
+  }
+
+  @override
+  void onWindowClose() {
+    unawaited(_closeWindow());
+  }
+
+  Future<void> _closeWindow() async {
+    if (_closing) return;
+    _closing = true;
+    try {
+      widget.services.log.log('info', 'app', 'zeroShiru stopping');
+      await windowManager.hide();
+      await widget.services.close();
+    } catch (error, stack) {
+      debugPrint('zeroShiru shutdown failed: $error\n$stack');
+    } finally {
+      await windowManager.destroy();
+    }
+  }
+
   @override
   void dispose() {
+    windowManager.removeListener(this);
     unawaited(widget.services.close());
     super.dispose();
   }

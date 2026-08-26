@@ -205,8 +205,11 @@ When an episode has no Japanese text track, a separate
 `LearningSubtitleRepository` may resolve one by stable AniList ID + episode.
 The Jimaku adapter uses a personal key from OS credential storage, rejects
 OCR/generated candidates, bounds direct files and ZIP expansion, caches one
-verified text member per episode, and gives libmpv a local file URI. Provider
-authentication is never forwarded to download hosts.
+verified text member per episode, and gives libmpv a local file URI. Selection
+uses exact release groups, platform and source-cut compatibility, explicit
+retime targets, and both archive/member names; AniList and episode identity
+remain hard safety checks. Provider authentication is never forwarded to
+download hosts.
 
 ## Cue identity and stale-result safety
 

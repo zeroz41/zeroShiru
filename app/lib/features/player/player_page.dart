@@ -11,6 +11,7 @@ import '../../application/learning/providers.dart';
 import '../../application/learning/subtitle_providers.dart';
 import '../../application/playback/backend.dart';
 import '../../application/playback/probe.dart';
+import '../../application/playback/preferences.dart';
 import '../../application/playback/providers.dart';
 import '../../application/playback/request.dart';
 import '../../application/settings/providers.dart';
@@ -58,10 +59,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   _LearningSubtitleLoadResult? _learningPreparationResult;
   bool _learningPreparationPending = false;
   String? _learningAutoAttempt;
-  String? _pickedAudioTrack;
   String? _pickedPrimarySubtitle;
   String? _pickedSecondarySubtitle;
+  String? _standardPrimarySubtitle;
   SubtitleRendering _requestedSubtitleRendering = SubtitleRendering.standard;
+  bool _playerPreferencesLoaded = false;
+  String? _playbackTuningIdentity;
+  PlaybackTuning _playbackTuning = const PlaybackTuning();
   int _activePlaybackGeneration = 0;
   BoxFit _fit = BoxFit.contain;
   double _lastAudibleVolume = 1;
@@ -101,8 +105,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     super.didUpdateWidget(oldWidget);
     if (widget.initialLaunch != null &&
         (oldWidget.initialLaunch?.magnet != widget.initialLaunch!.magnet ||
-            oldWidget.initialLaunch?.episode !=
-                widget.initialLaunch!.episode)) {
+            oldWidget.initialLaunch?.episode != widget.initialLaunch!.episode ||
+            oldWidget.initialLaunch?.releaseEpisode !=
+                widget.initialLaunch!.releaseEpisode)) {
       unawaited(_resolveLaunch(widget.initialLaunch!));
     } else if (widget.initialSource != null &&
         oldWidget.initialSource?.url != widget.initialSource!.url) {
@@ -156,7 +161,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       final resolved = await client.resolve(
         key,
         launch.magnet,
-        episode: launch.episode,
+        episode: launch.releaseEpisode ?? launch.episode,
       );
       final source = _pickResolvedTarget(resolved, launch.episode);
       final probeTransport = ref.read(playbackProbeTransportProvider);
@@ -231,6 +236,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   Future<void> _open(PlayerFile source) async {
     _activePlaybackGeneration = 0;
+    final settings = await ref.read(settingsControllerProvider.future);
+    final tuningIdentity = playbackTuningIdentity(source);
+    _playbackTuningIdentity = tuningIdentity;
+    _playbackTuning = tuningIdentity == null
+        ? const PlaybackTuning()
+        : ref.read(playbackTuningStoreProvider).read(tuningIdentity);
+    if (!_playerPreferencesLoaded) {
+      _requestedSubtitleRendering = _subtitleRenderingFromSetting(
+        settings.playerSubtitleMode,
+      );
+      _playerPreferencesLoaded = true;
+    }
     final opened = _engine.state
         .firstWhere(
           (snapshot) =>
@@ -239,8 +256,27 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         )
         .timeout(const Duration(seconds: 30));
     try {
-      await _engine.open(source);
-      _activePlaybackGeneration = (await opened).generation;
+      await _engine.open(
+        source,
+        preferences: playbackPreferencesFor(
+          settings,
+          subtitleMode: _requestedSubtitleRendering.name,
+        ),
+      );
+      final ready = await opened;
+      _activePlaybackGeneration = ready.generation;
+      if (ready.subtitleRendering != _requestedSubtitleRendering) {
+        await _engine.setSubtitleRendering(_requestedSubtitleRendering);
+      }
+      if (_playbackTuning.primarySubtitleDelay != Duration.zero) {
+        await _engine.setSubtitleDelay(_playbackTuning.primarySubtitleDelay);
+      }
+      if (_playbackTuning.secondarySubtitleDelay != Duration.zero) {
+        await _engine.setSubtitleDelay(
+          _playbackTuning.secondarySubtitleDelay,
+          secondary: true,
+        );
+      }
       if (mounted) await _engine.play();
     } on PlaybackFailure {
       // The redacted failure is already represented in the state stream.
@@ -248,9 +284,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   void _clearPickedTracks() {
-    _pickedAudioTrack = null;
     _pickedPrimarySubtitle = null;
     _pickedSecondarySubtitle = null;
+    _standardPrimarySubtitle = null;
   }
 
   Future<_LearningSubtitleLoadResult> _findJapaneseLearningSubtitle() {
@@ -349,21 +385,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   ) async {
     final warnings = <String>[];
     final selectedTrackIds = {
-      snapshot.selectedAudio,
       snapshot.selectedPrimarySubtitle,
       snapshot.selectedSecondarySubtitle,
     }..remove(null);
-    final pickedTrackIds = {
-      _pickedAudioTrack,
-      _pickedPrimarySubtitle,
-      _pickedSecondarySubtitle,
-    }..remove(null);
-    final japaneseAudio = _preferredLearningTrack(
-      snapshot.audioTracks,
-      'ja',
-      selectedIds: selectedTrackIds,
-      preferredIds: pickedTrackIds,
-    );
+    final pickedTrackIds = {_pickedPrimarySubtitle, _pickedSecondarySubtitle}
+      ..remove(null);
     final textTracks = snapshot.subtitleTracks
         .where((track) => !track.isBitmapSubtitle)
         .toList();
@@ -386,16 +412,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     );
 
     try {
-      if (japaneseAudio != null && japaneseAudio.id != snapshot.selectedAudio) {
-        await _engine.selectAudio(japaneseAudio.id);
-      } else if (japaneseAudio == null &&
-          snapshot.audioTracks.any(
-            (track) => _trackLanguageBase(track) != null,
-          )) {
-        warnings.add(
-          'No Japanese audio track was found; the current audio stays selected.',
-        );
-      }
       if (!_learningRequestIsCurrent(snapshot)) {
         return const _LearningSubtitleLoadResult.unavailable(
           'Playback changed before the Learning tracks were ready.',
@@ -480,10 +496,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         LearningSubtitleQuery(
           anilistId: launch.media.id,
           episode: launch.episode,
-          releaseName:
-              _source?.torrentName ??
-              _source?.name ??
-              launch.media.title.display,
+          releaseName: _learningReleaseIdentity(
+            _source,
+            fallback: launch.media.title.display,
+          ),
           movie: launch.media.format == MediaFormat.movie,
         ),
         credential: credential ?? '',
@@ -508,13 +524,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         );
       }
 
-      await _engine.addSubtitle(
+      final primaryTrackId = await _engine.addSubtitle(
         match.source,
         title: match.title,
         language: 'ja',
       );
+      _pickedPrimarySubtitle = primaryTrackId;
       return _LearningSubtitleLoadResult.ready(
         'Japanese text attached from ${match.provider} and cached for this episode. Source: ${match.originalName}.',
+        primaryTrackId: primaryTrackId,
       );
     } on LearningSubtitleFailure catch (failure) {
       return _LearningSubtitleLoadResult.unavailable(failure.message);
@@ -560,7 +578,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Future<void> _setSubtitleRendering(SubtitleRendering mode) async {
+    final previous = _requestedSubtitleRendering;
     _requestedSubtitleRendering = mode;
+    if (mode == SubtitleRendering.learning &&
+        previous != SubtitleRendering.learning) {
+      _standardPrimarySubtitle = _latest.selectedPrimarySubtitle;
+    }
     if (mode != SubtitleRendering.learning && mounted) {
       setState(() {
         _learningPreparationRequest = null;
@@ -571,7 +594,77 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         _learningPreparationResult = null;
       });
     }
+    if (mode != SubtitleRendering.learning) {
+      await _engine.selectSubtitle(null, secondary: true);
+    }
+    if (mode == SubtitleRendering.standard) {
+      final settings = await ref.read(settingsControllerProvider.future);
+      final preferred = _preferredStandardSubtitle(
+        _latest,
+        settings.subtitleLanguage,
+        previousTrackId: _standardPrimarySubtitle,
+      );
+      await _engine.selectSubtitle(preferred?.id);
+      _standardPrimarySubtitle = preferred?.id;
+    }
     await _engine.setSubtitleRendering(mode);
+    await _persistSettings(
+      (current) => current.copyWith(playerSubtitleMode: mode.name),
+    );
+  }
+
+  Future<void> _selectAudioTrack(String? trackId) async {
+    await _engine.selectAudio(trackId);
+    final language = _settingLanguageForTrack(
+      _latest.audioTracks,
+      trackId,
+      automatic: 'und',
+    );
+    if (language == null) return;
+    await _persistSettings(
+      (current) => current.copyWith(audioLanguage: language),
+    );
+  }
+
+  Future<void> _selectPrimarySubtitle(String? trackId) async {
+    _pickedPrimarySubtitle = trackId;
+    await _engine.selectSubtitle(trackId);
+    if (_requestedSubtitleRendering != SubtitleRendering.standard) return;
+    final language = _settingLanguageForTrack(_latest.subtitleTracks, trackId);
+    if (language == null) return;
+    await _persistSettings(
+      (current) => current.copyWith(subtitleLanguage: language),
+    );
+  }
+
+  Future<void> _selectSecondarySubtitle(String? trackId) async {
+    _pickedSecondarySubtitle = trackId;
+    await _engine.selectSubtitle(trackId, secondary: true);
+    if (_requestedSubtitleRendering != SubtitleRendering.learning) return;
+    final language = _settingLanguageForTrack(_latest.subtitleTracks, trackId);
+    if (language == null || language == 'jpn') return;
+    await _persistSettings(
+      (current) => current.copyWith(learningTranslationLanguage: language),
+    );
+  }
+
+  Future<void> _persistSettings(Settings Function(Settings) update) =>
+      ref.read(settingsControllerProvider.notifier).persist(update);
+
+  Future<void> _setAndRememberSubtitleDelay(
+    Duration delay, {
+    bool secondary = false,
+  }) async {
+    await _engine.setSubtitleDelay(delay, secondary: secondary);
+    _playbackTuning = secondary
+        ? _playbackTuning.copyWith(secondarySubtitleDelay: delay)
+        : _playbackTuning.copyWith(primarySubtitleDelay: delay);
+    final identity = _playbackTuningIdentity;
+    if (identity != null) {
+      await ref
+          .read(playbackTuningStoreProvider)
+          .write(identity, _playbackTuning);
+    }
   }
 
   void _run(Future<void> Function() command) {
@@ -632,6 +725,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         episode: target,
         magnet: launch.magnet,
         service: launch.service,
+        releaseEpisode: launch.releaseEpisode == null
+            ? null
+            : launch.releaseEpisode! + direction,
       ),
     );
   }
@@ -666,7 +762,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Future<void> _shiftSubtitleDelay(Duration delta) =>
-      _engine.setSubtitleDelay(_latest.primarySubtitleDelay + delta);
+      _setAndRememberSubtitleDelay(_latest.primarySubtitleDelay + delta);
 
   KeyEventResult _onKeyEvent(FocusNode _, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
@@ -781,18 +877,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 onVolume: (volume) => _run(() => _engine.setVolume(volume)),
                 onToggleMute: () => _run(_toggleMute),
                 onSpeed: (speed) => _run(() => _engine.setSpeed(speed)),
-                onAudio: (track) {
-                  _pickedAudioTrack = track;
-                  _run(() => _engine.selectAudio(track));
-                },
-                onSubtitle: (track) {
-                  _pickedPrimarySubtitle = track;
-                  _run(() => _engine.selectSubtitle(track));
-                },
-                onSecondarySubtitle: (track) {
-                  _pickedSecondarySubtitle = track;
-                  _run(() => _engine.selectSubtitle(track, secondary: true));
-                },
+                onAudio: (track) => _run(() => _selectAudioTrack(track)),
+                onSubtitle: (track) =>
+                    _run(() => _selectPrimarySubtitle(track)),
+                onSecondarySubtitle: (track) =>
+                    _run(() => _selectSecondarySubtitle(track)),
                 onSubtitleRendering: _setSubtitleRendering,
                 onPrepareLearningTracks: _prepareLearningTracks,
                 onLearningLookup: () {
@@ -802,15 +891,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                   }
                 },
                 onSubtitleDelay: (delay, secondary) => _run(
-                  () => _engine.setSubtitleDelay(delay, secondary: secondary),
+                  () =>
+                      _setAndRememberSubtitleDelay(delay, secondary: secondary),
                 ),
-                onAddSubtitle: (request) => _run(
-                  () => _engine.addSubtitle(
+                onAddSubtitle: (request) => _run(() async {
+                  final trackId = await _engine.addSubtitle(
                     request.source,
                     title: request.title,
                     language: request.language,
-                  ),
-                ),
+                  );
+                  _pickedPrimarySubtitle = trackId;
+                }),
                 onToggleFit: _toggleFit,
               );
             },
@@ -1812,6 +1903,8 @@ const _subtitleShadows = [
 ];
 
 const _maximumUnknownSubtitleCueDuration = Duration(seconds: 20);
+const _learningCueAlignmentTolerance = Duration(milliseconds: 750);
+const _maximumRememberedLearningCues = 512;
 
 TextStyle _learningMainTextStyle(double scale) => TextStyle(
   fontFamily: ShiruTokens.fontFamilyStats,
@@ -1850,11 +1943,44 @@ class _LearningSubtitleOverlay extends ConsumerStatefulWidget {
 
 class _LearningSubtitleOverlayState
     extends ConsumerState<_LearningSubtitleOverlay> {
+  final Map<String, SubtitleCue> _cueHistory = {};
+  int? _cueHistoryGeneration;
   String? _analyzedCue;
   Future<List<LearningToken>>? _tokens;
   LearningToken? _selected;
   Future<List<LearningDefinition>>? _definitions;
   bool _pausedForCue = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _rememberCurrentCues();
+  }
+
+  @override
+  void didUpdateWidget(_LearningSubtitleOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _rememberCurrentCues();
+  }
+
+  void _rememberCurrentCues() {
+    final generation = widget.snapshot.generation;
+    if (_cueHistoryGeneration != generation) {
+      _cueHistoryGeneration = generation;
+      _cueHistory.clear();
+    }
+    for (final cue in [widget.primary, widget.secondary]) {
+      if (cue == null ||
+          cue.generation != generation ||
+          cue.plainText.isEmpty) {
+        continue;
+      }
+      _cueHistory[cue.identity] = cue;
+    }
+    while (_cueHistory.length > _maximumRememberedLearningCues) {
+      _cueHistory.remove(_cueHistory.keys.first);
+    }
+  }
 
   bool _visible(SubtitleCue? cue, Duration delay, String? selectedTrack) {
     if (cue == null || cue.generation != widget.snapshot.generation) {
@@ -1894,7 +2020,34 @@ class _LearningSubtitleOverlayState
     return null;
   }
 
-  SubtitleCue? _translationCue(
+  Duration _delayFor(SubtitleCue cue) {
+    if (cue.trackId == widget.snapshot.selectedPrimarySubtitle) {
+      return widget.snapshot.primarySubtitleDelay;
+    }
+    if (cue.trackId == widget.snapshot.selectedSecondarySubtitle) {
+      return widget.snapshot.secondarySubtitleDelay;
+    }
+    return Duration.zero;
+  }
+
+  Duration _effectiveEnd(SubtitleCue cue) {
+    final reported = cue.end;
+    final end = reported == null || reported < cue.start
+        ? cue.start + _maximumUnknownSubtitleCueDuration
+        : reported;
+    return end + _delayFor(cue);
+  }
+
+  bool _cuesAlign(SubtitleCue japanese, SubtitleCue translation) {
+    final japaneseStart = japanese.start + _delayFor(japanese);
+    final japaneseEnd = _effectiveEnd(japanese);
+    final translationStart = translation.start + _delayFor(translation);
+    final translationEnd = _effectiveEnd(translation);
+    return japaneseStart <= translationEnd + _learningCueAlignmentTolerance &&
+        translationStart <= japaneseEnd + _learningCueAlignmentTolerance;
+  }
+
+  List<SubtitleCue> _translationCues(
     bool showPrimary,
     bool showSecondary,
     SubtitleCue? japanese,
@@ -1902,14 +2055,30 @@ class _LearningSubtitleOverlayState
     final preferred = _languageBase(
       widget.settings.learningTranslationLanguage,
     );
-    final candidates = <SubtitleCue>[
-      if (showPrimary && widget.primary != null) widget.primary!,
-      if (showSecondary && widget.secondary != null) widget.secondary!,
-    ].where((cue) => cue.identity != japanese?.identity).toList();
-    return candidates.where((cue) {
+    final selectedTracks = {
+      widget.snapshot.selectedPrimarySubtitle,
+      widget.snapshot.selectedSecondarySubtitle,
+    }..remove(null);
+    final candidates = japanese == null
+        ? <SubtitleCue>[
+            if (showPrimary && widget.primary != null) widget.primary!,
+            if (showSecondary && widget.secondary != null) widget.secondary!,
+          ]
+        : _cueHistory.values.toList();
+    final aligned = candidates.where((cue) {
+      if (cue.identity == japanese?.identity ||
+          cue.generation != widget.snapshot.generation ||
+          cue.plainText.isEmpty ||
+          !selectedTracks.contains(cue.trackId)) {
+        return false;
+      }
       final track = _trackFor(cue);
-      return track != null && _trackLanguageBase(track) == preferred;
-    }).firstOrNull;
+      return track != null &&
+          _trackLanguageBase(track) == preferred &&
+          (japanese == null || _cuesAlign(japanese, cue));
+    }).toList()..sort((left, right) => left.start.compareTo(right.start));
+    final seenText = <String>{};
+    return aligned.where((cue) => seenText.add(cue.plainText)).toList();
   }
 
   bool get _hasSelectedJapaneseTextTrack {
@@ -1962,7 +2131,8 @@ class _LearningSubtitleOverlayState
     );
     if (!showPrimary && !showSecondary) return const SizedBox.shrink();
     final japanese = _japaneseCue(showPrimary, showSecondary);
-    final translation = _translationCue(showPrimary, showSecondary, japanese);
+    final translations = _translationCues(showPrimary, showSecondary, japanese);
+    final translationText = translations.map((cue) => cue.plainText).join('\n');
     if (japanese != null) _ensureAnalyzed(japanese);
     final scale = widget.settings.learningSubtitleScale;
     final showMissingTrackNotice =
@@ -2052,11 +2222,11 @@ class _LearningSubtitleOverlayState
                       );
                     },
                   ),
-                if (translation != null &&
+                if (translationText.isNotEmpty &&
                     widget.settings.learningShowTranslation) ...[
                   const SizedBox(height: ShiruTokens.space2),
                   Text(
-                    translation.plainText,
+                    translationText,
                     key: const ValueKey('learning-translation'),
                     textAlign: TextAlign.center,
                     style: TextStyle(
@@ -2347,15 +2517,22 @@ class _LearningNotice extends StatelessWidget {
 }
 
 class _LearningSubtitleLoadResult {
-  const _LearningSubtitleLoadResult.ready(this.message) : ready = true;
+  const _LearningSubtitleLoadResult.ready(this.message, {this.primaryTrackId})
+    : ready = true;
 
-  const _LearningSubtitleLoadResult.unavailable(this.message) : ready = false;
+  const _LearningSubtitleLoadResult.unavailable(this.message)
+    : ready = false,
+      primaryTrackId = null;
 
   final bool ready;
   final String message;
+  final String? primaryTrackId;
 
   _LearningSubtitleLoadResult copyWithMessage(String message) => ready
-      ? _LearningSubtitleLoadResult.ready(message)
+      ? _LearningSubtitleLoadResult.ready(
+          message,
+          primaryTrackId: primaryTrackId,
+        )
       : _LearningSubtitleLoadResult.unavailable(message);
 }
 
@@ -2591,6 +2768,7 @@ class _SubtitlePanelState extends ConsumerState<_SubtitlePanel> {
       _learningMessagePositive = result.ready;
       _learningCanRetry = !result.ready;
       _learningWarning = result.message;
+      _primary = result.primaryTrackId ?? _snapshot.selectedPrimarySubtitle;
     });
   }
 
@@ -2778,6 +2956,7 @@ class _SubtitlePanelState extends ConsumerState<_SubtitlePanel> {
                   subtitle: const Text('Manual tracks, timing, and sidecars'),
                   children: [
                     _TrackPickerRow(
+                      key: const ValueKey('primary-subtitle-track'),
                       title: 'Primary track',
                       tracks: _snapshot.subtitleTracks,
                       selected: _primary,
@@ -2785,6 +2964,7 @@ class _SubtitlePanelState extends ConsumerState<_SubtitlePanel> {
                     ),
                     const SizedBox(height: ShiruTokens.space2),
                     _TrackPickerRow(
+                      key: const ValueKey('secondary-subtitle-track'),
                       title: 'Secondary track',
                       subtitle: 'Optional translation line',
                       tracks: _snapshot.subtitleTracks,
@@ -2858,6 +3038,7 @@ Future<void> _showSubtitlePanel(BuildContext context, {required Widget panel}) {
 
 class _TrackPickerRow extends StatelessWidget {
   const _TrackPickerRow({
+    super.key,
     required this.title,
     required this.tracks,
     required this.selected,
@@ -3243,6 +3424,60 @@ String? _languageBase(String? code) {
   return iso3[base] ?? base;
 }
 
+SubtitleRendering _subtitleRenderingFromSetting(String value) =>
+    switch (value) {
+      'learning' => SubtitleRendering.learning,
+      'off' => SubtitleRendering.off,
+      _ => SubtitleRendering.standard,
+    };
+
+String _learningReleaseIdentity(
+  PlayerFile? source, {
+  required String fallback,
+}) {
+  if (source == null) return fallback;
+  final values = <String>[
+    if (source.torrentName?.trim() case final value? when value.isNotEmpty)
+      value,
+    if (source.name.trim().isNotEmpty) source.name.trim(),
+  ];
+  return values.toSet().join(' / ');
+}
+
+String? _settingLanguageForTrack(
+  Iterable<MediaTrack> tracks,
+  String? trackId, {
+  String? automatic,
+}) {
+  if (trackId == null) return automatic;
+  final track = tracks
+      .where((candidate) => candidate.id == trackId)
+      .firstOrNull;
+  if (track == null) return null;
+  final language = _trackLanguageBase(track);
+  if (language == 'ja') return 'jpn';
+  if (language == 'en') return 'eng';
+  const supported = {
+    'es',
+    'pt',
+    'de',
+    'fr',
+    'it',
+    'ko',
+    'zh',
+    'ru',
+    'ar',
+    'hi',
+    'id',
+    'pl',
+    'th',
+    'tr',
+    'uk',
+    'vi',
+  };
+  return supported.contains(language) ? language : null;
+}
+
 String? _trackLanguageBase(MediaTrack track) {
   final tagged = _languageBase(track.language);
   if (tagged != null) return tagged;
@@ -3359,6 +3594,31 @@ MediaTrack? _preferredLearningTrack(
     }
   }
   return best;
+}
+
+MediaTrack? _preferredStandardSubtitle(
+  PlaybackSnapshot snapshot,
+  String? language, {
+  String? previousTrackId,
+}) {
+  final wanted = _languageBase(language);
+  if (wanted != null) {
+    return _preferredLearningTrack(
+      snapshot.subtitleTracks,
+      wanted,
+      preferredIds: [previousTrackId],
+      subtitle: true,
+    );
+  }
+  final previous = snapshot.subtitleTracks
+      .where((track) => track.id == previousTrackId)
+      .firstOrNull;
+  if (previous != null) return previous;
+  final selected = snapshot.subtitleTracks
+      .where((track) => track.id == snapshot.selectedPrimarySubtitle)
+      .firstOrNull;
+  if (selected != null) return selected;
+  return snapshot.subtitleTracks.where((track) => track.isDefault).firstOrNull;
 }
 
 String _languageTitle(String? code) =>

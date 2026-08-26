@@ -17,7 +17,11 @@ dependencies:
   go_router: ^17.5.0
   http: ^1.6.0
   intl: ^0.20.3
-  media_kit: 1.2.6
+  koni_archive: ^0.9.0
+  # Local 1.2.6 patch: native teardown joins libmpv before releasing its Dart
+  # callback, so shutdown is immediate and cannot leave a renderer behind.
+  media_kit:
+    path: third_party/media_kit
   media_kit_libs_video: 1.0.7
   # Local 2.0.1 patch: Linux creates its EGL bootstrap context from the GTK
   # window instead of assuming Flutter left one current on the platform thread.

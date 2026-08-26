@@ -17,6 +17,7 @@ class TorrentResult {
     this.accuracy,
     this.type,
     this.sourceId,
+    this.mappedEpisode,
     this.audioLanguages = const [],
     this.subtitleLanguages = const [],
   });
@@ -39,6 +40,14 @@ class TorrentResult {
   /// 'batch' | 'best' | 'alt'
   final String? type;
   final String? sourceId;
+
+  /// The source mapping's absolute episode for the requested local episode.
+  ///
+  /// Split cours are frequently released with absolute numbering (for example
+  /// season episode 1 as file episode 13). The picker keeps the local episode
+  /// for progress tracking, while this value lets debrid select the file name
+  /// the torrent actually uses.
+  final int? mappedEpisode;
 
   /// Provider-reported language tags when available. Empty means unknown,
   /// never "no language"; release ranking may then use conservative title

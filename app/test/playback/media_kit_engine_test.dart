@@ -83,6 +83,24 @@ void main() {
       expect(selectedKitSubtitleTrackId('no', tracks), isNull);
       expect(selectedKitSubtitleTrackId('2', tracks), '2');
     });
+
+    test('resolves a newly loaded sidecar to its stable native track id', () {
+      const tracks = kit.Tracks(
+        subtitle: [
+          kit.SubtitleTrack('2', 'English', 'eng'),
+          kit.SubtitleTrack('7', 'Japanese · Jimaku · Naruto 003', 'jpn'),
+        ],
+      );
+
+      final loaded = loadedExternalKitSubtitleTrack(
+        tracks,
+        previousTrackIds: const {'2'},
+        title: 'Japanese · Jimaku · Naruto 003',
+        language: 'ja',
+      );
+
+      expect(loaded?.id, '7');
+    });
   });
 
   group('player boundary rules', () {
@@ -209,6 +227,13 @@ void main() {
       expect(normalizeTrackLanguage('pt_br'), 'pt-BR');
       expect(normalizeTrackLanguage('und'), isNull);
       expect(normalizeTrackLanguage(null), isNull);
+    });
+
+    test('only a concrete subtitle language is an explicit preference', () {
+      expect(hasExplicitTrackLanguagePreference('eng'), isTrue);
+      expect(hasExplicitTrackLanguagePreference('es-MX'), isTrue);
+      expect(hasExplicitTrackLanguagePreference('und'), isFalse);
+      expect(hasExplicitTrackLanguagePreference(null), isFalse);
     });
 
     test('prefers an exact region then falls back to the language family', () {

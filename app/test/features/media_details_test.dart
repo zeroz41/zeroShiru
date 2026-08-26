@@ -94,10 +94,347 @@ void main() {
     expect(find.byKey(const ValueKey('episode-list')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('release order follows audio and remembered Learning language', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const media = Media(
+      id: 8,
+      title: MediaTitle(userPreferred: 'Language Priority Show'),
+      episodes: 1,
+    );
+    const preferredTitle = 'English dub with German subtitles';
+    const otherTitle = 'Japanese audio with English subtitles';
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(
+            _SettingsRepository(
+              const Settings(
+                debridService: DebridService.torbox,
+                audioLanguage: 'eng',
+                subtitleLanguage: 'es',
+                learningTranslationLanguage: 'de',
+                playerSubtitleMode: 'learning',
+              ),
+            ),
+          ),
+          credentialStoreProvider.overrideWithValue(
+            const _Credentials('torbox-key'),
+          ),
+          sourceResolverProvider.overrideWithValue(
+            const _Sources([
+              TorrentResult(
+                title: otherTitle,
+                link: 'magnet:?xt=urn:btih:1111111111111111111111111111111111111111',
+                hash: '1111111111111111111111111111111111111111',
+                seeders: 100,
+                audioLanguages: ['jpn'],
+                subtitleLanguages: ['eng'],
+              ),
+              TorrentResult(
+                title: preferredTitle,
+                link: 'magnet:?xt=urn:btih:2222222222222222222222222222222222222222',
+                hash: '2222222222222222222222222222222222222222',
+                seeders: 1,
+                audioLanguages: ['eng'],
+                subtitleLanguages: ['de'],
+              ),
+            ]),
+          ),
+          debridClientsProvider.overrideWithValue({
+            DebridService.torbox: const _Debrid(),
+          }),
+        ],
+        child: MaterialApp(
+          theme: buildShiruTheme(),
+          home: const MediaDetails(media: media),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('episode-1')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.text(preferredTitle)).dy,
+      lessThan(tester.getTopLeft(find.text(otherTitle)).dy),
+    );
+  });
+
+  testWidgets('preferred quality ranks first without hiding other qualities', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const media = Media(
+      id: 10,
+      title: MediaTitle(userPreferred: 'Quality Priority Show'),
+      episodes: 1,
+    );
+    const preferredTitle = 'Quality Priority Show 01 720p';
+    const higherTitle = 'Quality Priority Show 01 2160p';
+    const otherTitle = 'Quality Priority Show 01 1080p';
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(
+            _SettingsRepository(
+              const Settings(
+                debridService: DebridService.torbox,
+                rssQuality: '720',
+              ),
+            ),
+          ),
+          credentialStoreProvider.overrideWithValue(
+            const _Credentials('torbox-key'),
+          ),
+          sourceResolverProvider.overrideWithValue(
+            const _Sources([
+              TorrentResult(
+                title: higherTitle,
+                link: 'magnet:?xt=urn:btih:7777777777777777777777777777777777777777',
+                hash: '7777777777777777777777777777777777777777',
+                seeders: 100,
+              ),
+              TorrentResult(
+                title: preferredTitle,
+                link: 'magnet:?xt=urn:btih:8888888888888888888888888888888888888888',
+                hash: '8888888888888888888888888888888888888888',
+                seeders: 1,
+              ),
+              TorrentResult(
+                title: otherTitle,
+                link: 'magnet:?xt=urn:btih:9999999999999999999999999999999999999999',
+                hash: '9999999999999999999999999999999999999999',
+                seeders: 50,
+              ),
+            ]),
+          ),
+          debridClientsProvider.overrideWithValue({
+            DebridService.torbox: const _Debrid(),
+          }),
+        ],
+        child: MaterialApp(
+          theme: buildShiruTheme(),
+          home: const MediaDetails(media: media),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('episode-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('3 playable releases'), findsOneWidget);
+    expect(find.text(higherTitle), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text(preferredTitle)).dy,
+      lessThan(tester.getTopLeft(find.text(higherTitle)).dy),
+    );
+  });
+
+  testWidgets('changing preferred quality is used by the next search', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const media = Media(
+      id: 11,
+      title: MediaTitle(userPreferred: 'Quality Refresh Show'),
+      episodes: 1,
+    );
+    final queries = <TorrentQuery>[];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(
+            _SettingsRepository(
+              const Settings(
+                debridService: DebridService.torbox,
+                rssQuality: '1080',
+              ),
+            ),
+          ),
+          credentialStoreProvider.overrideWithValue(
+            const _Credentials('torbox-key'),
+          ),
+          sourceResolverProvider.overrideWithValue(_Sources.recording(queries)),
+          debridClientsProvider.overrideWithValue({
+            DebridService.torbox: const _Debrid({
+              '0123456789abcdef0123456789abcdef01234567': [
+                DebridCachedFile(path: 'Show - 01.mkv', size: 1000),
+              ],
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': [
+                DebridCachedFile(path: 'Show - 01.mkv', size: 1000),
+              ],
+            }),
+          }),
+        ],
+        child: MaterialApp(
+          theme: buildShiruTheme(),
+          home: const MediaDetails(media: media),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('episode-1')));
+    await tester.pumpAndSettle();
+    expect(queries, isNotEmpty);
+    expect(queries.last.resolution, '1080');
+    expect(
+      tester.getTopLeft(find.text('Quality Refresh Show 01 1080p')).dy,
+      lessThan(tester.getTopLeft(find.text('Quality Refresh Show 01 720p')).dy),
+    );
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(MediaDetails)),
+    );
+    await container
+        .read(settingsControllerProvider.notifier)
+        .persist((current) => current.copyWith(rssQuality: '720'));
+    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
+
+    expect(container.read(settingsControllerProvider).value?.rssQuality, '720');
+    await tester.tap(find.byKey(const ValueKey('close-source-results')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('episode-1')));
+    await tester.pumpAndSettle();
+    expect(queries, hasLength(2));
+    expect(queries.last.resolution, '720');
+    expect(
+      tester.getTopLeft(find.text('Quality Refresh Show 01 720p')).dy,
+      lessThan(
+        tester.getTopLeft(find.text('Quality Refresh Show 01 1080p')).dy,
+      ),
+    );
+  });
+
+  testWidgets(
+    'TorBox picker hides invalid identities and cached batches missing the episode',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      const goodHash = '3333333333333333333333333333333333333333';
+      const wrongHash = '4444444444444444444444444444444444444444';
+      const media = Media(
+        id: 9,
+        title: MediaTitle(userPreferred: 'Picker Safety Show'),
+        episodes: 12,
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            settingsRepositoryProvider.overrideWithValue(
+              _SettingsRepository(
+                const Settings(debridService: DebridService.torbox),
+              ),
+            ),
+            credentialStoreProvider.overrideWithValue(
+              const _Credentials('torbox-key'),
+            ),
+            sourceResolverProvider.overrideWithValue(
+              const _Sources([
+                TorrentResult(
+                  title: 'Missing hash release 04',
+                  link: 'https://tracker.test/download/123.torrent',
+                ),
+                TorrentResult(
+                  title: 'Contradictory hash release 04',
+                  link: 'magnet:?xt=urn:btih:6666666666666666666666666666666666666666',
+                  hash: '5555555555555555555555555555555555555555',
+                ),
+                TorrentResult(
+                  title: 'Wrong cached batch 01-12',
+                  link: 'magnet:?xt=urn:btih:$wrongHash',
+                  hash: wrongHash,
+                  type: 'batch',
+                ),
+                TorrentResult(
+                  title: 'Correct complete batch',
+                  link: 'magnet:?xt=urn:btih:$goodHash',
+                  hash: goodHash,
+                  type: 'batch',
+                ),
+              ]),
+            ),
+            debridClientsProvider.overrideWithValue({
+              DebridService.torbox: const _Debrid({
+                wrongHash: [
+                  DebridCachedFile(path: 'Show - 40.mkv', size: 1000),
+                  DebridCachedFile(path: 'Show - 41.mkv', size: 1000),
+                ],
+                goodHash: [
+                  DebridCachedFile(path: 'Show - 03.mkv', size: 1000),
+                  DebridCachedFile(path: 'Show - 04.mkv', size: 1000),
+                  DebridCachedFile(path: 'Show - 05.mkv', size: 1000),
+                ],
+              }),
+            }),
+          ],
+          child: MaterialApp(
+            theme: buildShiruTheme(),
+            home: const MediaDetails(media: media, initialEpisode: 4),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('episode-4')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Correct complete batch'), findsOneWidget);
+      expect(find.text('Missing hash release 04'), findsNothing);
+      expect(find.text('Contradictory hash release 04'), findsNothing);
+      expect(find.text('Wrong cached batch 01-12'), findsNothing);
+      expect(find.text('1 playable releases'), findsOneWidget);
+    },
+  );
 }
 
 class _Sources implements SourceResolver {
-  const _Sources();
+  const _Sources([
+    this.results = const [
+      TorrentResult(
+        title: 'Test cached release 04 1080p',
+        link: 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567',
+        hash: '0123456789abcdef0123456789abcdef01234567',
+        seeders: 42,
+        size: 800000000,
+      ),
+    ],
+  ]) : queries = null;
+
+  const _Sources.recording(this.queries)
+    : results = const [
+        TorrentResult(
+          title: 'Quality Refresh Show 01 1080p',
+          link: 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567',
+          hash: '0123456789abcdef0123456789abcdef01234567',
+          seeders: 42,
+          size: 800000000,
+        ),
+        TorrentResult(
+          title: 'Quality Refresh Show 01 720p',
+          link: 'magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          hash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          seeders: 41,
+          size: 700000000,
+        ),
+      ];
+
+  final List<TorrentResult> results;
+  final List<TorrentQuery>? queries;
 
   static const extension = SourceExtension(
     id: 'test',
@@ -113,23 +450,10 @@ class _Sources implements SourceResolver {
       const SourceCatalog(extensions: [extension]);
 
   @override
-  Stream<SourceSearchBatch> search(
-    TorrentQuery query, {
-    bool movie = false,
-  }) => Stream.value(
-    const SourceSearchBatch(
-      source: extension,
-      results: [
-        TorrentResult(
-          title: 'Test cached release 04 1080p',
-          link: 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567',
-          hash: '0123456789abcdef0123456789abcdef01234567',
-          seeders: 42,
-          size: 800000000,
-        ),
-      ],
-    ),
-  );
+  Stream<SourceSearchBatch> search(TorrentQuery query, {bool movie = false}) {
+    queries?.add(query);
+    return Stream.value(SourceSearchBatch(source: extension, results: results));
+  }
 
   @override
   Future<SourceCatalog> install(String source) => catalog();
@@ -151,7 +475,9 @@ class _Sources implements SourceResolver {
 }
 
 class _Debrid implements DebridClient {
-  const _Debrid();
+  const _Debrid([this.filesByHash]);
+
+  final Map<String, List<DebridCachedFile>>? filesByHash;
 
   @override
   DebridService get service => DebridService.torbox;
@@ -164,6 +490,27 @@ class _Debrid implements DebridClient {
     String apiKey,
     List<String> hashes,
   ) async => {for (final hash in hashes) hash: Availability.cached};
+
+  @override
+  Future<Map<String, DebridAvailabilityDetail>> inspectAvailability(
+    String apiKey,
+    List<String> hashes,
+  ) async => {
+    for (final hash in hashes)
+      hash: DebridAvailabilityDetail(
+        Availability.cached,
+        files:
+            filesByHash?[hash] ??
+            [
+              DebridCachedFile(
+                path: hash.startsWith('012345')
+                    ? 'Show - 04.mkv'
+                    : 'Show - 01.mkv',
+                size: 1000,
+              ),
+            ],
+      ),
+  };
 
   @override
   Future<void> forgetResolved(String apiKey, String hash) async {}

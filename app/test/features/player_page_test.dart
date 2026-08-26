@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:zeroshiru/app/theme/theme.dart';
 import 'package:zeroshiru/application/playback/backend.dart';
+import 'package:zeroshiru/application/playback/preferences.dart';
 import 'package:zeroshiru/application/playback/providers.dart';
 import 'package:zeroshiru/application/playback/request.dart';
 import 'package:zeroshiru/application/library/providers.dart';
@@ -28,10 +29,17 @@ class _FakeEngine implements MediaEngine {
   final secondCues = StreamController<SubtitleCue>.broadcast();
   final metricEvents = StreamController<PlayerMetrics>.broadcast();
   final calls = <String>[];
+  PlaybackSnapshot openState = const PlaybackSnapshot(
+    generation: 1,
+    phase: PlaybackPhase.ready,
+    duration: Duration(minutes: 24),
+    volume: 0.8,
+  );
   String? addedSubtitleSource;
   String? addedSubtitleTitle;
   String? addedSubtitleLanguage;
   PlaybackSnapshot? renderingState;
+  PlaybackPreferences? openPreferences;
 
   @override
   Stream<PlaybackSnapshot> get state => states.stream;
@@ -51,15 +59,9 @@ class _FakeEngine implements MediaEngine {
     ResumePoint? resume,
     PlaybackPreferences? preferences,
   }) async {
+    openPreferences = preferences;
     calls.add('open:${source.name}');
-    states.add(
-      const PlaybackSnapshot(
-        generation: 1,
-        phase: PlaybackPhase.ready,
-        duration: Duration(minutes: 24),
-        volume: 0.8,
-      ),
-    );
+    states.add(openState);
   }
 
   @override
@@ -114,7 +116,7 @@ class _FakeEngine implements MediaEngine {
   }) async => calls.add('delay:${delay.inMilliseconds}:$secondary');
 
   @override
-  Future<void> addSubtitle(
+  Future<String> addSubtitle(
     String source, {
     String? title,
     String? language,
@@ -123,6 +125,7 @@ class _FakeEngine implements MediaEngine {
     addedSubtitleSource = source;
     addedSubtitleTitle = title;
     addedSubtitleLanguage = language;
+    return 'external-ja';
   }
 
   @override
@@ -221,6 +224,128 @@ void main() {
     expect(engine.calls.where((call) => call.startsWith('seek:')), [
       'seek:600',
     ]);
+  });
+
+  testWidgets('a new player clears Learning rendering retained by the engine', (
+    tester,
+  ) async {
+    final engine = _FakeEngine()
+      ..openState = const PlaybackSnapshot(
+        generation: 1,
+        phase: PlaybackPhase.ready,
+        duration: Duration(minutes: 24),
+        volume: 0.8,
+        subtitleRendering: SubtitleRendering.learning,
+      );
+    const source = PlayerFile(
+      name: 'Episode 03.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+
+    await tester.pumpWidget(
+      _app(const PlayerPage(initialSource: source), _FakeBackend(engine)),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(engine.calls, ['open:Episode 03.mkv', 'render:standard', 'play']);
+  });
+
+  testWidgets(
+    'a new episode restores Learning mode and its language priorities',
+    (tester) async {
+      final engine = _FakeEngine();
+      const source = PlayerFile(
+        name: 'Episode 08.mkv',
+        url: 'https://cdn.example/video.mkv',
+      );
+
+      await tester.pumpWidget(
+        _app(
+          const PlayerPage(initialSource: source),
+          _FakeBackend(engine),
+          settings: const Settings(
+            audioLanguage: 'eng',
+            subtitleLanguage: 'es',
+            learningTranslationLanguage: 'de',
+            playerSubtitleMode: 'learning',
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(engine.openPreferences?.audioLanguage, 'eng');
+      expect(engine.openPreferences?.subtitleLanguage, 'jpn');
+      expect(engine.openPreferences?.subtitlesEnabled, isTrue);
+      expect(engine.calls, contains('render:learning'));
+    },
+  );
+
+  testWidgets('a new episode restores the remembered subtitle Off mode', (
+    tester,
+  ) async {
+    final engine = _FakeEngine();
+    const source = PlayerFile(
+      name: 'Episode 08.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+
+    await tester.pumpWidget(
+      _app(
+        const PlayerPage(initialSource: source),
+        _FakeBackend(engine),
+        settings: const Settings(playerSubtitleMode: 'off'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(engine.openPreferences?.subtitlesEnabled, isFalse);
+    expect(engine.calls, contains('render:off'));
+  });
+
+  testWidgets('a reopened release restores its primary and secondary timing', (
+    tester,
+  ) async {
+    final engine = _FakeEngine();
+    final repository = _SettingsRepository(const Settings());
+    await PlaybackTuningStore(repository).write(
+      'abcdef0123456789',
+      const PlaybackTuning(
+        primarySubtitleDelay: Duration(milliseconds: 350),
+        secondarySubtitleDelay: Duration(milliseconds: -125),
+      ),
+    );
+    const source = PlayerFile(
+      name: 'Episode 08.mkv',
+      url: 'https://cdn.example/video.mkv',
+      infoHash: 'abcdef0123456789',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          playbackBackendProvider.overrideWithValue(_FakeBackend(engine)),
+          settingsRepositoryProvider.overrideWithValue(repository),
+          credentialStoreProvider.overrideWithValue(_Credentials()),
+          languageLearningToolsProvider.overrideWithValue(_FakeLearningTools()),
+        ],
+        child: MaterialApp(
+          theme: buildShiruTheme(),
+          home: const PlayerPage(initialSource: source),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(engine.calls, contains('delay:350:false'));
+    expect(engine.calls, contains('delay:-125:true'));
+    expect(
+      engine.calls.indexOf('delay:350:false'),
+      lessThan(engine.calls.indexOf('play')),
+    );
   });
 
   testWidgets('player without a resolved file stays in a calm empty state', (
@@ -494,7 +619,7 @@ void main() {
     await tester.tap(find.text('Learning'));
     await tester.pump();
     expect(engine.calls, contains('render:learning'));
-    expect(engine.calls, contains('audio:audio-ja'));
+    expect(engine.calls, isNot(contains('audio:audio-ja')));
     expect(engine.calls, contains('subtitle:sub-ja:false'));
     expect(engine.calls, contains('subtitle:sub-en:true'));
 
@@ -506,6 +631,8 @@ void main() {
     await tester.ensureVisible(find.text('Styled'));
     await tester.tap(find.text('Styled'));
     await tester.pump();
+    expect(engine.calls, contains('subtitle:null:true'));
+    expect(engine.calls, contains('subtitle:sub-en:false'));
     await tester.tap(find.text('Learning'));
     await tester.pumpAndSettle();
     expect(
@@ -517,6 +644,73 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Subtitles'), findsNothing);
   });
+
+  testWidgets(
+    'manual language and subtitle mode choices become next-episode defaults',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final engine = _FakeEngine();
+      final repository = _SettingsRepository(
+        const Settings(audioLanguage: 'eng'),
+      );
+      const source = PlayerFile(
+        name: 'Episode 03.mkv',
+        url: 'https://cdn.example/video.mkv',
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            playbackBackendProvider.overrideWithValue(_FakeBackend(engine)),
+            settingsRepositoryProvider.overrideWithValue(repository),
+            credentialStoreProvider.overrideWithValue(_Credentials()),
+            languageLearningToolsProvider.overrideWithValue(
+              _FakeLearningTools(),
+            ),
+          ],
+          child: MaterialApp(
+            theme: buildShiruTheme(),
+            home: const PlayerPage(initialSource: source),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      engine.states.add(
+        const PlaybackSnapshot(
+          generation: 1,
+          phase: PlaybackPhase.playing,
+          duration: Duration(minutes: 24),
+          audioTracks: [
+            MediaTrack(id: 'audio-en', kind: TrackKind.audio, language: 'en'),
+            MediaTrack(id: 'audio-ja', kind: TrackKind.audio, language: 'ja'),
+          ],
+          selectedAudio: 'audio-en',
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Audio track'));
+      await tester.pumpAndSettle();
+      final japaneseAudio = find.ancestor(
+        of: find.text('Japanese'),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is CheckedPopupMenuItem,
+        ),
+      );
+      await tester.tap(japaneseAudio);
+      await tester.pumpAndSettle();
+      expect(engine.calls, contains('audio:audio-ja'));
+      expect(repository.settings.audioLanguage, 'jpn');
+
+      await tester.tap(find.byTooltip('Subtitles'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Learning'));
+      await tester.pumpAndSettle();
+      expect(repository.settings.playerSubtitleMode, 'learning');
+    },
+  );
 
   testWidgets('Learning recognizes Japanese and translation track titles', (
     tester,
@@ -592,7 +786,7 @@ void main() {
     await tester.tap(find.text('Learning'));
     await tester.pumpAndSettle();
 
-    expect(engine.calls, contains('audio:audio-main'));
+    expect(engine.calls, isNot(contains('audio:audio-main')));
     expect(engine.calls, contains('subtitle:sub-ja-full:false'));
     expect(engine.calls, contains('subtitle:sub-en-full:true'));
 
@@ -709,6 +903,149 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.textContaining('Japanese language'), findsOneWidget);
+  });
+
+  testWidgets(
+    'Learning aligns all translation cues overlapping the Japanese window',
+    (tester) async {
+      tester.view.physicalSize = const Size(640, 480);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final engine = _FakeEngine();
+      const source = PlayerFile(
+        name: 'Episode 04.mkv',
+        url: 'https://cdn.example/video.mkv',
+      );
+      await tester.pumpWidget(
+        _app(const PlayerPage(initialSource: source), _FakeBackend(engine)),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      engine.states.add(
+        const PlaybackSnapshot(
+          generation: 1,
+          phase: PlaybackPhase.playing,
+          position: Duration(seconds: 13),
+          duration: Duration(minutes: 24),
+          subtitleRendering: SubtitleRendering.learning,
+          subtitleTracks: [
+            MediaTrack(id: 'sub-ja', kind: TrackKind.subtitle, language: 'ja'),
+            MediaTrack(id: 'sub-en', kind: TrackKind.subtitle, language: 'en'),
+          ],
+          selectedPrimarySubtitle: 'sub-ja',
+          selectedSecondarySubtitle: 'sub-en',
+        ),
+      );
+      await tester.pump();
+      engine.secondCues.add(
+        const SubtitleCue(
+          generation: 1,
+          trackId: 'sub-en',
+          start: Duration(seconds: 10),
+          end: Duration(milliseconds: 11100),
+          plainText: 'First translated line',
+        ),
+      );
+      await tester.pump();
+      engine.secondCues.add(
+        const SubtitleCue(
+          generation: 1,
+          trackId: 'sub-en',
+          start: Duration(milliseconds: 11200),
+          end: Duration(milliseconds: 12400),
+          plainText: 'Second translated line',
+        ),
+      );
+      await tester.pump();
+      engine.secondCues.add(
+        const SubtitleCue(
+          generation: 1,
+          trackId: 'sub-en',
+          start: Duration.zero,
+          end: Duration.zero,
+          plainText: '',
+        ),
+      );
+      await tester.pump();
+      engine.cues.add(
+        const SubtitleCue(
+          generation: 1,
+          trackId: 'sub-ja',
+          start: Duration(milliseconds: 10500),
+          end: Duration(seconds: 14),
+          plainText: '二つの行',
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.text('First translated line\nSecond translated line'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('Learning does not attach an unrelated old translation cue', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(640, 480);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final engine = _FakeEngine();
+    const source = PlayerFile(
+      name: 'Episode 04.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      _app(const PlayerPage(initialSource: source), _FakeBackend(engine)),
+    );
+    await tester.pump();
+    await tester.pump();
+    engine.states.add(
+      const PlaybackSnapshot(
+        generation: 1,
+        phase: PlaybackPhase.playing,
+        position: Duration(seconds: 12),
+        duration: Duration(minutes: 24),
+        subtitleRendering: SubtitleRendering.learning,
+        subtitleTracks: [
+          MediaTrack(id: 'sub-ja', kind: TrackKind.subtitle, language: 'ja'),
+          MediaTrack(id: 'sub-en', kind: TrackKind.subtitle, language: 'en'),
+        ],
+        selectedPrimarySubtitle: 'sub-ja',
+        selectedSecondarySubtitle: 'sub-en',
+      ),
+    );
+    await tester.pump();
+    engine.secondCues.add(
+      const SubtitleCue(
+        generation: 1,
+        trackId: 'sub-en',
+        start: Duration(seconds: 2),
+        end: Duration(seconds: 4),
+        plainText: 'Unrelated translation',
+      ),
+    );
+    await tester.pump();
+    engine.cues.add(
+      const SubtitleCue(
+        generation: 1,
+        trackId: 'sub-ja',
+        start: Duration(seconds: 10),
+        end: Duration(seconds: 14),
+        plainText: '日本語を勉強する',
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('日本語'), findsOneWidget);
+    expect(find.text('Unrelated translation'), findsNothing);
+    expect(find.byKey(const ValueKey('learning-translation')), findsNothing);
   });
 
   testWidgets(
@@ -1117,10 +1454,7 @@ void main() {
       expect(subtitles.credentials, ['jimaku-secret']);
       expect(engine.calls, contains('subtitle:sub-en:true'));
       expect(engine.calls, contains('add-subtitle'));
-      expect(
-        engine.calls.where((call) => call == 'audio:audio-ja'),
-        hasLength(1),
-      );
+      expect(engine.calls.where((call) => call == 'audio:audio-ja'), isEmpty);
       expect(
         engine.calls.where((call) => call == 'subtitle:sub-en:true'),
         hasLength(2),
@@ -1128,6 +1462,23 @@ void main() {
       expect(engine.addedSubtitleSource, 'file:///cache/show-07.ass');
       expect(engine.addedSubtitleLanguage, 'ja');
       expect(find.textContaining('cached for this episode'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey('advanced-subtitle-settings')),
+      );
+      await tester.pumpAndSettle();
+      final primaryTrack = find.byKey(const ValueKey('primary-subtitle-track'));
+      expect(
+        find.descendant(of: primaryTrack, matching: find.text('Off')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: primaryTrack,
+          matching: find.text('Unavailable track'),
+        ),
+        findsOneWidget,
+      );
     },
   );
 
@@ -1237,6 +1588,7 @@ void main() {
         episode: 7,
         magnet: '0123456789abcdef0123456789abcdef01234567',
         service: DebridService.torbox,
+        releaseEpisode: 19,
       );
 
       await tester.pumpWidget(
@@ -1261,7 +1613,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(debrid.calls, [('torbox-secret', launch.magnet, 7)]);
+      expect(debrid.calls, [('torbox-secret', launch.magnet, 19)]);
       expect(probe.requests.single.headers['range'], 'bytes=0-');
       expect(engine.calls.take(2), ['open:Show - 07.mkv', 'play']);
       expect(find.text('Clean Player Show'), findsOneWidget);
@@ -1278,7 +1630,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(debrid.calls.last, ('torbox-secret', launch.magnet, 8));
+      expect(debrid.calls.last, ('torbox-secret', launch.magnet, 20));
       expect(find.text('Episode 8'), findsOneWidget);
     },
   );
@@ -1288,6 +1640,7 @@ class _SettingsRepository implements SettingsRepository {
   _SettingsRepository(this.settings);
 
   Settings settings;
+  final values = <String, Object?>{};
   final changesController = StreamController<void>.broadcast();
 
   @override
@@ -1302,10 +1655,15 @@ class _SettingsRepository implements SettingsRepository {
   }
 
   @override
-  T read<T>(String key, T fallback) => fallback;
+  T read<T>(String key, T fallback) {
+    final value = values[key];
+    return value is T ? value : fallback;
+  }
 
   @override
-  Future<void> write<T>(String key, T value) async {}
+  Future<void> write<T>(String key, T value) async {
+    values[key] = value;
+  }
 }
 
 class _FakeLearningTools implements LanguageLearningTools {
@@ -1443,6 +1801,12 @@ class _ResolvingDebrid implements DebridClient {
 
   @override
   Future<Map<String, Availability>> availability(
+    String apiKey,
+    List<String> hashes,
+  ) async => const {};
+
+  @override
+  Future<Map<String, DebridAvailabilityDetail>> inspectAvailability(
     String apiKey,
     List<String> hashes,
   ) async => const {};

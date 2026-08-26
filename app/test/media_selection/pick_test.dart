@@ -110,10 +110,14 @@ void main() {
       expect(pickEpisodeFile(files, 1.0, okParse([])), 2);
     });
 
-    test('a release with no videos falls back to the first file', () {
+    test('a release with no videos is not playable', () {
       expect(
-        pickEpisodeFile([const PackFile('/readme.nfo', 1)], 1.0, okParse([])),
-        0,
+        () => pickEpisodeFile(
+          [const PackFile('/readme.nfo', 1)],
+          1.0,
+          okParse([]),
+        ),
+        throwsA(isA<EpisodeNotIdentified>()),
       );
       expect(pickEpisodeFile(<PackFile>[], 1.0, okParse([])), isNull);
     });
@@ -149,7 +153,7 @@ void main() {
       );
     });
 
-    test('an unproven mismatch falls back to the largest real episode, never an extra', () {
+    test('an unproven mismatch refuses instead of guessing a large video', () {
       final files = [
         const PackFile('/NCOP1.mkv', 9000),
         const PackFile('/Something 01.mkv', 500),
@@ -161,17 +165,23 @@ void main() {
         numbered([1.0]),
         const ParsedName(),
       ];
-      expect(pickEpisodeFile(files, 5.0, okParse(parsed)), 2);
+      expect(
+        () => pickEpisodeFile(files, 5.0, okParse(parsed)),
+        throwsA(isA<EpisodeNotIdentified>()),
+      );
     });
 
-    test('a parser that throws still yields a playable fallback', () {
+    test('a parser that throws cannot make a multi-video pack safe', () {
       final files = [const PackFile('/a.mkv', 1), const PackFile('/b.mkv', 2)];
       List<ParsedName?> broken(List<String> names) =>
           throw StateError('parser broke');
-      expect(pickEpisodeFile(files, 1.0, broken), 1);
+      expect(
+        () => pickEpisodeFile(files, 1.0, broken),
+        throwsA(isA<EpisodeNotIdentified>()),
+      );
     });
 
-    test('the largest file fallback keeps torrent order on ties', () {
+    test('unnumbered multi-video packs refuse even when sizes tie', () {
       final files = [
         const PackFile('/a.mkv', 5),
         const PackFile('/b.mkv', 5),
@@ -182,7 +192,10 @@ void main() {
         const ParsedName(),
         const ParsedName(),
       ];
-      expect(pickEpisodeFile(files, 1.0, okParse(parsed)), 0);
+      expect(
+        () => pickEpisodeFile(files, 1.0, okParse(parsed)),
+        throwsA(isA<EpisodeNotIdentified>()),
+      );
     });
 
     test('episode 12 does not match a 12.5 special, and 12.5 can still be asked for', () {
@@ -198,15 +211,17 @@ void main() {
       expect(pickEpisodeFile(files, 12.5, okParse(parsed)), 0);
     });
 
-    test('a small release the picker cannot match is handed to the player instead of refused', () {
+    test('a small release the picker cannot match is refused', () {
       // split cour numbered 13-24 asked for episode 1: provably absent by
       // release numbering, but the player's season offsets may still find it
       final files = pack(13, 24);
       final parsed = <ParsedName?>[
         for (var n = 13; n <= 24; n++) numbered([n.toDouble()]),
       ];
-      expect(pickPackFile(files, 1.0, okParse(parsed), 1 << 62), isNull);
-      // too big to hand over whole: still refused rather than windowed blindly
+      expect(
+        () => pickPackFile(files, 1.0, okParse(parsed), 1 << 62),
+        throwsA(isA<EpisodeNotInPack>()),
+      );
       expect(
         () => pickPackFile(files, 1.0, okParse(parsed), 5),
         throwsA(isA<EpisodeNotInPack>()),
@@ -317,6 +332,19 @@ void main() {
     });
 
     test(
+      'a plus-separated fix file does not cover episodes between its fixes',
+      () {
+        const files = [PackFile('/[F-R] One Piece 0487+0490 v3.mkv', 1000)];
+        expect(pickEpisodeFile(files, 487.0, parseNames), 0);
+        expect(pickEpisodeFile(files, 490.0, parseNames), 0);
+        expect(
+          () => pickEpisodeFile(files, 488.0, parseNames),
+          throwsA(isA<EpisodeNotInPack>()),
+        );
+      },
+    );
+
+    test(
       'the first match in torrent order wins when a pack ships duplicates',
       () {
         final files = [
@@ -390,25 +418,21 @@ void main() {
       },
     );
 
-    test('an unproven mismatch falls back to the largest real episode, never an extra', () {
+    test('an unproven real-name mismatch refuses instead of guessing', () {
       final files = [
         const PackFile('/Extras/Show - NCOP1.mkv', 5000),
         const PackFile('/Show - 01.mkv', 900),
         const PackFile('/Show - 02.mkv', 950),
         const PackFile('/Show - Unnumbered Special.mkv', 800),
       ];
-      expect(pick(files, 40.0), '/Show - 02.mkv');
+      expect(() => pick(files, 40.0), throwsA(isA<EpisodeNotIdentified>()));
     });
 
-    test('a small release the picker cannot match is handed to the player', () {
+    test('a small release the picker cannot match is refused', () {
       final files = [
         for (var n = 13; n <= 24; n++) PackFile('/[Group] Show - $n.mkv', 1000),
       ];
-      expect(
-        pickPack(files, 1.0, 12),
-        isNull,
-        reason: 'no pick means the player decides',
-      );
+      expect(() => pickPack(files, 1.0, 12), throwsA(isA<EpisodeNotInPack>()));
       expect(
         () => pickEpisodeFile(files, 1.0, parseNames),
         throwsA(isA<EpisodeNotInPack>()),

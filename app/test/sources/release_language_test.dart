@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zeroshiru/application/sources/release_language.dart';
+import 'package:zeroshiru/domain/models/settings.dart';
 import 'package:zeroshiru/domain/models/torrent.dart';
 
 void main() {
@@ -70,5 +71,23 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('release subtitle priority follows the remembered player mode', () {
+    const standard = Settings(
+      subtitleLanguage: 'es',
+      learningTranslationLanguage: 'de',
+      playerSubtitleMode: 'standard',
+    );
+    const learning = Settings(
+      subtitleLanguage: 'es',
+      learningTranslationLanguage: 'de',
+      playerSubtitleMode: 'learning',
+    );
+    const off = Settings(playerSubtitleMode: 'off');
+
+    expect(standard.releaseSubtitleLanguage, 'es');
+    expect(learning.releaseSubtitleLanguage, 'de');
+    expect(off.releaseSubtitleLanguage, isNull);
   });
 }

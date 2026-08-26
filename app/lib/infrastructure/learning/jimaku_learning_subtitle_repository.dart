@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
+import 'package:koni_archive/koni_archive.dart' as koni;
 import 'package:path/path.dart' as p;
 
 import '../../domain/ports/learning_subtitles.dart';
@@ -23,14 +23,15 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
 
   static const _host = 'jimaku.cc';
   static const _provider = 'Jimaku';
-  // v1 accepted unnumbered direct files after trusting Jimaku's best-effort
-  // episode filter. v2/v3 could prefer a differently timed TV/Blu-ray file
-  // over a WEB release because format and title overlap carried too much
-  // weight. Keep every unsafe generation out of the lookup path permanently.
-  static const _cacheVersion = 'v4-source-aware';
+  // A matcher change gets a new cache generation: a cached subtitle is a
+  // release decision, not merely a downloaded file. Never let a decision made
+  // by an older ranker silently override the current release-aware result.
+  static const _cacheVersion = 'v6-archive-formats';
   static const _maximumArchiveExpansion = 64 * 1024 * 1024;
   static const _maximumSubtitleBytes = 8 * 1024 * 1024;
+  static const _maximumArchiveEntries = 2048;
   static const _textExtensions = {'.ass', '.ssa', '.srt', '.vtt'};
+  static const _archiveExtensions = {'.zip', '.7z'};
 
   final HttpTransport transport;
   final String cacheDirectory;
@@ -66,22 +67,15 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
     }
 
     final matchingEntries = entries.whereType<Map>().where(
-      (entry) => entry['anilist_id'] == query.anilistId,
+      (entry) => _positiveInt(entry['anilist_id']) == query.anilistId,
     );
     final files = <_RemoteSubtitle>[];
+    final seenFiles = <String>{};
     for (final entry in matchingEntries) {
       final id = _positiveInt(entry['id']);
       if (id == null) continue;
-      final response = await _json(
-        Uri.https(_host, '/api/entries/$id/files', {
-          if (!query.movie) 'episode': '${query.episode}',
-        }),
-        key,
-      );
-      if (response is! List) continue;
-      for (final row in response.whereType<Map>()) {
-        final remote = _RemoteSubtitle.fromJson(row);
-        if (remote != null && _candidateScore(remote.name, query) >= 0) {
+      for (final remote in await _entryCandidates(id, query, key)) {
+        if (seenFiles.add('${remote.url}\n${remote.name}')) {
           files.add(remote);
         }
       }
@@ -93,20 +87,73 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
       ).compareTo(_candidateScore(a.name, query)),
     );
 
+    LearningSubtitleFailure? lastDownloadFailure;
     for (final remote in files) {
-      final cached = await _cachedOrDownload(remote, query);
+      final _CachedSubtitle? cached;
+      try {
+        cached = await _cachedOrDownload(remote, query);
+      } on LearningSubtitleFailure catch (failure) {
+        // One stale or malformed catalog object must not hide a valid lower
+        // ranked release. Authentication/rate-limit failures happen on the API
+        // calls above and still surface immediately.
+        if (failure.kind == LearningSubtitleFailureKind.authentication ||
+            failure.kind == LearningSubtitleFailureKind.rateLimited) {
+          rethrow;
+        }
+        lastDownloadFailure = failure;
+        continue;
+      } catch (_) {
+        continue;
+      }
       if (cached == null) continue;
       return LearningSubtitleMatch(
-        source: cached.uri.toString(),
-        title: _trackTitle(remote.name),
+        source: cached.file.uri.toString(),
+        title: _trackTitle(cached.originalName),
         provider: _provider,
-        originalName: remote.name,
+        originalName: cached.originalName,
       );
     }
+    if (lastDownloadFailure != null) throw lastDownloadFailure;
     return null;
   }
 
-  Future<File?> _cachedOrDownload(
+  static List<_RemoteSubtitle> _remoteCandidates(
+    List<Object?> rows,
+    LearningSubtitleQuery query,
+  ) => [
+    for (final row in rows.whereType<Map>())
+      if (_RemoteSubtitle.fromJson(row) case final remote?
+          when _candidateScore(remote.name, query) >= 0)
+        remote,
+  ];
+
+  Future<List<_RemoteSubtitle>> _entryCandidates(
+    int entryId,
+    LearningSubtitleQuery query,
+    String credential,
+  ) async {
+    var response = await _json(
+      Uri.https(_host, '/api/entries/$entryId/files', {
+        if (!query.movie) 'episode': '${query.episode}',
+      }),
+      credential,
+    );
+    if (response is! List) return const [];
+    var accepted = _remoteCandidates(response, query);
+    if (accepted.isNotEmpty || query.movie) return accepted;
+
+    // Jimaku's episode filter is intentionally best effort and can omit
+    // archives whose own name has no episode even though their members do.
+    // Retry the exact AniList entry unfiltered only when the cheap lookup had
+    // nothing locally safe to try.
+    response = await _json(
+      Uri.https(_host, '/api/entries/$entryId/files'),
+      credential,
+    );
+    return response is List ? _remoteCandidates(response, query) : const [];
+  }
+
+  Future<_CachedSubtitle?> _cachedOrDownload(
     _RemoteSubtitle remote,
     LearningSubtitleQuery query,
   ) async {
@@ -123,59 +170,83 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
       );
       if (await target.exists()) {
         final existing = await target.readAsBytes();
-        if (_containsJapanese(existing)) return target;
+        if (_containsJapanese(existing)) {
+          return _CachedSubtitle(target, remote.name);
+        }
       }
       final bytes = await _download(remote.url);
       if (!_containsJapanese(bytes)) return null;
       await directory.create(recursive: true);
       await _writeAtomically(target, bytes);
       await _prune(directory, keeping: target);
-      return target;
+      return _CachedSubtitle(target, remote.name);
     }
 
-    if (extension != '.zip') return null;
+    if (!_archiveExtensions.contains(extension)) return null;
     final archiveBytes = await _download(remote.url);
-    final archive = ZipDecoder().decodeBytes(archiveBytes, verify: true);
-    final expanded = archive.files.fold<int>(
+    final archive = await koni.Archive.openBytes(
+      archiveBytes,
+      options: const koni.ArchiveReadOptions(
+        maxEntrySize: _maximumSubtitleBytes,
+        maxEntryCount: _maximumArchiveEntries,
+        maxContainerDecodeSize: _maximumArchiveExpansion,
+      ),
+    );
+    final expanded = archive.entries.fold<int>(
       0,
-      (sum, file) => sum + (file.isFile ? file.size : 0),
+      (sum, file) => sum + (file.isFile ? file.uncompressedSize : 0),
     );
     if (expanded > _maximumArchiveExpansion) {
+      await archive.close();
       throw const LearningSubtitleFailure(
         LearningSubtitleFailureKind.unsafeFile,
         'The subtitle archive expands beyond the safe local limit.',
       );
     }
-    final candidates =
-        archive.files.where((file) {
-          if (!file.isFile || file.size > _maximumSubtitleBytes) return false;
-          final name = file.name.split(RegExp(r'[/\\]')).last;
-          return _textExtensions.contains(p.extension(name).toLowerCase()) &&
-              _candidateScore(name, query) >= 0;
-        }).toList()..sort(
-          (a, b) => _candidateScore(
-            b.name,
-            query,
-          ).compareTo(_candidateScore(a.name, query)),
+    try {
+      final candidates =
+          archive.entries.where((file) {
+            if (!file.isFile ||
+                file.pathEscapedRoot ||
+                file.uncompressedSize > _maximumSubtitleBytes) {
+              return false;
+            }
+            final name = p.basename(file.path);
+            return _textExtensions.contains(p.extension(name).toLowerCase()) &&
+                _archiveMemberScore(remote.name, name, query) >= 0;
+          }).toList()..sort(
+            (a, b) =>
+                _archiveMemberScore(
+                  remote.name,
+                  p.basename(b.path),
+                  query,
+                ).compareTo(
+                  _archiveMemberScore(remote.name, p.basename(a.path), query),
+                ),
+          );
+      for (final member in candidates) {
+        final bytes = await archive.readBytes(
+          member,
+          maxSize: _maximumSubtitleBytes,
         );
-    for (final member in candidates) {
-      final bytes = Uint8List.fromList(member.content as List<int>);
-      if (!_containsJapanese(bytes)) continue;
-      final memberExtension = p.extension(member.name).toLowerCase();
-      final target = File(
-        p.join(
-          directory.path,
-          _cacheFileName(identity, member.name, extension: memberExtension),
-        ),
-      );
-      await directory.create(recursive: true);
-      await _writeAtomically(target, bytes);
-      await _prune(directory, keeping: target);
-      archive.clear();
-      return target;
+        if (!_containsJapanese(bytes)) continue;
+        final memberName = p.basename(member.path);
+        final memberExtension = p.extension(memberName).toLowerCase();
+        final target = File(
+          p.join(
+            directory.path,
+            _cacheFileName(identity, memberName, extension: memberExtension),
+          ),
+        );
+        await directory.create(recursive: true);
+        await _writeAtomically(target, bytes);
+        await _prune(directory, keeping: target);
+        return _CachedSubtitle(target, '${remote.name} → $memberName');
+      }
+      return null;
+    } finally {
+      await archive.close();
     }
-    archive.clear();
-    return null;
   }
 
   Future<Object?> _json(Uri uri, String credential) async {
@@ -362,116 +433,151 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
 
   static int _candidateScore(String name, LearningSubtitleQuery query) {
     final lower = name.toLowerCase();
-    if (RegExp(r'\b(ocr|whisper|generated[ ._-]*by|machine[ ._-]*generated)\b')
-        .hasMatch(lower)) {
+    final extension = p.extension(lower);
+    if (!_textExtensions.contains(extension) &&
+        !_archiveExtensions.contains(extension)) {
       return -1;
     }
-    final extension = p.extension(lower);
-    if (!_textExtensions.contains(extension) && extension != '.zip') return -1;
+    if (!_archiveExtensions.contains(extension)) {
+      return _textCandidateScore(
+        episodeName: name,
+        releaseIdentity: name,
+        query: query,
+      );
+    }
+    if (_isGeneratedOrOcr(name)) return -1;
+    final episodeScore = _episodeScore(name, query, allowUnnumbered: true);
+    if (episodeScore < 0) return -1;
+    return episodeScore +
+        _releaseCompatibilityScore(name, query.releaseName) +
+        _releaseSimilarity(name, query.releaseName);
+  }
 
-    var score = switch (extension) {
-      '.ass' => 8,
-      '.srt' => 7,
-      '.vtt' => 6,
-      '.ssa' => 5,
-      '.zip' => 0,
-      _ => 0,
-    };
-    score += _timingSourceScore(name, query.releaseName);
-    if (query.movie) return score;
+  static int _archiveMemberScore(
+    String archiveName,
+    String memberName,
+    LearningSubtitleQuery query,
+  ) => _textCandidateScore(
+    episodeName: memberName,
+    releaseIdentity: '$archiveName / $memberName',
+    query: query,
+  );
+
+  static int _textCandidateScore({
+    required String episodeName,
+    required String releaseIdentity,
+    required LearningSubtitleQuery query,
+  }) {
+    if (_isGeneratedOrOcr(releaseIdentity)) return -1;
+    final extension = p.extension(episodeName).toLowerCase();
+    final formatScore = _subtitleFormatScore(extension);
+    if (formatScore < 0) return -1;
+    final episodeScore = _episodeScore(episodeName, query);
+    if (episodeScore < 0) return -1;
+    return episodeScore +
+        _releaseCompatibilityScore(releaseIdentity, query.releaseName) +
+        _releaseSimilarity(releaseIdentity, query.releaseName) +
+        formatScore;
+  }
+
+  static int _subtitleFormatScore(String extension) => switch (extension) {
+    '.ass' => 5,
+    '.srt' => 4,
+    '.vtt' => 3,
+    '.ssa' => 2,
+    _ => -1,
+  };
+
+  static int _episodeScore(
+    String name,
+    LearningSubtitleQuery query, {
+    bool allowUnnumbered = false,
+  }) {
+    if (query.movie) return 0;
     final episodes = parseFilename(name).episodeNumbers;
     // The remote episode filter is deliberately not the source of truth. A
     // direct subtitle (and every subtitle inside an archive) must name the
     // requested episode, otherwise a valid file for another episode can be
     // attached and cached here. Archives themselves are the only exception
     // because their members are validated independently.
-    if (episodes.isEmpty) return extension == '.zip' ? score : -1;
+    if (episodes.isEmpty) return allowUnnumbered ? 0 : -1;
     final wanted = query.episode.toDouble();
     if (episodes.contains(wanted)) {
-      score += 100;
+      return 200;
     } else if (episodes.length >= 2 &&
         episodes.reduce((a, b) => a < b ? a : b) <= wanted &&
         episodes.reduce((a, b) => a > b ? a : b) >= wanted) {
-      score += 70;
-    } else {
-      return -1;
+      return 150;
     }
-    score += _releaseSimilarity(name, query.releaseName);
-    return score;
+    return -1;
   }
 
-  static int _timingSourceScore(String subtitle, String release) {
-    final candidateSource = _timingSource(subtitle);
-    final releaseSource = _timingSource(release);
+  static final _generatedOrOcrPattern = RegExp(
+    r'\b(ocr|whisper|subgen|machine[ ._-]*generated|generated[ ._-]*by|ai[ ._-]*generated)\b',
+  );
+
+  static bool _isGeneratedOrOcr(String value) =>
+      _generatedOrOcrPattern.hasMatch(value.toLowerCase());
+
+  static int _releaseCompatibilityScore(String subtitle, String release) {
+    final candidate = _ReleaseProfile.fromName(subtitle);
+    final target = _ReleaseProfile.fromName(release);
     var score = 0;
-    if (releaseSource == _SubtitleTimingSource.unknown) {
-      // Debrid episode picks are normally WEB encodes even when the release
-      // group omits a platform tag. Broadcast captions often include station
-      // bumpers or edit points and must not win merely because they are ASS.
-      score += switch (candidateSource) {
-        _SubtitleTimingSource.web => 45,
-        _SubtitleTimingSource.broadcast => -25,
-        _SubtitleTimingSource.bluray => -15,
+
+    final groupMatches = candidate.groups.intersection(target.groups).length;
+    score += groupMatches * 180;
+    final candidateWords = _normalizedWords(subtitle).join(' ');
+    final targetWords = _normalizedWords(release).join(' ');
+    final looseGroupMatches = {
+      for (final group in target.groups)
+        if (_containsReleaseSignal(candidateWords, group)) group,
+      for (final group in candidate.groups)
+        if (_containsReleaseSignal(targetWords, group)) group,
+    }.length;
+    score += (looseGroupMatches - groupMatches).clamp(0, 99) * 180;
+
+    final platformMatches = candidate.platforms
+        .intersection(target.platforms)
+        .length;
+    score += platformMatches * 140;
+    if (target.platforms.isNotEmpty &&
+        candidate.platforms.isNotEmpty &&
+        platformMatches == 0) {
+      score -= 130;
+    }
+
+    if (target.source == _SubtitleTimingSource.unknown) {
+      // An unlabelled anime release is more often a WEB encode than a TV
+      // transport or Blu-ray cut, but this is deliberately a small tiebreaker
+      // rather than the old assumption that could dominate real evidence.
+      score += switch (candidate.source) {
+        _SubtitleTimingSource.web => 18,
+        _SubtitleTimingSource.broadcast => -24,
+        _SubtitleTimingSource.bluray => -8,
         _SubtitleTimingSource.unknown => 0,
       };
-    } else if (candidateSource == releaseSource) {
-      score += 80;
-    } else if (candidateSource == _SubtitleTimingSource.unknown) {
-      score -= 15;
+    } else if (candidate.source == target.source) {
+      score += 100;
+    } else if (candidate.source == _SubtitleTimingSource.unknown) {
+      score -= 20;
     } else {
-      score -= 80;
+      score -= 150;
     }
 
-    final releasePlatforms = _platformSignals(release);
-    final candidatePlatforms = _platformSignals(subtitle);
-    score += releasePlatforms.intersection(candidatePlatforms).length * 30;
+    score += _explicitRetimeScore(subtitle, target);
     return score;
   }
 
-  static _SubtitleTimingSource _timingSource(String value) {
-    final lower = value.toLowerCase();
-    if (RegExp(r'\b(bluray|blu[ ._-]*ray|bdrip|bdremux|bdmv)\b')
-        .hasMatch(lower)) {
-      return _SubtitleTimingSource.bluray;
+  static int _explicitRetimeScore(String subtitle, _ReleaseProfile target) {
+    final normalized = _normalizedWords(subtitle).join(' ');
+    if (!RegExp(r'\b(sync|synced|retime|retimed)\b').hasMatch(normalized)) {
+      return 0;
     }
-    if (RegExp(
-      r'\b(web|webrip|web[ ._-]*dl|amazon|amzn|netflix|crunchyroll|hidive|hulu|disney)\b',
-    ).hasMatch(lower)) {
-      return _SubtitleTimingSource.web;
+    final signals = {...target.groups, ...target.platforms};
+    for (final signal in signals) {
+      if (normalized.contains(signal.replaceAll('-', ' '))) return 220;
     }
-    if (RegExp(
-      r'\b(ntv|at[ ._-]*x|bs11|tokyo[ ._-]*mx|hdtv|broadcast|transport[ ._-]*stream|tv)\b',
-    ).hasMatch(lower)) {
-      return _SubtitleTimingSource.broadcast;
-    }
-    return _SubtitleTimingSource.unknown;
-  }
-
-  static Set<String> _platformSignals(String value) {
-    final lower = value.toLowerCase();
-    const aliases = <String, String>{
-      'amazon': 'amazon',
-      'amzn': 'amazon',
-      'netflix': 'netflix',
-      'nf': 'netflix',
-      'crunchyroll': 'crunchyroll',
-      'hidive': 'hidive',
-      'hulu': 'hulu',
-      'disney': 'disney',
-      'ntv': 'ntv',
-      'atx': 'at-x',
-      'bs11': 'bs11',
-    };
-    final words = RegExp(r'[a-z0-9]+')
-        .allMatches(lower.replaceAll('at-x', 'atx'))
-        .map((match) => match.group(0)!)
-        .toSet();
-    final signals = <String>{};
-    for (final word in words) {
-      final signal = aliases[word];
-      if (signal != null) signals.add(signal);
-    }
-    return signals;
+    return 0;
   }
 
   static String _cacheFileName(
@@ -501,13 +607,12 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
   }
 
   static int _releaseSimilarity(String subtitle, String release) {
-    Set<String> words(String value) => RegExp(r'[a-z0-9]{3,}')
-        .allMatches(value.toLowerCase())
-        .map((match) => match.group(0)!)
+    Set<String> words(String value) => _normalizedWords(value)
+        .where((word) => word.length >= 3)
         .where(
-          (word) =>
-              !RegExp(r'^(1080|2160|720|480|mkv|ass|ssa|srt|vtt)$')
-                  .hasMatch(word),
+          (word) => !RegExp(
+            r'^(1080|2160|720|480|264|265|hevc|avc|av1|aac|flac|mkv|ass|ssa|srt|vtt|episode|dual|audio|jpn|japanese)$',
+          ).hasMatch(word),
         )
         .toSet();
     final left = words(subtitle);
@@ -517,11 +622,117 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
     // timing signals. One matching token should outweigh the small preference
     // for ASS over SRT, while common show-title words still cancel out across
     // otherwise equivalent candidates.
-    return left.intersection(right).length * 8;
+    return left.intersection(right).length * 3;
   }
 }
 
 enum _SubtitleTimingSource { unknown, web, broadcast, bluray }
+
+class _ReleaseProfile {
+  const _ReleaseProfile({
+    required this.source,
+    required this.platforms,
+    required this.groups,
+  });
+
+  final _SubtitleTimingSource source;
+  final Set<String> platforms;
+  final Set<String> groups;
+
+  factory _ReleaseProfile.fromName(String value) {
+    final words = _normalizedWords(value).toSet();
+    final platforms = <String>{};
+    const platformAliases = <String, String>{
+      'amazon': 'amazon',
+      'amzn': 'amazon',
+      'netflix': 'netflix',
+      'nf': 'netflix',
+      'crunchyroll': 'crunchyroll',
+      'hidive': 'hidive',
+      'hulu': 'hulu',
+      'disney': 'disney',
+      'funimation': 'funimation',
+    };
+    for (final word in words) {
+      final platform = platformAliases[word];
+      if (platform != null) platforms.add(platform);
+    }
+
+    final groups = <String>{};
+    for (final match in RegExp(r'\[([^\]]+)\]').allMatches(value)) {
+      final raw = match.group(1);
+      if (raw == null) continue;
+      final group = _normalizedWords(raw).join('-');
+      if (group.isEmpty || _technicalBracketGroup(group)) continue;
+      groups.add(group);
+    }
+
+    const webGroups = <String, String>{
+      'subsplease': 'crunchyroll',
+      'horriblesubs': 'crunchyroll',
+      'erai-raws': 'crunchyroll',
+    };
+    for (final group in groups) {
+      final platform = webGroups[group];
+      if (platform != null) platforms.add(platform);
+    }
+
+    final lower = value.toLowerCase();
+    final explicitBluray = RegExp(
+      r'\b(bluray|blu[ ._-]*ray|bdrip|bd[ ._-]*remux|bdmv|\bbd\b)\b',
+    ).hasMatch(lower);
+    final explicitWeb = RegExp(
+      r'\b(web|webrip|web[ ._-]*dl|amazon|amzn|netflix|crunchyroll|hidive|hulu|disney|funimation)\b',
+    ).hasMatch(lower);
+    final explicitBroadcast = RegExp(
+      r'\b(ntv|at[ ._-]*x|bs11|tokyo[ ._-]*mx|hdtv|broadcast|transport[ ._-]*stream|\btv\b)\b',
+    ).hasMatch(lower);
+    final source = explicitBluray
+        ? _SubtitleTimingSource.bluray
+        : explicitWeb || platforms.isNotEmpty
+        ? _SubtitleTimingSource.web
+        : explicitBroadcast
+        ? _SubtitleTimingSource.broadcast
+        : _SubtitleTimingSource.unknown;
+    return _ReleaseProfile(
+      source: source,
+      platforms: platforms,
+      groups: groups,
+    );
+  }
+}
+
+List<String> _normalizedWords(String value) =>
+    RegExp(r'[a-z0-9]+')
+        .allMatches(value.toLowerCase().replaceAll('at-x', 'atx'))
+        .map((match) {
+          final word = match.group(0)!;
+          return switch (word) {
+            'atx' => 'at-x',
+            _ => word,
+          };
+        })
+        .toList(growable: false);
+
+bool _containsReleaseSignal(String normalizedWords, String signal) {
+  final normalizedSignal = signal.replaceAll('-', ' ').trim();
+  return normalizedSignal.isNotEmpty &&
+      ' $normalizedWords '.contains(' $normalizedSignal ');
+}
+
+bool _technicalBracketGroup(String value) =>
+    RegExp(
+      r'^(\d{3,4}p?|[a-f0-9]{8,}|ja|jp|jpn|en|eng|ja-en|chs|cht|chi|cc|sdh|no-sdh|no-speaker-labels|reformatted|dual-audio|web|web-dl|webrip|bluray|blu-ray|bd|bdrip|ntv|at-x|10bit)$',
+    ).hasMatch(value) ||
+    RegExp(r'\b(hevc|x26[45]|av1|aac|flac|sub|audio|speaker|label)\b')
+        .hasMatch(value);
+
+class _CachedSubtitle {
+  const _CachedSubtitle(this.file, this.originalName);
+
+  final File file;
+  final String originalName;
+}
 
 class _RemoteSubtitle {
   const _RemoteSubtitle({

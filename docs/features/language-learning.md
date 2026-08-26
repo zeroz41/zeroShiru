@@ -21,7 +21,10 @@ Japanese text track ─► libmpv cue + timing ─► cue identity ─► TinySe
                                                            ▼
                                              tappable Flutter word widgets
 
-translated text track ─► libmpv secondary cue + timing ─► aligned line below
+translated text track ─► libmpv secondary cues + timing ─► overlap map
+                                                                 │
+                                                                 ▼
+                                                translation context below
 
 AniList ID + episode ─► Jimaku read-only API ─► scored text subtitle
                                                    │
@@ -32,9 +35,12 @@ AniList ID + episode ─► Jimaku read-only API ─► scored text subtitle
                                       libmpv external Japanese track
 ```
 
-On entering Learning mode, optional automatic pairing chooses Japanese audio,
-a Japanese text track as primary, and the configured learning language as
-secondary. The
+The player remembers Standard, Learning, or Off as the active subtitle mode
+and restores it when another episode opens. On entering Learning mode,
+optional automatic pairing leaves the configured
+audio track alone, chooses a Japanese text track as primary, and uses the
+configured learning language as secondary. Returning to Styled mode clears the
+secondary track and restores the configured main subtitle language. The
 current implementation starts with English and can pair the other translation
 languages already supported by the player's subtitle preferences. Translation
 is authored subtitle text; zeroShiru does not generate or rewrite it.
@@ -43,11 +49,13 @@ If the release has no Japanese text track, zeroShiru can resolve one from
 [Jimaku](https://jimaku.cc) using the AniList ID and episode already carried by
 the playback request. Jimaku requires a free personal API key, stored in the OS
 keyring. Direct ASS, SSA, SRT, and WebVTT files are supported, as are bounded
-ZIP archives. The resolver rejects OCR/Whisper-labelled candidates, checks the
-episode again locally, prefers release-name timing matches, verifies that the
-chosen file contains Japanese text, and stores only that member in a
-per-episode, per-release cache so differently timed WEB and Blu-ray variants do
-not collide. A cached match is reused offline without another provider request.
+ZIP and 7z archives. The resolver rejects OCR/Whisper-labelled candidates,
+checks the episode again locally, compares normalized release-group, platform,
+source-cut, retime, and filename-token signals instead of requiring an exact
+name, verifies that the chosen file contains Japanese text, and stores only
+that member in a per-episode, per-release cache so differently timed WEB and
+Blu-ray variants do not collide. A cached match is reused offline without
+another provider request.
 
 Each Japanese cue is segmented in a persistent background isolate without a
 warm-up model or native NLP runtime. When JMdict is installed, the pipeline
@@ -99,7 +107,7 @@ panel. **Kanji**, **Kana**, **Romaji**, and **Translation** are direct toggles
 there. Manual primary/secondary tracks, timing, and sidecars stay in a
 collapsed **Advanced** section. Persistent settings also control:
 
-- automatic Japanese + translation text-track pairing;
+- automatic Japanese + translation text-track pairing without changing audio;
 - automatic retrieval of a missing Japanese episode track;
 - Japanese surface text, furigana, romaji, and translated line visibility;
 - pause on the first hover/tap lookup in each cue; and
@@ -107,14 +115,20 @@ collapsed **Advanced** section. Persistent settings also control:
 
 Before a manual track is chosen, playback infers missing language tags from
 track titles and prefers main/full-dialogue tracks over commentary, forced,
-or signs-and-songs variants. In Learning mode that yields Japanese audio and
-text plus the configured translation language; explicit compatible picks win
-on subsequent preparation.
+or signs-and-songs variants. In Learning mode that yields Japanese text plus
+the configured translation language while the user's audio preference remains
+authoritative; explicit compatible subtitle picks win on subsequent
+preparation.
 
 Hovering or tapping a token highlights it and opens its local base form,
 reading, romanization, part of speech, and English definitions. The overlay
-uses current primary and secondary cue timing independently, including each
-track's delay. Timeline dragging previews locally and commits one seek; the
+records a bounded cue history and pairs all translated cues whose adjusted
+time windows overlap the current Japanese cue, including a small boundary
+tolerance and each track's delay. It never pairs unrelated lines merely because
+they were the last cues observed. Authored subtitle tracks can still segment or
+paraphrase dialogue differently, so this is intentionally translation context,
+not a claim that independently authored lines are literal one-to-one
+translations. Timeline dragging previews locally and commits one seek; the
 player clears stale cue work during that seek and refreshes both active lines
 after MPV settles. Unknown-duration cues also have a bounded display fallback.
 The active Japanese line is bottom-anchored over the video with
@@ -122,14 +136,31 @@ furigana above each word, optional romaji below it, and the translation on its
 own line. Only lookup results and actionable warnings use a surface; ordinary
 subtitles are rendered without a persistent opaque panel.
 
-When several Jimaku files name the requested episode, release-group and source
-markers such as WEB or BluRay are timing signals and outrank small format
-preferences. WEB/debrid episodes prefer streaming captions; NTV, AT-X, and
-other broadcast captions win only for a compatible broadcast release. The
-attached track and preparation result retain the selected catalog filename so
-a timing source is visible instead of becoming an anonymous cached file. The
-release-aware cache prevents an older mismatched candidate from being reused
-for the same video source.
+When several Jimaku files name the requested episode, the matcher compares the
+torrent name and resolved video filename with normalized release groups,
+streaming platforms, WEB/Blu-ray/broadcast cuts, and explicit “synced to” or
+“retimed for” markers. These are independent evidence signals, not an exact
+filename comparison. Archive metadata remains part of the score even when the
+episode member has a generic name, and ZIP/7z members are checked independently.
+Format is only a final tiebreaker. An unlabelled
+debrid episode gets a small WEB preference, while NTV, AT-X, and other
+broadcast captions win only for a compatible broadcast release. OCR, Whisper,
+subgen, and other generated files are rejected. If Jimaku's best-effort episode
+filter misses an unnumbered archive, the exact AniList entry is retried without
+the filter and every member is still checked locally for the requested episode
+and Japanese text. The attached track and preparation result retain the
+selected catalog filename so a timing source is visible instead of becoming an
+anonymous cached file. The release-aware cache prevents an older mismatched
+candidate from being reused for the same video source.
+
+The main release list uses the same persisted intent as playback: the chosen
+audio language is the first language signal; Standard uses the regular
+subtitle language, Learning uses its translation language, and Off does not
+rank releases by subtitles. Manual audio/language and subtitle-mode changes in
+the player update those defaults for the next episode. Primary and secondary
+timing corrections are remembered separately for each release identity, so a
+pack keeps its sync adjustment across episodes without shifting unrelated
+encodes.
 
 ## Product references and boundaries
 
@@ -146,6 +177,10 @@ furigana, and hover definitions.
 An opt-in artifact test can validate a downloaded release end to end with
 `ZEROSHIRU_JMDICT_ARCHIVE=/path/JMdict_english.zip flutter test
 test/learning/live_jmdict_artifact_test.dart`.
+
+The read-only Jimaku integration can be checked against the current catalog
+with `ZEROSHIRU_LIVE_JIMAKU_KEY='…' flutter test
+test/learning/live_jimaku_test.dart`.
 
 The first version intentionally does not include OCR, machine translation,
 sentence explanations, flashcard export, or vocabulary history. Per-character

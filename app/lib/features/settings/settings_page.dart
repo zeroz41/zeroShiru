@@ -154,7 +154,7 @@ class _SettingsBodyState extends ConsumerState<_SettingsBody> {
           ),
           _DropdownRow<String>(
             label: 'Audio language',
-            description: 'Preferred embedded audio track and first release-ranking signal.',
+            description: 'Preferred embedded audio and first release-ranking signal. Uses the container default only when that language is unavailable.',
             value: settings.audioLanguage,
             items: const {
               'jpn': 'Japanese',
@@ -177,7 +177,7 @@ class _SettingsBodyState extends ConsumerState<_SettingsBody> {
           ),
           _DropdownRow<String>(
             label: 'Subtitle language',
-            description: 'Preferred embedded subtitle track and second release-ranking signal.',
+            description: 'Preferred embedded subtitles and second release-ranking signal. Stays off when that language is unavailable.',
             value: settings.subtitleLanguage,
             items: const {
               'eng': 'English',
@@ -744,7 +744,7 @@ class _LearningSettingsCardState extends ConsumerState<_LearningSettingsCard> {
         ),
         _SwitchRow(
           label: 'Pair Japanese tracks automatically',
-          description: 'When Learning is selected, use Japanese audio and text with the chosen translation track.',
+          description: 'When Learning is selected, pair Japanese text with the chosen translation without changing your audio language.',
           value: settings.learningAutoSelectTracks,
           onChanged: (value) => unawaited(
             controller.persist(

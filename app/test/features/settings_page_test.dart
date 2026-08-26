@@ -253,6 +253,12 @@ class _DebridClient implements DebridClient {
   ) async => const {};
 
   @override
+  Future<Map<String, DebridAvailabilityDetail>> inspectAvailability(
+    String apiKey,
+    List<String> hashes,
+  ) async => const {};
+
+  @override
   Future<ResolvedDebrid> resolve(
     String apiKey,
     String magnet, {

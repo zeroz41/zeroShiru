@@ -24,6 +24,7 @@ class Settings {
     this.externalPlayerPath = '',
     this.audioLanguage = 'jpn',
     this.subtitleLanguage = 'eng',
+    this.playerSubtitleMode = 'standard',
     // Language learning (only used by the explicit Learning subtitle mode)
     this.learningTranslationLanguage = 'eng',
     this.learningAutoSelectTracks = true,
@@ -73,6 +74,20 @@ class Settings {
   final String externalPlayerPath;
   final String audioLanguage;
   final String subtitleLanguage;
+
+  /// Last subtitle presentation chosen in the player: standard, learning, or
+  /// off. Keeping this beside the language choices makes a newly opened
+  /// episode behave like the episode the user just left.
+  final String playerSubtitleMode;
+
+  /// The subtitle language that should influence release ordering. Learning
+  /// pairs Japanese text with its own translation language, while Off should
+  /// not reward a release for subtitles the user has disabled.
+  String? get releaseSubtitleLanguage => switch (playerSubtitleMode) {
+    'learning' => learningTranslationLanguage,
+    'off' => null,
+    _ => subtitleLanguage,
+  };
 
   /// Language-learning preferences never change standard subtitle rendering.
   /// They become active only after the user explicitly chooses Learning in
@@ -132,6 +147,7 @@ class Settings {
     String? externalPlayerPath,
     String? audioLanguage,
     String? subtitleLanguage,
+    String? playerSubtitleMode,
     String? learningTranslationLanguage,
     bool? learningAutoSelectTracks,
     bool? learningAutoFetchJapaneseSubtitles,
@@ -175,6 +191,7 @@ class Settings {
       externalPlayerPath: externalPlayerPath ?? this.externalPlayerPath,
       audioLanguage: audioLanguage ?? this.audioLanguage,
       subtitleLanguage: subtitleLanguage ?? this.subtitleLanguage,
+      playerSubtitleMode: playerSubtitleMode ?? this.playerSubtitleMode,
       learningTranslationLanguage:
           learningTranslationLanguage ?? this.learningTranslationLanguage,
       learningAutoSelectTracks:

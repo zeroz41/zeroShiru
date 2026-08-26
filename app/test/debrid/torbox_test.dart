@@ -75,6 +75,37 @@ void main() {
     },
   );
 
+  test('cache inspection returns member names for episode filtering', () async {
+    final transport = MockTransport([
+      Route.json(
+        '/torrents/checkcached',
+        200,
+        ok([
+          {
+            'hash': hashA,
+            'name': 'Partial batch',
+            'files': [
+              {'name': 'Show/Show - 40.mkv', 'size': 1000},
+              {'path': 'Show/Show - 41.mkv', 'length': 1100},
+            ],
+          },
+        ]),
+      ),
+    ]);
+    final provider = TorBoxProvider('key', transport, ManualClock());
+
+    final details = await provider.inspectAvailabilityBatch([hashA, hashB]);
+
+    expect(details[hashA]?.availability, Availability.cached);
+    expect(details[hashA]?.files?.map((file) => (file.path, file.size)), [
+      ('Show/Show - 40.mkv', 1000),
+      ('Show/Show - 41.mkv', 1100),
+    ]);
+    expect(details[hashB]?.availability, Availability.available);
+    expect(details[hashB]?.files, isNull);
+    expect(transport.requests.single.url.queryParameters['list_files'], 'true');
+  });
+
   test('selected pack file takes the first requestdl ticket', () async {
     final transport = MockTransport([
       Route.json('/torrents/mylist', 200, ok([torrent()])),
@@ -89,14 +120,11 @@ void main() {
     );
 
     expect(resolved.targetPath, '/Test/Episode 02.mkv');
-    expect(resolved.files.map((file) => file.path), [
-      '/Test/Episode 01.mkv',
-      '/Test/Episode 02.mkv',
-    ]);
+    expect(resolved.files.map((file) => file.path), ['/Test/Episode 02.mkv']);
     final links = transport.requests
         .where((request) => request.url.path.endsWith('/requestdl'))
         .toList();
-    expect(links, hasLength(2));
+    expect(links, hasLength(1));
     expect(links.first.url.queryParameters['file_id'], '2');
     expect(
       links.every(
@@ -137,7 +165,11 @@ void main() {
       );
 
       expect(resolved.files.map((file) => file.name), ['Target.mkv']);
-      expect(clock.nowMs, greaterThanOrEqualTo(1002000));
+      expect(
+        clock.nowMs,
+        lessThan(1001000),
+        reason: 'optional neighbors must not hold a ready target for seconds',
+      );
       expect(provider.client.health.limiter.inFlight, 0);
     },
   );

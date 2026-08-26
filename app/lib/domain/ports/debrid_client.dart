@@ -40,6 +40,25 @@ class DebridAccount {
   final DateTime? expires;
 }
 
+/// File metadata exposed by a provider's cache check, before any signed link
+/// is requested. It is safe to retain only for the lifetime of the picker.
+class DebridCachedFile {
+  const DebridCachedFile({required this.path, this.size = 0});
+
+  final String path;
+  final int size;
+}
+
+/// Availability plus the cached torrent's member names when the provider can
+/// return them. `files == null` means the service supplied no file listing;
+/// an empty list means it explicitly returned a torrent with no members.
+class DebridAvailabilityDetail {
+  const DebridAvailabilityDetail(this.availability, {this.files});
+
+  final Availability availability;
+  final List<DebridCachedFile>? files;
+}
+
 class ResolvedDebrid {
   const ResolvedDebrid({
     required this.hash,
@@ -69,6 +88,14 @@ abstract interface class DebridClient {
 
   /// Batch cached-availability check. Keys of the result are lowercase hashes.
   Future<Map<String, Availability>> availability(
+    String apiKey,
+    List<String> hashes,
+  );
+
+  /// A cache check that also asks for member file names where supported. The
+  /// picker uses those names to reject a cached batch that cannot serve the
+  /// episode before the user can click it.
+  Future<Map<String, DebridAvailabilityDetail>> inspectAvailability(
     String apiKey,
     List<String> hashes,
   );

@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 
+import '../../application/playback/coverage.dart';
 import '../../domain/models/source_extension.dart';
 import '../../domain/models/torrent.dart';
 import '../../domain/ports/ports.dart';
+import '../debrid/hash.dart';
+import '../media/filename.dart';
 import '../network/transport.dart';
 
 /// Installs the old Shiru declarative JSON catalogs, then dispatches known
@@ -166,46 +169,43 @@ class NativeSourceResolver implements SourceResolver {
         await controller.close();
         return;
       }
-      final needsMapping = enabled.any(
-        (item) => _adapters[item.id]?.needsMapping ?? false,
-      );
-      final mapped = needsMapping ? _mappedQuery(query) : Future.value(query);
+      // Resolve AniZip once, but do not make title- and AniList-based sources
+      // wait for it. Their local-numbered results can reach the picker now;
+      // adapters which benefit from absolute numbering send a mapped follow-up.
+      final mapped = _mappedQuery(query);
       var remaining = enabled.length;
       for (final extension in enabled) {
         unawaited(() async {
           try {
             final adapter = _adapters[extension.id]!;
-            final effective = adapter.needsMapping ? await mapped : query;
-            final results = await adapter.search(
-              effective,
-              movie: movie,
-              settings: extension.settings,
-            );
-            if (!controller.isClosed) {
+            Future<void> searchAndEmit(TorrentQuery effective) async {
+              final results = await adapter.search(
+                effective,
+                movie: movie,
+                settings: extension.settings,
+              );
+              if (controller.isClosed) return;
               controller.add(
-                SourceSearchBatch(
-                  source: extension,
-                  results: [
-                    for (final result in results)
-                      TorrentResult(
-                        title: result.title,
-                        link: result.link,
-                        hash: result.hash,
-                        size: result.size,
-                        seeders: result.seeders,
-                        leechers: result.leechers,
-                        downloads: result.downloads,
-                        date: result.date,
-                        id: result.id,
-                        accuracy: result.accuracy,
-                        type: result.type,
-                        sourceId: extension.id,
-                        audioLanguages: result.audioLanguages,
-                        subtitleLanguages: result.subtitleLanguages,
-                      ),
-                  ],
+                _safeBatch(
+                  extension,
+                  results,
+                  requested: query,
+                  effective: effective,
                 ),
               );
+            }
+
+            if (adapter.requiresMapping) {
+              await searchAndEmit(await mapped);
+            } else {
+              await searchAndEmit(query);
+              if (adapter.searchesMappedEpisodes) {
+                final effective = await mapped;
+                if (effective.absoluteEpisode != null &&
+                    effective.absoluteEpisode != query.episode) {
+                  await searchAndEmit(effective);
+                }
+              }
             }
           } catch (error) {
             if (!controller.isClosed) {
@@ -224,6 +224,43 @@ class NativeSourceResolver implements SourceResolver {
     }());
     return controller.stream;
   }
+
+  SourceSearchBatch _safeBatch(
+    SourceExtension extension,
+    List<TorrentResult> results, {
+    required TorrentQuery requested,
+    required TorrentQuery effective,
+  }) => SourceSearchBatch(
+    source: extension,
+    results: [
+      for (final result in results)
+        if (validatedTorrentMagnet(declaredHash: result.hash, link: result.link)
+            case final magnet?)
+          if (releaseHoldsEpisode(
+            parseFilename(result.title),
+            episode: requested.episode,
+            absoluteEpisode: effective.absoluteEpisode,
+            episodeCount: requested.episodeCount,
+          ))
+            TorrentResult(
+              title: result.title,
+              link: result.link,
+              hash: parseHash(magnet),
+              size: result.size,
+              seeders: result.seeders,
+              leechers: result.leechers,
+              downloads: result.downloads,
+              date: result.date,
+              id: result.id,
+              accuracy: result.accuracy,
+              type: result.type,
+              sourceId: extension.id,
+              mappedEpisode: effective.absoluteEpisode,
+              audioLanguages: result.audioLanguages,
+              subtitleLanguages: result.subtitleLanguages,
+            ),
+    ],
+  );
 
   Future<TorrentQuery> _mappedQuery(TorrentQuery query) async {
     final cacheKey = '${query.anilistId}:${query.episode ?? 0}';
@@ -488,7 +525,8 @@ class NativeSourceResolver implements SourceResolver {
 }
 
 abstract class _NativeAdapter {
-  bool get needsMapping => false;
+  bool get requiresMapping => false;
+  bool get searchesMappedEpisodes => false;
 
   Future<List<TorrentResult>> search(
     TorrentQuery query, {
@@ -504,6 +542,9 @@ class _NyaaAdapter extends _NativeAdapter {
 
   final _SourceHttp http;
   final bool adult;
+
+  @override
+  bool get searchesMappedEpisodes => true;
 
   String get host => adult ? 'sukebei.nyaa.si' : 'nyaa.si';
   String get tracker => adult
@@ -529,7 +570,6 @@ class _NyaaAdapter extends _NativeAdapter {
     TorrentQuery query, {
     required bool batch,
   }) async {
-    const qualities = ['2160', '1080', '720', '540', '480'];
     final titles = query.titles
         .where((item) => item.trim().isNotEmpty)
         .take(8)
@@ -541,11 +581,6 @@ class _NyaaAdapter extends _NativeAdapter {
           ? _batchPatterns(query.episodeCount!)
           : _episodePatterns(query.episode ?? 1);
       terms.write(patterns.join('|'));
-    }
-    if (query.resolution.isNotEmpty) {
-      terms.write(
-        '-(${qualities.where((item) => item != query.resolution).join('|')})',
-      );
     }
     if (query.exclusions.isNotEmpty) {
       terms.write('-(${query.exclusions.join('|')})');
@@ -695,7 +730,7 @@ class _AnimeToshoAdapter extends _NativeAdapter {
   final bool archive;
 
   @override
-  bool get needsMapping => true;
+  bool get requiresMapping => true;
 
   List<String> get hosts => archive
       ? const ['feed.animetosho.org']
@@ -781,15 +816,11 @@ class _AnimeToshoAdapter extends _NativeAdapter {
   }
 
   Map<String, String> _toshoFilter(TorrentQuery query) {
-    if (query.resolution.isEmpty && query.exclusions.isEmpty) return const {};
-    const qualities = ['2160', '1080', '720', '540', '480'];
-    final exclusion = query.exclusions.isEmpty
-        ? ''
-        : '!(${query.exclusions.map((item) => '"$item"').join('|')})';
-    final quality = query.resolution.isEmpty
-        ? ''
-        : '!(*${qualities.where((item) => item != query.resolution).join('*|*')}*)';
-    return {'qx': '1', 'q': '$exclusion$quality'};
+    if (query.exclusions.isEmpty) return const {};
+    return {
+      'qx': '1',
+      'q': '!(${query.exclusions.map((item) => '"$item"').join('|')})',
+    };
   }
 
   @override
@@ -810,6 +841,9 @@ class _TsukiAdapter extends _NativeAdapter {
   final _SourceHttp http;
   final Map<String, String> _ids = {};
   static const host = 'api.tsukihime.org';
+
+  @override
+  bool get searchesMappedEpisodes => true;
 
   @override
   Future<List<TorrentResult>> search(
@@ -935,7 +969,7 @@ class _NekoBtAdapter extends _NativeAdapter {
   final Map<String, String> _mediaIds = {};
 
   @override
-  bool get needsMapping => true;
+  bool get requiresMapping => true;
 
   @override
   Future<List<TorrentResult>> search(
@@ -1134,14 +1168,7 @@ List<TorrentResult> _dedupe(Iterable<TorrentResult> values) {
 
 bool _titleAllowed(String title, TorrentQuery query) {
   final lower = title.toLowerCase();
-  if (query.exclusions.any((item) => lower.contains(item.toLowerCase()))) {
-    return false;
-  }
-  if (query.resolution.isEmpty) return true;
-  const qualities = ['2160', '1080', '720', '540', '480'];
-  return !qualities
-      .where((item) => item != query.resolution)
-      .any(lower.contains);
+  return !query.exclusions.any((item) => lower.contains(item.toLowerCase()));
 }
 
 DateTime? _epoch(Object? value) {
