@@ -206,6 +206,23 @@ class _SettingsBodyState extends ConsumerState<_SettingsBody> {
               ),
             ),
           ),
+          _DropdownRow<double>(
+            label: 'Subtitle text size',
+            description:
+                'Applies immediately to Styled and Learning text subtitles.',
+            value: settings.subtitleTextScale,
+            items: {
+              0.85: 'Compact',
+              1.0: 'Comfortable',
+              1.2: 'Large',
+              1.4: 'Extra large',
+            },
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(subtitleTextScale: value),
+              ),
+            ),
+          ),
         ],
       ),
       _LearningSettingsCard(settings: settings),
@@ -806,27 +823,11 @@ class _LearningSettingsCardState extends ConsumerState<_LearningSettingsCard> {
         ),
         _SwitchRow(
           label: 'Pause on word lookup',
-          description: 'Freeze playback the first time a word is hovered or tapped in each line.',
+          description: 'Freeze playback the first time a word is highlighted, focused, or tapped in each line.',
           value: settings.learningPauseOnLookup,
           onChanged: (value) => unawaited(
             controller.persist(
               (current) => current.copyWith(learningPauseOnLookup: value),
-            ),
-          ),
-        ),
-        _DropdownRow<double>(
-          label: 'Study text size',
-          description: 'Scales only the interactive learning overlay.',
-          value: settings.learningSubtitleScale,
-          items: {
-            0.85: 'Compact',
-            1.0: 'Comfortable',
-            1.2: 'Large',
-            1.4: 'Extra large',
-          },
-          onChanged: (value) => unawaited(
-            controller.persist(
-              (current) => current.copyWith(learningSubtitleScale: value),
             ),
           ),
         ),

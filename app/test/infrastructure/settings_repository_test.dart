@@ -95,6 +95,7 @@ void main() {
         audioLanguage: 'eng',
         subtitleLanguage: 'spa',
         playerSubtitleMode: 'learning',
+        subtitleTextScale: 1.2,
         learningTranslationLanguage: 'de',
         learningAutoSelectTracks: false,
         learningAutoFetchJapaneseSubtitles: false,
@@ -103,7 +104,6 @@ void main() {
         learningShowRomaji: true,
         learningShowTranslation: false,
         learningPauseOnLookup: true,
-        learningSubtitleScale: 1.2,
         rssQuality: '720',
         rssAutoplay: false,
         torrentSort: 'size',
@@ -156,13 +156,21 @@ void main() {
         'debridService': 'notaservice',
         'maxConnections': 25.0,
         'learningTranslationLanguage': 'klingon',
-        'learningSubtitleScale': 99,
+        'subtitleTextScale': 99,
       });
       expect(settings.volume, 1.0);
       expect(settings.debridService, isNull);
       expect(settings.maxConnections, 25);
       expect(settings.learningTranslationLanguage, 'eng');
-      expect(settings.learningSubtitleScale, 1.0);
+      expect(settings.subtitleTextScale, 1.0);
+    });
+
+    test('migrates the old learning-only scale into the shared text size', () {
+      final settings = settingsFromJson(const {'learningSubtitleScale': 1.2});
+
+      expect(settings.subtitleTextScale, 1.2);
+      expect(settings.toJson()['subtitleTextScale'], 1.2);
+      expect(settings.toJson().containsKey('learningSubtitleScale'), isFalse);
     });
 
     test('copyWith can clear debridService with an explicit null', () {

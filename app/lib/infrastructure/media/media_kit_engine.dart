@@ -64,6 +64,7 @@ class MediaKitEngine implements MediaEngine {
   String? _selectedSecondary;
   Duration _primarySubtitleDelay = Duration.zero;
   Duration _secondarySubtitleDelay = Duration.zero;
+  double _subtitleScale = 1;
   Timer? _metricTimer;
   var _generation = 0;
   var _seekRequest = 0;
@@ -352,6 +353,7 @@ class MediaKitEngine implements MediaEngine {
       _setNativeProperty('sub-delay', '0'),
       _setNativeProperty('secondary-sub-delay', '0'),
       _setNativeProperty('secondary-sid', 'no'),
+      _setNativeProperty('sub-scale', _subtitleScale.toStringAsFixed(2)),
     ]);
   }
 
@@ -378,6 +380,23 @@ class MediaKitEngine implements MediaEngine {
       _primarySubtitleDelay = delay;
     }
     _emit();
+  }
+
+  @override
+  Future<void> setSubtitleScale(double scale) async {
+    _ensureAlive();
+    final normalized = scale.clamp(0.5, 2.0).toDouble();
+    final changed = await _setNativeProperty(
+      'sub-scale',
+      normalized.toStringAsFixed(2),
+    );
+    if (!changed) {
+      throw const PlaybackFailure(
+        PlaybackFailureKind.unsupported,
+        'Subtitle text sizing is unavailable on this player.',
+      );
+    }
+    _subtitleScale = normalized;
   }
 
   @override

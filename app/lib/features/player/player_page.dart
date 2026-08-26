@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme/tokens.dart';
+import '../../app/widgets/hover_region.dart';
 import '../../application/learning/providers.dart';
 import '../../application/learning/subtitle_providers.dart';
 import '../../application/playback/backend.dart';
@@ -66,6 +68,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   bool _playerPreferencesLoaded = false;
   String? _playbackTuningIdentity;
   PlaybackTuning _playbackTuning = const PlaybackTuning();
+  double? _appliedSubtitleScale;
+  double? _pendingSubtitleScale;
   int _activePlaybackGeneration = 0;
   BoxFit _fit = BoxFit.contain;
   double _lastAudibleVolume = 1;
@@ -277,6 +281,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           secondary: true,
         );
       }
+      try {
+        await _engine.setSubtitleScale(settings.subtitleTextScale);
+        _appliedSubtitleScale = settings.subtitleTextScale;
+        if (_pendingSubtitleScale == settings.subtitleTextScale) {
+          _pendingSubtitleScale = null;
+        }
+      } on PlaybackFailure {
+        // A reduced backend can still play even when it cannot resize text.
+      }
       if (mounted) await _engine.play();
     } on PlaybackFailure {
       // The redacted failure is already represented in the state stream.
@@ -403,13 +416,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final translationLanguage = _languageBase(
       settings.learningTranslationLanguage,
     );
-    final translation = _preferredLearningTrack(
-      textTracks.where((track) => track.id != japanese?.id),
-      translationLanguage,
-      selectedIds: selectedTrackIds,
-      preferredIds: pickedTrackIds,
-      subtitle: true,
-    );
+    final translation = settings.learningShowTranslation
+        ? _preferredLearningTrack(
+            textTracks.where((track) => track.id != japanese?.id),
+            translationLanguage,
+            selectedIds: selectedTrackIds,
+            preferredIds: pickedTrackIds,
+            subtitle: true,
+          )
+        : null;
 
     try {
       if (!_learningRequestIsCurrent(snapshot)) {
@@ -642,14 +657,41 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     await _engine.selectSubtitle(trackId, secondary: true);
     if (_requestedSubtitleRendering != SubtitleRendering.learning) return;
     final language = _settingLanguageForTrack(_latest.subtitleTracks, trackId);
-    if (language == null || language == 'jpn') return;
-    await _persistSettings(
-      (current) => current.copyWith(learningTranslationLanguage: language),
-    );
+    await _persistSettings((current) {
+      if (language == null || language == 'jpn') {
+        return current.copyWith(learningShowTranslation: trackId != null);
+      }
+      return current.copyWith(
+        learningTranslationLanguage: language,
+        learningShowTranslation: true,
+      );
+    });
   }
 
   Future<void> _persistSettings(Settings Function(Settings) update) =>
       ref.read(settingsControllerProvider.notifier).persist(update);
+
+  void _syncSubtitleScale(double scale) {
+    if (_appliedSubtitleScale == scale || _pendingSubtitleScale == scale) {
+      return;
+    }
+    _pendingSubtitleScale = scale;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _pendingSubtitleScale != scale) return;
+      unawaited(() async {
+        try {
+          await _engine.setSubtitleScale(scale);
+          if (mounted) _appliedSubtitleScale = scale;
+        } on PlaybackFailure {
+          // Bitmap subtitles and a reduced platform backend may not expose a
+          // live text scale. The persisted preference still applies when a
+          // capable text renderer becomes active.
+        } finally {
+          if (_pendingSubtitleScale == scale) _pendingSubtitleScale = null;
+        }
+      }());
+    });
+  }
 
   Future<void> _setAndRememberSubtitleDelay(
     Duration delay, {
@@ -764,11 +806,37 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   Future<void> _shiftSubtitleDelay(Duration delta) =>
       _setAndRememberSubtitleDelay(_latest.primarySubtitleDelay + delta);
 
+  bool get _learningInteractionHasFocus {
+    final context = FocusManager.instance.primaryFocus?.context;
+    if (context == null) return false;
+    return context.findAncestorWidgetOfExactType<_LearningWord>() != null ||
+        context.findAncestorWidgetOfExactType<_DefinitionPanel>() != null;
+  }
+
   KeyEventResult _onKeyEvent(FocusNode _, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
     final key = event.logicalKey;
+    final directional =
+        key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.arrowDown;
+    final learningInteractionFocused = _learningInteractionHasFocus;
+    final directionalNavigation =
+        _latest.subtitleRendering == SubtitleRendering.learning &&
+        (event.deviceType != ui.KeyEventDeviceType.keyboard ||
+            MediaQuery.maybeNavigationModeOf(context) ==
+                NavigationMode.directional);
+    if (directional && (learningInteractionFocused || directionalNavigation)) {
+      // Let Flutter's directional focus traversal own D-pad events, plus arrow
+      // keys once a keyboard user has explicitly focused a learning token.
+      return KeyEventResult.ignored;
+    }
+    if (learningInteractionFocused && key == LogicalKeyboardKey.space) {
+      return KeyEventResult.ignored;
+    }
     if (key == LogicalKeyboardKey.space) {
       _run(_togglePlayback);
     } else if (key == LogicalKeyboardKey.arrowLeft) {
@@ -838,6 +906,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
             builder: (context, state) {
               final snapshot = state.data ?? _idleSnapshot;
               _latest = snapshot;
+              if (snapshot.phase != PlaybackPhase.idle &&
+                  snapshot.phase != PlaybackPhase.opening) {
+                _syncSubtitleScale(learningSettings.subtitleTextScale);
+              }
               _maybePrepareLearningTracks(snapshot, learningSettings);
               return _PlayerStage(
                 snapshot: snapshot,
@@ -1896,21 +1968,29 @@ class _SeekBarState extends State<_SeekBar> {
   }
 }
 
-const _subtitleShadows = [
-  Shadow(color: Color(0xF0000000), blurRadius: 3, offset: Offset(0, 1)),
-  Shadow(color: Colors.black, blurRadius: 9),
-  Shadow(color: Colors.black, blurRadius: 16),
+const _subtitleShadows = <Shadow>[
+  Shadow(color: Color(0xF2000000), offset: Offset(-1.6, -1.6), blurRadius: 1),
+  Shadow(color: Color(0xF2000000), offset: Offset(0, -1.8), blurRadius: 1),
+  Shadow(color: Color(0xF2000000), offset: Offset(1.6, -1.6), blurRadius: 1),
+  Shadow(color: Color(0xF2000000), offset: Offset(-1.8, 0), blurRadius: 1),
+  Shadow(color: Color(0xF2000000), offset: Offset(1.8, 0), blurRadius: 1),
+  Shadow(color: Color(0xF2000000), offset: Offset(-1.6, 1.6), blurRadius: 1),
+  Shadow(color: Color(0xF2000000), offset: Offset(0, 1.8), blurRadius: 1),
+  Shadow(color: Color(0xF2000000), offset: Offset(1.6, 1.6), blurRadius: 1),
+  Shadow(color: Color(0xB3000000), offset: Offset(0, 2.5), blurRadius: 4),
 ];
 
 const _maximumUnknownSubtitleCueDuration = Duration(seconds: 20);
 const _learningCueAlignmentTolerance = Duration(milliseconds: 750);
 const _maximumRememberedLearningCues = 512;
+const _learningSubtitleFontSize = 48.0;
 
 TextStyle _learningMainTextStyle(double scale) => TextStyle(
   fontFamily: ShiruTokens.fontFamilyStats,
-  fontSize: 32 * scale,
-  fontWeight: FontWeight.w600,
-  height: 1.12,
+  fontSize: _learningSubtitleFontSize * scale,
+  fontWeight: FontWeight.w700,
+  height: 1.08,
+  letterSpacing: 0.1,
   color: Colors.white,
   shadows: _subtitleShadows,
 );
@@ -1949,7 +2029,10 @@ class _LearningSubtitleOverlayState
   Future<List<LearningToken>>? _tokens;
   LearningToken? _selected;
   Future<List<LearningDefinition>>? _definitions;
+  final Map<String, FocusNode> _tokenFocusNodes = {};
+  List<LearningToken> _focusableTokens = const [];
   bool _pausedForCue = false;
+  bool _definitionFocusWithin = false;
 
   @override
   void initState() {
@@ -1961,6 +2044,14 @@ class _LearningSubtitleOverlayState
   void didUpdateWidget(_LearningSubtitleOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
     _rememberCurrentCues();
+  }
+
+  @override
+  void dispose() {
+    for (final node in _tokenFocusNodes.values) {
+      node.dispose();
+    }
+    super.dispose();
   }
 
   void _rememberCurrentCues() {
@@ -1982,18 +2073,15 @@ class _LearningSubtitleOverlayState
     }
   }
 
-  bool _visible(SubtitleCue? cue, Duration delay, String? selectedTrack) {
+  bool _visible(SubtitleCue? cue, String? selectedTrack) {
     if (cue == null || cue.generation != widget.snapshot.generation) {
       return false;
     }
     if (selectedTrack == null || cue.trackId != selectedTrack) return false;
-    final position = widget.snapshot.position - delay;
-    if (position < cue.start) return false;
-    final reportedEnd = cue.end;
-    final effectiveEnd = reportedEnd == null || reportedEnd < cue.start
-        ? cue.start + _maximumUnknownSubtitleCueDuration
-        : reportedEnd;
-    return position <= effectiveEnd;
+    // MPV's sub-text/secondary-sub-text transition is the authoritative
+    // active-cue signal. Comparing it to Flutter's independently sampled
+    // position stream made every new line wait for the next position tick.
+    return cue.plainText.isNotEmpty;
   }
 
   MediaTrack? _trackFor(SubtitleCue cue) => widget.snapshot.subtitleTracks
@@ -2096,6 +2184,14 @@ class _LearningSubtitleOverlayState
 
   void _ensureAnalyzed(SubtitleCue cue) {
     if (_analyzedCue == cue.identity) return;
+    final retiredFocusNodes = _tokenFocusNodes.values.toList();
+    _tokenFocusNodes.clear();
+    _focusableTokens = const [];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final node in retiredFocusNodes) {
+        node.dispose();
+      }
+    });
     _analyzedCue = cue.identity;
     _selected = null;
     _definitions = null;
@@ -2105,8 +2201,45 @@ class _LearningSubtitleOverlayState
         .tokenizeJapanese(cue.plainText);
   }
 
-  void _lookup(LearningToken token) {
-    if (!token.lookupable || token.key == _selected?.key) return;
+  FocusNode _focusNodeFor(LearningToken token) => _tokenFocusNodes.putIfAbsent(
+    token.key,
+    () => FocusNode(debugLabel: 'Learning word ${token.surface}'),
+  );
+
+  KeyEventResult _onTokenKeyEvent(String tokenKey, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    final direction = switch (key) {
+      LogicalKeyboardKey.arrowLeft => -1,
+      LogicalKeyboardKey.arrowRight => 1,
+      _ => 0,
+    };
+    final index = _focusableTokens.indexWhere((token) => token.key == tokenKey);
+    if (direction != 0) {
+      final target = index + direction;
+      if (index >= 0 && target >= 0 && target < _focusableTokens.length) {
+        _focusNodeFor(_focusableTokens[target]).requestFocus();
+      }
+      return KeyEventResult.handled;
+    }
+    final activates =
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.space ||
+        key == LogicalKeyboardKey.gameButtonA ||
+        key == LogicalKeyboardKey.select;
+    if (activates && index >= 0) {
+      if (event is KeyDownEvent) _toggleLookup(_focusableTokens[index]);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  void _showLookup(LearningToken token) {
+    if (!token.lookupable) return;
+    if (token.key == _selected?.key) return;
     setState(() {
       _selected = token;
       _definitions = ref.read(languageLearningToolsProvider).lookup(token);
@@ -2117,16 +2250,30 @@ class _LearningSubtitleOverlayState
     });
   }
 
+  void _toggleLookup(LearningToken token) {
+    if (token.key == _selected?.key) {
+      _closeLookup();
+    } else {
+      _showLookup(token);
+    }
+  }
+
+  void _closeLookup() {
+    if (_selected == null) return;
+    setState(() {
+      _selected = null;
+      _definitions = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final showPrimary = _visible(
       widget.primary,
-      widget.snapshot.primarySubtitleDelay,
       widget.snapshot.selectedPrimarySubtitle,
     );
     final showSecondary = _visible(
       widget.secondary,
-      widget.snapshot.secondarySubtitleDelay,
       widget.snapshot.selectedSecondarySubtitle,
     );
     if (!showPrimary && !showSecondary) return const SizedBox.shrink();
@@ -2134,11 +2281,12 @@ class _LearningSubtitleOverlayState
     final translations = _translationCues(showPrimary, showSecondary, japanese);
     final translationText = translations.map((cue) => cue.plainText).join('\n');
     if (japanese != null) _ensureAnalyzed(japanese);
-    final scale = widget.settings.learningSubtitleScale;
+    final scale = widget.settings.subtitleTextScale;
     final showMissingTrackNotice =
         japanese == null &&
         !_hasSelectedJapaneseTextTrack &&
         widget.preparationResult?.ready != true;
+    final definition = _selected;
     return Align(
       key: const ValueKey('learning-subtitle-overlay'),
       alignment: Alignment.bottomCenter,
@@ -2154,92 +2302,152 @@ class _LearningSubtitleOverlayState
             maxWidth: 1080,
             maxHeight: MediaQuery.sizeOf(context).height * 0.58,
           ),
-          child: SingleChildScrollView(
-            reverse: true,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_selected != null) ...[
-                  _DefinitionPanel(
-                    token: _selected!,
-                    definitions: _definitions,
-                    status:
-                        ref.watch(learningDictionaryStatusProvider).value ??
-                        ref
-                            .read(languageLearningToolsProvider)
-                            .dictionaryStatus,
-                  ),
-                  const SizedBox(height: ShiruTokens.space3),
-                ],
-                if (showMissingTrackNotice) ...[
-                  _LearningNotice(
-                    message: widget.preparationPending
-                        ? 'Finding Japanese text for this episode…'
-                        : widget.preparationResult?.message ?? 'Japanese text is not selected. Open subtitle settings to choose a text track or add a sidecar.',
-                    loading: widget.preparationPending,
-                    onRetry: widget.preparationResult?.ready == false
-                        ? () => unawaited(widget.onRetryPreparation())
-                        : null,
-                  ),
-                  const SizedBox(height: ShiruTokens.space2),
-                ],
-                if (japanese != null)
-                  FutureBuilder<List<LearningToken>>(
-                    future: _tokens,
-                    builder: (context, state) {
-                      if (state.hasError) {
-                        return Text(
-                          japanese.plainText,
-                          textAlign: TextAlign.center,
-                          style: _learningMainTextStyle(scale),
-                        );
-                      }
-                      final tokens = state.data;
-                      if (tokens == null) {
-                        return const Padding(
-                          padding: EdgeInsets.all(ShiruTokens.space2),
-                          child: SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        );
-                      }
-                      return Wrap(
-                        alignment: WrapAlignment.center,
-                        crossAxisAlignment: WrapCrossAlignment.end,
-                        spacing: 1,
-                        runSpacing: ShiruTokens.space2,
-                        children: [
-                          for (final token in tokens)
-                            _LearningWord(
-                              token: token,
-                              selected: token.key == _selected?.key,
-                              settings: widget.settings,
-                              scale: scale,
-                              onLookup: () => _lookup(token),
+          child: Focus(
+            skipTraversal: true,
+            canRequestFocus: false,
+            onFocusChange: (focused) {
+              _definitionFocusWithin = focused;
+              if (!focused) _closeLookup();
+            },
+            child: HoverRegion(
+              onExit: () {
+                if (!_definitionFocusWithin) _closeLookup();
+              },
+              builder: (context, _) => SingleChildScrollView(
+                reverse: true,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedSwitcher(
+                      duration: MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : ShiruTokens.motionQuick,
+                      reverseDuration: MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : ShiruTokens.motionQuick,
+                      switchInCurve: ShiruTokens.easeSettle,
+                      switchOutCurve: Curves.easeOut,
+                      transitionBuilder: (child, animation) => FadeTransition(
+                        opacity: animation,
+                        child: SizeTransition(
+                          sizeFactor: animation,
+                          alignment: Alignment.bottomCenter,
+                          child: child,
+                        ),
+                      ),
+                      child: definition == null
+                          ? const SizedBox.shrink(
+                              key: ValueKey('learning-definition-empty'),
+                            )
+                          : Padding(
+                              key: ValueKey(
+                                'learning-definition-${definition.key}',
+                              ),
+                              padding: const EdgeInsets.only(
+                                bottom: ShiruTokens.space3,
+                              ),
+                              child: _DefinitionPanel(
+                                token: definition,
+                                definitions: _definitions,
+                                onClose: _closeLookup,
+                                status:
+                                    ref
+                                        .watch(learningDictionaryStatusProvider)
+                                        .value ??
+                                    ref
+                                        .read(languageLearningToolsProvider)
+                                        .dictionaryStatus,
+                              ),
                             ),
-                        ],
-                      );
-                    },
-                  ),
-                if (translationText.isNotEmpty &&
-                    widget.settings.learningShowTranslation) ...[
-                  const SizedBox(height: ShiruTokens.space2),
-                  Text(
-                    translationText,
-                    key: const ValueKey('learning-translation'),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontFamily: ShiruTokens.fontFamilyStats,
-                      fontSize: 20 * scale,
-                      fontWeight: FontWeight.w500,
-                      height: 1.25,
-                      color: const Color(0xFFD6E5FF),
-                      shadows: _subtitleShadows,
                     ),
-                  ),
-                ],
-              ],
+                    if (showMissingTrackNotice) ...[
+                      _LearningNotice(
+                        message: widget.preparationPending
+                            ? 'Finding Japanese text for this episode…'
+                            : widget.preparationResult?.message ?? 'Japanese text is not selected. Open subtitle settings to choose a text track or add a sidecar.',
+                        loading: widget.preparationPending,
+                        onRetry: widget.preparationResult?.ready == false
+                            ? () => unawaited(widget.onRetryPreparation())
+                            : null,
+                      ),
+                      const SizedBox(height: ShiruTokens.space2),
+                    ],
+                    if (japanese != null)
+                      FutureBuilder<List<LearningToken>>(
+                        future: _tokens,
+                        builder: (context, state) {
+                          if (state.hasError) {
+                            return Text(
+                              japanese.plainText,
+                              textAlign: TextAlign.center,
+                              style: _learningMainTextStyle(scale),
+                            );
+                          }
+                          final tokens = state.data;
+                          if (tokens == null) {
+                            return const Padding(
+                              padding: EdgeInsets.all(ShiruTokens.space2),
+                              child: SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            );
+                          }
+                          final lookupableTokens = tokens
+                              .where((token) => token.lookupable)
+                              .toList();
+                          _focusableTokens = lookupableTokens;
+                          return FocusTraversalGroup(
+                            policy: OrderedTraversalPolicy(),
+                            child: Wrap(
+                              alignment: WrapAlignment.center,
+                              crossAxisAlignment: WrapCrossAlignment.end,
+                              spacing: 0,
+                              runSpacing: ShiruTokens.space1,
+                              children: [
+                                for (final (index, token) in tokens.indexed)
+                                  FocusTraversalOrder(
+                                    order: NumericFocusOrder(index.toDouble()),
+                                    child: _LearningWord(
+                                      token: token,
+                                      focusNode: _focusNodeFor(token),
+                                      selected: token.key == _selected?.key,
+                                      settings: widget.settings,
+                                      scale: scale,
+                                      onHighlight: () => _showLookup(token),
+                                      onActivate: () => _toggleLookup(token),
+                                      onKeyEvent: (_, event) =>
+                                          _onTokenKeyEvent(token.key, event),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    if (translationText.isNotEmpty &&
+                        widget.settings.learningShowTranslation) ...[
+                      const SizedBox(height: ShiruTokens.space2),
+                      Text(
+                        translationText,
+                        key: const ValueKey('learning-translation'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontFamily: ShiruTokens.fontFamilyStats,
+                          fontSize: _learningSubtitleFontSize * scale,
+                          fontWeight: FontWeight.w700,
+                          height: 1.16,
+                          letterSpacing: 0.05,
+                          color: const Color(0xFFF8F8F8),
+                          shadows: _subtitleShadows,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -2251,17 +2459,23 @@ class _LearningSubtitleOverlayState
 class _LearningWord extends StatelessWidget {
   const _LearningWord({
     required this.token,
+    required this.focusNode,
     required this.selected,
     required this.settings,
     required this.scale,
-    required this.onLookup,
+    required this.onHighlight,
+    required this.onActivate,
+    required this.onKeyEvent,
   });
 
   final LearningToken token;
+  final FocusNode focusNode;
   final bool selected;
   final Settings settings;
   final double scale;
-  final VoidCallback onLookup;
+  final VoidCallback onHighlight;
+  final VoidCallback onActivate;
+  final FocusOnKeyEventCallback onKeyEvent;
 
   @override
   Widget build(BuildContext context) {
@@ -2282,16 +2496,10 @@ class _LearningWord extends StatelessWidget {
     final content = AnimatedContainer(
       key: ValueKey('learning-token-${token.key}'),
       duration: ShiruTokens.motionQuick,
-      padding: EdgeInsets.symmetric(
-        horizontal: token.lookupable ? 4 : 0,
-        vertical: 2,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 1),
       decoration: BoxDecoration(
         color: selected ? const Color(0x593F8CFF) : Colors.transparent,
         borderRadius: BorderRadius.circular(ShiruTokens.radiusBase),
-        border: Border.all(
-          color: selected ? ShiruTokens.accentVeryLight : Colors.transparent,
-        ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -2304,10 +2512,10 @@ class _LearningWord extends StatelessWidget {
                       reading,
                       style: TextStyle(
                         fontFamily: ShiruTokens.fontFamilyStats,
-                        fontSize: 13.5 * scale,
-                        fontWeight: FontWeight.w500,
+                        fontSize: 15.5 * scale,
+                        fontWeight: FontWeight.w700,
                         height: 1.05,
-                        color: const Color(0xFFD6E5FF),
+                        color: const Color(0xFFF5F5F5),
                         shadows: _subtitleShadows,
                       ),
                     )
@@ -2315,13 +2523,9 @@ class _LearningWord extends StatelessWidget {
             ),
           Text(
             main,
-            style: _learningMainTextStyle(scale).copyWith(
-              color: selected
-                  ? Colors.white
-                  : token.lookupable
-                  ? ShiruTokens.highlight
-                  : const Color(0xFFE8E8E8),
-            ),
+            style: _learningMainTextStyle(
+              scale,
+            ).copyWith(color: selected ? ShiruTokens.highlight : Colors.white),
           ),
           if (showRomaji && (showKanji || showKana))
             SizedBox(
@@ -2332,8 +2536,8 @@ class _LearningWord extends StatelessWidget {
                       token.romanization!,
                       style: TextStyle(
                         fontFamily: ShiruTokens.fontFamilyStats,
-                        fontSize: 12.5 * scale,
-                        fontWeight: FontWeight.w500,
+                        fontSize: 14 * scale,
+                        fontWeight: FontWeight.w600,
                         height: 1.05,
                         letterSpacing: 0.15,
                         color: const Color(0xFFD0D0D0),
@@ -2347,11 +2551,23 @@ class _LearningWord extends StatelessWidget {
     if (!token.lookupable) return content;
     return Semantics(
       button: true,
+      selected: selected,
       label: 'Look up ${token.surface}',
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => onLookup(),
-        child: GestureDetector(onTap: onLookup, child: content),
+      child: Focus(
+        focusNode: focusNode,
+        onKeyEvent: onKeyEvent,
+        onFocusChange: (focused) {
+          if (focused) onHighlight();
+        },
+        child: HoverRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: onHighlight,
+          builder: (context, _) => GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onActivate,
+            child: content,
+          ),
+        ),
       ),
     );
   }
@@ -2362,98 +2578,144 @@ class _DefinitionPanel extends StatelessWidget {
     required this.token,
     required this.definitions,
     required this.status,
+    required this.onClose,
   });
 
   final LearningToken token;
   final Future<List<LearningDefinition>>? definitions;
   final LearningDictionaryStatus? status;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
-      key: const ValueKey('learning-definition-panel'),
-      duration: ShiruTokens.motionQuick,
-      width: double.infinity,
-      constraints: const BoxConstraints(maxHeight: 210),
-      padding: const EdgeInsets.all(ShiruTokens.space3),
-      decoration: BoxDecoration(
-        color: const Color(0xF51A1D20),
-        border: Border.all(color: const Color(0x33FFFFFF)),
-        borderRadius: BorderRadius.circular(ShiruTokens.radiusBase),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+    final reading = [
+      if (token.reading != null) token.reading!,
+      if (token.romanization != null) token.romanization!,
+    ].join('  ·  ');
+    return Center(
+      child: AnimatedContainer(
+        key: const ValueKey('learning-definition-panel'),
+        duration: ShiruTokens.motionQuick,
+        constraints: const BoxConstraints(maxWidth: 640, maxHeight: 160),
+        padding: const EdgeInsets.fromLTRB(
+          ShiruTokens.space3,
+          ShiruTokens.space2,
+          ShiruTokens.space2,
+          ShiruTokens.space3,
+        ),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xD9202327), Color(0xC7121416)],
+          ),
+          border: Border.all(color: const Color(0x4D5D93EA)),
+          borderRadius: BorderRadius.circular(ShiruTokens.radiusPanel),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 24,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
               children: [
                 Text(
                   token.baseForm ?? token.surface,
-                  style: Theme.of(context).textTheme.titleLarge
-                      ?.copyWith(color: ShiruTokens.highlight),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: ShiruTokens.highlight,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-                if (token.reading != null)
-                  Text(
-                    [
-                      token.reading!,
-                      if (token.romanization != null) token.romanization!,
-                    ].join('  ·  '),
-                    style: Theme.of(context).textTheme.bodySmall
-                        ?.copyWith(color: ShiruTokens.accentVeryLight),
+                if (reading.isNotEmpty) ...[
+                  const SizedBox(width: ShiruTokens.space2),
+                  Flexible(
+                    child: Text(
+                      reading,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall
+                          ?.copyWith(color: ShiruTokens.accentVeryLight),
+                    ),
                   ),
-                if (token.partOfSpeech != null)
-                  Text(
-                    token.partOfSpeech!,
-                    style: Theme.of(context).textTheme.labelSmall,
+                ],
+                if (token.partOfSpeech != null) ...[
+                  const SizedBox(width: ShiruTokens.space2),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: const Color(0x242F75E4),
+                      borderRadius: BorderRadius.circular(
+                        ShiruTokens.radiusPill,
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: ShiruTokens.space2,
+                        vertical: 2,
+                      ),
+                      child: Text(
+                        token.partOfSpeech!,
+                        style: Theme.of(context).textTheme.labelSmall
+                            ?.copyWith(color: ShiruTokens.textLight),
+                      ),
+                    ),
                   ),
+                ],
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Close definition',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 30,
+                    height: 30,
+                  ),
+                  padding: EdgeInsets.zero,
+                  onPressed: onClose,
+                  icon: const Icon(Icons.close_rounded, size: 17),
+                ),
               ],
             ),
-          ),
-          const SizedBox(width: ShiruTokens.space3),
-          Expanded(
-            flex: 5,
-            child: status?.installed != true
-                ? Text(
-                    'Install JMdict in Settings → Learning for offline English definitions.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  )
-                : FutureBuilder<List<LearningDefinition>>(
-                    future: definitions,
-                    builder: (context, state) {
-                      if (state.connectionState != ConnectionState.done) {
-                        return const LinearProgressIndicator(minHeight: 2);
-                      }
-                      final entries = state.data ?? const [];
-                      if (entries.isEmpty) {
-                        return Text(
-                          'No matching JMdict entry found for this word.',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        );
-                      }
-                      return SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            for (final entry in entries.take(3))
-                              Padding(
-                                padding: const EdgeInsets.only(
-                                  bottom: ShiruTokens.space2,
-                                ),
-                                child: Text(
-                                  entry.definitions.take(3).join(' · '),
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
+            const SizedBox(height: ShiruTokens.space2),
+            if (status?.installed != true)
+              Text(
+                'Install JMdict in Settings → Learning for offline English definitions.',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              )
+            else
+              FutureBuilder<List<LearningDefinition>>(
+                future: definitions,
+                builder: (context, state) {
+                  if (state.connectionState != ConnectionState.done) {
+                    return const LinearProgressIndicator(minHeight: 2);
+                  }
+                  final entries = state.data ?? const [];
+                  if (entries.isEmpty) {
+                    return Text(
+                      'No matching JMdict entry found for this word.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    );
+                  }
+                  final summary = entries
+                      .take(3)
+                      .expand((entry) => entry.definitions.take(2))
+                      .join('  ·  ');
+                  return Text(
+                    summary,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(color: ShiruTokens.text, height: 1.3),
+                  );
+                },
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -2676,7 +2938,12 @@ class _SubtitlePanelState extends ConsumerState<_SubtitlePanel> {
   }
 
   void _selectSecondary(String? id) {
-    setState(() => _secondary = id);
+    setState(() {
+      _secondary = id;
+      if (_rendering == SubtitleRendering.learning) {
+        _showTranslation = id != null;
+      }
+    });
     widget.onSecondary(id);
   }
 

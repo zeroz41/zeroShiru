@@ -29,6 +29,7 @@ class _FakeEngine implements MediaEngine {
   final secondCues = StreamController<SubtitleCue>.broadcast();
   final metricEvents = StreamController<PlayerMetrics>.broadcast();
   final calls = <String>[];
+  final subtitleScales = <double>[];
   PlaybackSnapshot openState = const PlaybackSnapshot(
     generation: 1,
     phase: PlaybackPhase.ready,
@@ -114,6 +115,10 @@ class _FakeEngine implements MediaEngine {
     Duration delay, {
     bool secondary = false,
   }) async => calls.add('delay:${delay.inMilliseconds}:$secondary');
+
+  @override
+  Future<void> setSubtitleScale(double scale) async =>
+      subtitleScales.add(scale);
 
   @override
   Future<String> addSubtitle(
@@ -224,6 +229,33 @@ void main() {
     expect(engine.calls.where((call) => call.startsWith('seek:')), [
       'seek:600',
     ]);
+  });
+
+  testWidgets('subtitle text size updates the active renderer live', (
+    tester,
+  ) async {
+    final engine = _FakeEngine();
+    const source = PlayerFile(
+      name: 'Episode 03.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      _app(const PlayerPage(initialSource: source), _FakeBackend(engine)),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(PlayerPage)),
+    );
+    await container
+        .read(settingsControllerProvider.notifier)
+        .persist((settings) => settings.copyWith(subtitleTextScale: 1.4));
+    await tester.pump();
+    await tester.pump();
+
+    expect(engine.subtitleScales, isNotEmpty);
+    expect(engine.subtitleScales.last, 1.4);
   });
 
   testWidgets('a new player clears Learning rendering retained by the engine', (
@@ -640,6 +672,47 @@ void main() {
       hasLength(2),
     );
 
+    await tester.ensureVisible(find.text('Secondary track'));
+    await tester.tap(find.text('Secondary track'));
+    await tester.pumpAndSettle();
+    final offChoice = find.ancestor(
+      of: find.text('Off'),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is CheckedPopupMenuItem,
+      ),
+    );
+    await tester.tap(offChoice);
+    await tester.pumpAndSettle();
+    expect(engine.calls.last, 'subtitle:null:true');
+    expect(
+      (await ProviderScope.containerOf(tester.element(find.byType(PlayerPage)))
+              .read(settingsControllerProvider.future))
+          .learningShowTranslation,
+      isFalse,
+    );
+    expect(
+      tester
+          .widget<FilterChip>(
+            find.byKey(const ValueKey('learning-layer-translation')),
+          )
+          .selected,
+      isFalse,
+    );
+
+    final englishPairings = engine.calls
+        .where((call) => call == 'subtitle:sub-en:true')
+        .length;
+    await tester.ensureVisible(find.text('Styled'));
+    await tester.tap(find.text('Styled'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Learning'));
+    await tester.pumpAndSettle();
+    expect(
+      engine.calls.where((call) => call == 'subtitle:sub-en:true'),
+      hasLength(englishPairings),
+    );
+    expect(engine.calls.last, 'subtitle:null:true');
+
     await tester.tapAt(const Offset(10, 400));
     await tester.pumpAndSettle();
     expect(find.text('Subtitles'), findsNothing);
@@ -843,7 +916,7 @@ void main() {
   testWidgets('learning mode renders native tokens and local definitions', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(420, 320);
+    tester.view.physicalSize = const Size(1000, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
@@ -854,7 +927,11 @@ void main() {
       url: 'https://cdn.example/video.mkv',
     );
     await tester.pumpWidget(
-      _app(const PlayerPage(initialSource: source), backend),
+      _app(
+        const PlayerPage(initialSource: source),
+        backend,
+        settings: const Settings(subtitleTextScale: 1.2),
+      ),
     );
     await tester.pump();
     await tester.pump();
@@ -898,11 +975,110 @@ void main() {
     expect(find.text('日本語'), findsOneWidget);
     expect(find.text('にほんご'), findsOneWidget);
     expect(find.text('Study Japanese'), findsOneWidget);
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('learning-translation')))
+          .style
+          ?.fontSize,
+      closeTo(57.6, 0.01),
+    );
+    expect(
+      tester.widget<Text>(find.text('日本語')).style?.fontSize,
+      closeTo(57.6, 0.01),
+    );
+    expect(
+      find.byKey(const ValueKey('learning-definition-panel')),
+      findsNothing,
+    );
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(find.text('日本語')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Japanese language'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('learning-definition-panel')),
+      findsOneWidget,
+    );
+    await mouse.moveTo(
+      tester.getCenter(find.byKey(const ValueKey('learning-definition-panel'))),
+    );
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('learning-definition-panel')),
+      findsOneWidget,
+    );
+
+    await mouse.moveTo(Offset.zero);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('learning-definition-panel')),
+      findsNothing,
+    );
+    await mouse.removePointer();
+
+    final tokenInteraction = find.byWidgetPredicate(
+      (widget) =>
+          widget is Focus &&
+          widget.focusNode?.debugLabel == 'Learning word 日本語',
+    );
+    final tokenGesture = find
+        .descendant(
+          of: tokenInteraction,
+          matching: find.byType(GestureDetector),
+        )
+        .first;
+    Focus.of(tester.element(tokenGesture)).requestFocus();
+    await tester.pump();
+    await tester.pump();
+    expect(
+      FocusManager.instance.primaryFocus,
+      same(tester.widget<Focus>(tokenInteraction).focusNode),
+    );
+    expect(
+      find.byKey(const ValueKey('learning-definition-panel')),
+      findsOneWidget,
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pumpAndSettle();
+    expect(engine.calls.where((call) => call.startsWith('seek:')), isEmpty);
+    final secondTokenInteraction = find.byWidgetPredicate(
+      (widget) =>
+          widget is Focus &&
+          widget.focusNode?.debugLabel == 'Learning word 勉強する',
+    );
+    expect(
+      FocusManager.instance.primaryFocus,
+      same(tester.widget<Focus>(secondTokenInteraction).focusNode),
+    );
+    expect(find.text('勉強する'), findsNWidgets(2));
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('learning-definition-panel')),
+      findsNothing,
+    );
 
     await tester.tap(find.text('日本語'));
-    await tester.pump();
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.textContaining('Japanese language'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('learning-definition-panel')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('learning-definition-panel')),
+        matching: find.byIcon(Icons.close_rounded),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('learning-definition-panel')),
+      findsNothing,
+    );
   });
 
   testWidgets(
@@ -1108,6 +1284,67 @@ void main() {
     },
   );
 
+  testWidgets('an MPV cue transition is not delayed by a stale position tick', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(640, 480);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final engine = _FakeEngine();
+    const source = PlayerFile(
+      name: 'Episode 04.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      _app(const PlayerPage(initialSource: source), _FakeBackend(engine)),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    engine.states.add(
+      const PlaybackSnapshot(
+        generation: 1,
+        phase: PlaybackPhase.playing,
+        // The position stream can still be behind when MPV has already
+        // activated the cue on its own clock.
+        position: Duration(milliseconds: 9400),
+        duration: Duration(minutes: 24),
+        subtitleRendering: SubtitleRendering.learning,
+        subtitleTracks: [
+          MediaTrack(id: 'sub-ja', kind: TrackKind.subtitle, language: 'ja'),
+        ],
+        selectedPrimarySubtitle: 'sub-ja',
+      ),
+    );
+    engine.cues.add(
+      const SubtitleCue(
+        generation: 1,
+        trackId: 'sub-ja',
+        start: Duration(seconds: 10),
+        end: Duration(seconds: 14),
+        plainText: '日本語を勉強する',
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('日本語'), findsOneWidget);
+
+    engine.cues.add(
+      const SubtitleCue(
+        generation: 1,
+        trackId: 'sub-ja',
+        start: Duration.zero,
+        end: Duration.zero,
+        plainText: '',
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('日本語'), findsNothing);
+  });
+
   testWidgets('an open-ended cue cannot survive a distant forward seek', (
     tester,
   ) async {
@@ -1151,6 +1388,17 @@ void main() {
     await tester.pump();
     expect(find.text('日本語'), findsOneWidget);
 
+    // MediaKitEngine clears both active cues synchronously before committing
+    // a discontinuous seek.
+    engine.cues.add(
+      const SubtitleCue(
+        generation: 1,
+        trackId: 'sub-ja',
+        start: Duration.zero,
+        end: Duration.zero,
+        plainText: '',
+      ),
+    );
     engine.states.add(
       const PlaybackSnapshot(
         generation: 1,

@@ -205,6 +205,7 @@ abstract interface class MediaEngine {
   Future<void> selectSubtitle(String? trackId, {bool secondary = false});
   Future<void> setSubtitleRendering(SubtitleRendering mode);
   Future<void> setSubtitleDelay(Duration delay, {bool secondary = false});
+  Future<void> setSubtitleScale(double scale);
 
   /// Loads and selects an external text/bitmap subtitle supported by libmpv,
   /// returning the stable track id exposed by the current player generation.

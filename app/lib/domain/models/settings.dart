@@ -25,6 +25,7 @@ class Settings {
     this.audioLanguage = 'jpn',
     this.subtitleLanguage = 'eng',
     this.playerSubtitleMode = 'standard',
+    this.subtitleTextScale = 1.0,
     // Language learning (only used by the explicit Learning subtitle mode)
     this.learningTranslationLanguage = 'eng',
     this.learningAutoSelectTracks = true,
@@ -34,7 +35,6 @@ class Settings {
     this.learningShowRomaji = false,
     this.learningShowTranslation = true,
     this.learningPauseOnLookup = false,
-    this.learningSubtitleScale = 1.0,
     // Sources
     this.rssQuality = '1080',
     this.rssAutoplay = true,
@@ -80,11 +80,16 @@ class Settings {
   /// episode behave like the episode the user just left.
   final String playerSubtitleMode;
 
+  /// One visual scale for every text-subtitle surface. Native libass and the
+  /// interactive Learning overlay both consume this value so switching modes
+  /// never silently changes the user's preferred reading size.
+  final double subtitleTextScale;
+
   /// The subtitle language that should influence release ordering. Learning
   /// pairs Japanese text with its own translation language, while Off should
   /// not reward a release for subtitles the user has disabled.
   String? get releaseSubtitleLanguage => switch (playerSubtitleMode) {
-    'learning' => learningTranslationLanguage,
+    'learning' => learningShowTranslation ? learningTranslationLanguage : null,
     'off' => null,
     _ => subtitleLanguage,
   };
@@ -100,7 +105,6 @@ class Settings {
   final bool learningShowRomaji;
   final bool learningShowTranslation;
   final bool learningPauseOnLookup;
-  final double learningSubtitleScale;
 
   final String rssQuality;
   final bool rssAutoplay;
@@ -148,6 +152,7 @@ class Settings {
     String? audioLanguage,
     String? subtitleLanguage,
     String? playerSubtitleMode,
+    double? subtitleTextScale,
     String? learningTranslationLanguage,
     bool? learningAutoSelectTracks,
     bool? learningAutoFetchJapaneseSubtitles,
@@ -156,7 +161,6 @@ class Settings {
     bool? learningShowRomaji,
     bool? learningShowTranslation,
     bool? learningPauseOnLookup,
-    double? learningSubtitleScale,
     String? rssQuality,
     bool? rssAutoplay,
     String? torrentSort,
@@ -192,6 +196,7 @@ class Settings {
       audioLanguage: audioLanguage ?? this.audioLanguage,
       subtitleLanguage: subtitleLanguage ?? this.subtitleLanguage,
       playerSubtitleMode: playerSubtitleMode ?? this.playerSubtitleMode,
+      subtitleTextScale: subtitleTextScale ?? this.subtitleTextScale,
       learningTranslationLanguage:
           learningTranslationLanguage ?? this.learningTranslationLanguage,
       learningAutoSelectTracks:
@@ -206,8 +211,6 @@ class Settings {
           learningShowTranslation ?? this.learningShowTranslation,
       learningPauseOnLookup:
           learningPauseOnLookup ?? this.learningPauseOnLookup,
-      learningSubtitleScale:
-          learningSubtitleScale ?? this.learningSubtitleScale,
       rssQuality: rssQuality ?? this.rssQuality,
       rssAutoplay: rssAutoplay ?? this.rssAutoplay,
       torrentSort: torrentSort ?? this.torrentSort,

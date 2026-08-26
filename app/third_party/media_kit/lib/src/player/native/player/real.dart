@@ -1918,33 +1918,37 @@ class NativePlayer extends PlatformPlayer {
       if (prop.ref.name.cast<Utf8>().toDartString() == 'sub-text' &&
           prop.ref.format == generated.mpv_format.MPV_FORMAT_NODE) {
         final value = prop.ref.data.cast<generated.mpv_node>();
-        if (value.ref.format == generated.mpv_format.MPV_FORMAT_STRING) {
-          final text = value.ref.u.string.cast<Utf8>().toDartString();
-          state = state.copyWith(
-            subtitle: [
-              text,
-              state.subtitle[1],
-            ],
-          );
-          if (!subtitleController.isClosed) {
-            subtitleController.add(state.subtitle);
-          }
+        // MPV publishes MPV_FORMAT_NONE when the active cue ends. Forward an
+        // empty string as a real state transition; otherwise widget subtitle
+        // renderers are forced to guess cue expiry from a separately sampled
+        // playback clock and every line can appear a position-tick late.
+        final text = value.ref.format == generated.mpv_format.MPV_FORMAT_STRING
+            ? value.ref.u.string.cast<Utf8>().toDartString()
+            : '';
+        state = state.copyWith(
+          subtitle: [
+            text,
+            state.subtitle[1],
+          ],
+        );
+        if (!subtitleController.isClosed) {
+          subtitleController.add(state.subtitle);
         }
       }
       if (prop.ref.name.cast<Utf8>().toDartString() == 'secondary-sub-text' &&
           prop.ref.format == generated.mpv_format.MPV_FORMAT_NODE) {
         final value = prop.ref.data.cast<generated.mpv_node>();
-        if (value.ref.format == generated.mpv_format.MPV_FORMAT_STRING) {
-          final text = value.ref.u.string.cast<Utf8>().toDartString();
-          state = state.copyWith(
-            subtitle: [
-              state.subtitle[0],
-              text,
-            ],
-          );
-          if (!subtitleController.isClosed) {
-            subtitleController.add(state.subtitle);
-          }
+        final text = value.ref.format == generated.mpv_format.MPV_FORMAT_STRING
+            ? value.ref.u.string.cast<Utf8>().toDartString()
+            : '';
+        state = state.copyWith(
+          subtitle: [
+            state.subtitle[0],
+            text,
+          ],
+        );
+        if (!subtitleController.isClosed) {
+          subtitleController.add(state.subtitle);
         }
       }
       if (prop.ref.name.cast<Utf8>().toDartString() == 'eof-reached' &&

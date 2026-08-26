@@ -110,8 +110,8 @@ collapsed **Advanced** section. Persistent settings also control:
 - automatic Japanese + translation text-track pairing without changing audio;
 - automatic retrieval of a missing Japanese episode track;
 - Japanese surface text, furigana, romaji, and translated line visibility;
-- pause on the first hover/tap lookup in each cue; and
-- learning-overlay scale, independent of normal subtitles.
+- pause on the first highlighted, focused, or tapped lookup in each cue; and
+- one subtitle text-size preference shared live with normal text subtitles.
 
 Before a manual track is chosen, playback infers missing language tags from
 track titles and prefers main/full-dialogue tracks over commentary, forced,
@@ -120,8 +120,12 @@ the configured translation language while the user's audio preference remains
 authoritative; explicit compatible subtitle picks win on subsequent
 preparation.
 
-Hovering or tapping a token highlights it and opens its local base form,
-reading, romanization, part of speech, and English definitions. The overlay
+Hovering a token highlights it and opens a compact local definition popover on
+pointer devices. Touch keeps tap-to-select, while keyboard and TV-style input
+uses focus as the highlight and Select/Enter as the toggle. Moving the pointer
+or focus outside the learning surface fades the definition away; tapping the
+same token or the close button also dismisses it. The popover includes the
+base form, reading, romanization, part of speech, and English definitions. The overlay
 records a bounded cue history and pairs all translated cues whose adjusted
 time windows overlap the current Japanese cue, including a small boundary
 tolerance and each track's delay. It never pairs unrelated lines merely because
@@ -131,10 +135,20 @@ not a claim that independently authored lines are literal one-to-one
 translations. Timeline dragging previews locally and commits one seek; the
 player clears stale cue work during that seek and refreshes both active lines
 after MPV settles. Unknown-duration cues also have a bounded display fallback.
-The active Japanese line is bottom-anchored over the video with
-furigana above each word, optional romaji below it, and the translation on its
-own line. Only lookup results and actionable warnings use a surface; ordinary
-subtitles are rendered without a persistent opaque panel.
+The active Japanese line is bottom-anchored over the video with clean outlined
+type, furigana above each word, optional romaji below it, and a full-size
+outlined translation on its own line. MPV's active cue transition is the only
+display clock; the overlay does not re-gate a new cue against Flutter's more
+coarsely sampled position stream. Only lookup results and actionable warnings
+use a surface; ordinary subtitles are rendered without a persistent opaque
+panel.
+
+Learning track intent is persistent rather than session-only. Choosing **Off**
+for the secondary track also turns off the Translation layer, so switching to
+Styled and back, opening another episode, or restarting the app does not
+silently restore English. Choosing a secondary language again re-enables the
+layer and makes that language the future automatic-pairing preference. Release
+ranking also stops rewarding translated subtitles while that layer is off.
 
 When several Jimaku files name the requested episode, the matcher compares the
 torrent name and resolved video filename with normalized release groups,
@@ -172,7 +186,7 @@ The native mpv ecosystem also demonstrates the value of keeping text and
 timing at the player boundary: [mpvacious](https://github.com/Ajatt-Tools/mpvacious)
 uses primary/secondary mpv subtitles for sentence mining, while
 [Voracious](https://github.com/rsimmons/voracious) pairs dual subtitles,
-furigana, and hover definitions.
+furigana, and click definitions.
 
 An opt-in artifact test can validate a downloaded release end to end with
 `ZEROSHIRU_JMDICT_ARCHIVE=/path/JMdict_english.zip flutter test

@@ -31,6 +31,7 @@ extension SettingsJson on Settings {
     'audioLanguage': audioLanguage,
     'subtitleLanguage': subtitleLanguage,
     'playerSubtitleMode': playerSubtitleMode,
+    'subtitleTextScale': subtitleTextScale,
     'learningTranslationLanguage': learningTranslationLanguage,
     'learningAutoSelectTracks': learningAutoSelectTracks,
     'learningAutoFetchJapaneseSubtitles': learningAutoFetchJapaneseSubtitles,
@@ -39,7 +40,6 @@ extension SettingsJson on Settings {
     'learningShowRomaji': learningShowRomaji,
     'learningShowTranslation': learningShowTranslation,
     'learningPauseOnLookup': learningPauseOnLookup,
-    'learningSubtitleScale': learningSubtitleScale,
     'rssQuality': rssQuality,
     'rssAutoplay': rssAutoplay,
     'torrentSort': torrentSort,
@@ -103,6 +103,13 @@ Settings settingsFromJson(Map<String, dynamic> json) {
       defaults.playerSubtitleMode,
       const {'standard', 'learning', 'off'},
     ),
+    // `learningSubtitleScale` was the pre-unification key. Read it once as a
+    // migration fallback, then persist only the shared setting.
+    subtitleTextScale: _choiceDouble(
+      json['subtitleTextScale'] ?? json['learningSubtitleScale'],
+      defaults.subtitleTextScale,
+      const [0.85, 1.0, 1.2, 1.4],
+    ),
     learningTranslationLanguage: _choiceString(
       json['learningTranslationLanguage'],
       defaults.learningTranslationLanguage,
@@ -153,11 +160,6 @@ Settings settingsFromJson(Map<String, dynamic> json) {
     learningPauseOnLookup: _bool(
       json['learningPauseOnLookup'],
       defaults.learningPauseOnLookup,
-    ),
-    learningSubtitleScale: _choiceDouble(
-      json['learningSubtitleScale'],
-      defaults.learningSubtitleScale,
-      const [0.85, 1.0, 1.2, 1.4],
     ),
     rssQuality: _string(json['rssQuality'], defaults.rssQuality),
     rssAutoplay: _bool(json['rssAutoplay'], defaults.rssAutoplay),

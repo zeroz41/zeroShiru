@@ -50,6 +50,9 @@ void main() {
       expect(find.text('Extensions'), findsOneWidget);
       expect(find.text('Downloads'), findsOneWidget);
       expect(find.text('Debrid'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('settings-section-player')));
+      await tester.pumpAndSettle();
+      expect(find.text('Subtitle text size'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('settings-section-debrid')));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const ValueKey('debrid-api-key')));

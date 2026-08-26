@@ -84,10 +84,15 @@ void main() {
       learningTranslationLanguage: 'de',
       playerSubtitleMode: 'learning',
     );
+    const learningWithoutTranslation = Settings(
+      learningShowTranslation: false,
+      playerSubtitleMode: 'learning',
+    );
     const off = Settings(playerSubtitleMode: 'off');
 
     expect(standard.releaseSubtitleLanguage, 'es');
     expect(learning.releaseSubtitleLanguage, 'de');
+    expect(learningWithoutTranslation.releaseSubtitleLanguage, isNull);
     expect(off.releaseSubtitleLanguage, isNull);
   });
 }
