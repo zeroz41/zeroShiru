@@ -1,0 +1,138 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:zero/app/theme/theme.dart';
+import 'package:zero/app/theme/tokens.dart';
+import 'package:zero/app/widgets/accent_pill.dart';
+import 'package:zero/app/widgets/ambient_background.dart';
+import 'package:zero/app/widgets/empty_state.dart';
+import 'package:zero/app/widgets/poster_card.dart';
+import 'package:zero/app/widgets/skeleton.dart';
+import 'package:zero/app/widgets/titled_rail.dart';
+
+Widget _app(Widget child) {
+  return MaterialApp(
+    theme: buildZeroTheme(),
+    home: Scaffold(body: child),
+  );
+}
+
+void main() {
+  testWidgets('PosterCard builds and shows its title', (tester) async {
+    var tapped = false;
+    await tester.pumpWidget(
+      _app(
+        Center(
+          child: PosterCard(
+            title: 'Sousou no Frieren',
+            onTap: () => tapped = true,
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Sousou no Frieren'), findsOneWidget);
+    await tester.tap(find.byType(PosterCard));
+    await tester.pump(ZeroTokens.motion);
+    expect(tapped, isTrue);
+  });
+
+  testWidgets('PosterCard shows the AIRING badge when airing', (tester) async {
+    await tester.pumpWidget(
+      _app(
+        const Center(child: PosterCard(title: 'Ongoing Show', airing: true)),
+      ),
+    );
+    expect(find.text('AIRING'), findsOneWidget);
+    expect(tester.hasRunningAnimations, isFalse);
+  });
+
+  testWidgets('PosterCard presents compact metadata below the title', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        const Center(
+          child: PosterCard(
+            title: 'A scored series',
+            metadata: [
+              PosterCardMetadata('2026 · TV'),
+              PosterCardMetadata('84%', icon: Icons.star_rounded),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('2026 · TV'), findsOneWidget);
+    expect(find.text('84%'), findsOneWidget);
+    expect(find.byIcon(Icons.star_rounded), findsOneWidget);
+  });
+
+  testWidgets('TitledRail renders its header and children', (tester) async {
+    await tester.pumpWidget(
+      _app(
+        TitledRail(
+          title: 'Trending Now',
+          children: [
+            for (var i = 0; i < 5; i++)
+              SizedBox(key: ValueKey('cell-$i'), width: 146, height: 180),
+          ],
+        ),
+      ),
+    );
+    expect(find.text('Trending Now'), findsOneWidget);
+    expect(find.byKey(const ValueKey('cell-0')), findsOneWidget);
+    expect(find.byKey(const ValueKey('cell-4')), findsOneWidget);
+  });
+
+  testWidgets('AccentPill renders both variants and taps', (tester) async {
+    var taps = 0;
+    await tester.pumpWidget(
+      _app(
+        Column(
+          children: [
+            AccentPill(
+              label: 'Watch Now',
+              icon: Icons.play_arrow_rounded,
+              onTap: () => taps++,
+            ),
+            const AccentPill(
+              label: 'View Details',
+              variant: AccentPillVariant.alt,
+            ),
+          ],
+        ),
+      ),
+    );
+    expect(find.text('Watch Now'), findsOneWidget);
+    expect(find.text('View Details'), findsOneWidget);
+    await tester.tap(find.text('Watch Now'));
+    await tester.pump(ZeroTokens.motion);
+    expect(taps, 1);
+  });
+
+  testWidgets('EmptyState shows glyph and message', (tester) async {
+    await tester.pumpWidget(
+      _app(const EmptyState(message: 'Nothing here yet')),
+    );
+    expect(find.text('Nothing here yet'), findsOneWidget);
+    final icon = tester.widget<Icon>(find.byType(Icon));
+    expect(icon.size, ZeroTokens.emptyGlyphSize);
+    expect(icon.color, ZeroTokens.emptyGlyphColor);
+  });
+
+  testWidgets('Skeleton shimmers without settling', (tester) async {
+    await tester.pumpWidget(_app(const Skeleton(width: 100, height: 40)));
+    expect(find.byType(Skeleton), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 500));
+  });
+
+  testWidgets('AmbientBackground paints statically around its child', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_app(const AmbientBackground(child: Text('page'))));
+    expect(find.text('page'), findsOneWidget);
+    // Static: nothing scheduled, nothing animating.
+    expect(tester.hasRunningAnimations, isFalse);
+  });
+}

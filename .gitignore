@@ -1,13 +1,41 @@
-# OS
+# Operating systems and editors
 .DS_Store
+*.iml
+*.ipr
+*.iws
+.idea/
+.vscode/
+*.swp
+.history/
 
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins*
+.pub/
+.pub-cache/
+.widget_preview/
+**/doc/api/
+**/ios/Flutter/.last_build_id
 
-# Build output
-target/
+# Generated output
+/build/
+/coverage/
+/target/
 **/build/
 **/gen/android/app/build/
+docs/architecture/*.html
+docs/architecture/*.pdf
 
-# Signing / secrets
+# Android Studio output
+/android/app/debug/
+/android/app/profile/
+/android/app/release/
+
+# Flutter symbolication and obfuscation
+app.*.symbols
+app.*.map.json
+
+# Signing and secrets
 **/*.der
 **/*.pem
 **/*.keystore
@@ -16,14 +44,11 @@ target/
 .env.*
 !.env.example
 
-# IDE
-.idea
-*.iml
-
-# Flutter / Dart
-.dart_tool/
-.flutter-plugins*
-app/build/
-app/.metadata
-docs/architecture/*.html
-docs/architecture/*.pdf
+# Miscellaneous generated files
+*.class
+*.log
+*.pyc
+.build/
+.buildlog/
+.swiftpm/
+migrate_working_dir/

@@ -1,15 +1,15 @@
 ---
-title: "zeroShiru Flutter Rewrite"
+title: "Zero Flutter Rewrite"
 subtitle: "Pure Dart/Flutter architecture — no Rust, no web runtime"
 author: "Repository-specific engineering report"
-date: "23 August 2026"
+date: "26 August 2026"
 lang: en-US
 toc: true
 toc-depth: 3
 numbersections: true
 ---
 
-> **Decision in one sentence:** zeroShiru is rewritten as a single pure-Dart Flutter application — Impeller renders the UI, libmpv (via pinned `media_kit`) renders video into a Flutter external texture, and every service that used to live in Rust (debrid, sources, torrenting, the loopback Range gateway) is reimplemented in Dart behind stable ports. No Rust, no Cargo, no Node, no WebView, anywhere.
+> **Decision in one sentence:** Zero is rewritten as a single pure-Dart Flutter application — Impeller renders the UI, libmpv (via pinned `media_kit`) renders video into a Flutter external texture, and every service that used to live in Rust (debrid, sources, torrenting, the loopback Range gateway) is reimplemented in Dart behind stable ports. No Rust, no Cargo, no Node, no WebView, anywhere.
 
 This revision supersedes the earlier report that recommended retaining a Rust core during migration. That recommendation is **overruled by product decision**: zero Rust is a hard goal, and the rewrite happens clean-slate on the `flutter` branch. The old Tauri/Svelte application remains intact on `zeroz-dev`/`redo` as the working fallback and as the reference for behavior; it is not kept buildable on this branch.
 
@@ -36,7 +36,7 @@ The earlier report kept Rust because torrent/debrid behavior was live-proven and
 
 1. **Debrid is the primary daily path.** Debrid providers are plain HTTPS APIs — Dart's HTTP stack reproduces them directly, and the existing Rust/JS tests become Dart golden fixtures. This is a low-risk port.
 2. **The Range gateway is just an HTTP server.** `dart:io`'s `HttpServer` on loopback serves `206`/`Content-Range` semantics fine; piece-aware prioritization is application logic, not systems programming.
-3. **Torrenting is scoped, not general.** zeroShiru needs a streaming-focused subset (magnet resolution, tracker announce, sequential/priority piece scheduling, seeking), not a general-purpose BitTorrent library. That subset is tractable in Dart on `dart:io` sockets, and it lands *after* the app is already useful in debrid mode. External mpv handoff remains the escape hatch throughout.
+3. **Torrenting is scoped, not general.** Zero needs a streaming-focused subset (magnet resolution, tracker announce, sequential/priority piece scheduling, seeking), not a general-purpose BitTorrent library. That subset is tractable in Dart on `dart:io` sockets, and it lands *after* the app is already useful in debrid mode. External mpv handoff remains the escape hatch throughout.
 
 The honest cost: the pure-Dart torrent engine is the riskiest single component and is deliberately sequenced last. Everything else in the app does not wait for it.
 
@@ -64,26 +64,34 @@ The core rule is **dependency inversion around capability ports**. Features depe
 ## Repository layout
 
 ```text
-zeroShiru/
-  app/                       # the Flutter package — the whole application
-    lib/
-      app/                   # bootstrap, router, theme, l10n
-      domain/                # models and ports; no Flutter imports
-      application/           # Riverpod controllers and use cases
-      features/
-        home/ search/ details/ player/
-        downloads/ watch_together/ settings/ learning/
-      infrastructure/
-        network/ debrid/ sources/ torrent/
-        database/ tracking/ media/ platform/
-      l10n/                  # ARB inputs
-    test/                    # unit + widget tests, golden fixtures
-    integration_test/
-    linux/ windows/ macos/ android/
+Zero/
+  pubspec.yaml               # one root Flutter application package
+  lib/
+    app/                     # composition, router, shell, theme, shared UI
+    features/                # feature-owned presentation
+    application/             # Riverpod state, controllers, use cases
+    domain/                  # models, pure policy, and ports; no Flutter
+    infrastructure/         # HTTP, database, media, and platform adapters
+  test/                      # unit + widget tests
+  assets/                    # fonts and brand assets
+  third_party/               # narrowly patched native packages
+  linux/ windows/ macos/ android/ # current generated platform runners
+  tizen/ webos/                   # future runners, added when buildable
   fixtures/                  # cross-language golden vectors (from old Rust/JS tests)
   docs/architecture/
-  platforms/                 # later: tizen/ webos/ vendor runners + media adapters
 ```
+
+Because there is one shippable application, nesting the Flutter package under
+an extra `app/` directory adds ceremony without creating a real boundary. If a
+second independently versioned package is introduced later, adopt a Dart pub
+workspace with explicit `apps/` and `packages/` members instead of recreating an
+implicit half-monorepo.
+
+Platform runner directories stay at the application root, following Flutter's
+generated-project convention. The future Samsung runner is `tizen/`, not
+`tizenos/` and not `platforms/tizen/`. It should be generated by Flutter-Tizen
+only when the Tizen media and plugin adapters are ready, rather than represented
+by an empty directory that cannot build.
 
 ## Boundary rules
 
@@ -149,7 +157,7 @@ The `MediaEngine` port keeps the rest of the app ignorant of media_kit, so a for
 
 ## Configuration and diagnostics
 
-Versioned application profile, not a personal `mpv.conf`: safe automatic hwdec with software fallback, `embeddedfonts=yes`, libass on, mpv input/OSC disabled (Flutter owns controls), mpv log callback routed into redacted structured logs, resume handled by zeroShiru, user scripts off, protocol allow-list (file, https, loopback gateway). Confirm hardware decode via `hwdec-current`; never infer it.
+Versioned application profile, not a personal `mpv.conf`: safe automatic hwdec with software fallback, `embeddedfonts=yes`, libass on, mpv input/OSC disabled (Flutter owns controls), mpv log callback routed into redacted structured logs, resume handled by Zero, user scripts off, protocol allow-list (file, https, loopback gateway). Confirm hardware decode via `hwdec-current`; never infer it.
 
 A developer diagnostics panel exposes: `hwdec-current`, `avsync`, drop/mistimed/vsync counters, cache state, display vs media FPS, texture size/resize count, open- and seek-to-first-frame. This makes "it stutters" falsifiable.
 

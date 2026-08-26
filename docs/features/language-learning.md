@@ -1,6 +1,6 @@
 # Language-learning subtitles
 
-zeroShiru's learning mode is a native, interactive subtitle surface for
+Zero's learning mode is a native, interactive subtitle surface for
 Japanese audio. It is deliberately separate from the normal subtitle renderer:
 **Standard** remains the default and preserves ASS typesetting through
 libmpv/libass; **Learning** trades authored positioning for selectable words,
@@ -43,9 +43,9 @@ configured learning language as secondary. Returning to Styled mode clears the
 secondary track and restores the configured main subtitle language. The
 current implementation starts with English and can pair the other translation
 languages already supported by the player's subtitle preferences. Translation
-is authored subtitle text; zeroShiru does not generate or rewrite it.
+is authored subtitle text; Zero does not generate or rewrite it.
 
-If the release has no Japanese text track, zeroShiru can resolve one from
+If the release has no Japanese text track, Zero can resolve one from
 [Jimaku](https://jimaku.cc) using the AniList ID and episode already carried by
 the playback request. Jimaku requires a free personal API key, stored in the OS
 keyring. Direct ASS, SSA, SRT, and WebVTT files are supported, as are bounded
@@ -98,7 +98,7 @@ and is used under the [EDRDG licence](https://www.edrdg.org/edrdg/licence.html).
 The segmenter is the BSD-licensed
 [TinySegmenter Dart port](https://pub.dev/packages/tiny_segmenter_dart), based
 on Taku Kudo's TinySegmenter. Distribution notices live in
-[`app/THIRD_PARTY_NOTICES.md`](../../app/THIRD_PARTY_NOTICES.md).
+[`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md).
 
 ## User controls
 
@@ -189,11 +189,11 @@ uses primary/secondary mpv subtitles for sentence mining, while
 furigana, and click definitions.
 
 An opt-in artifact test can validate a downloaded release end to end with
-`ZEROSHIRU_JMDICT_ARCHIVE=/path/JMdict_english.zip flutter test
+`ZERO_JMDICT_ARCHIVE=/path/JMdict_english.zip flutter test
 test/learning/live_jmdict_artifact_test.dart`.
 
 The read-only Jimaku integration can be checked against the current catalog
-with `ZEROSHIRU_LIVE_JIMAKU_KEY='…' flutter test
+with `ZERO_LIVE_JIMAKU_KEY='…' flutter test
 test/learning/live_jimaku_test.dart`.
 
 The first version intentionally does not include OCR, machine translation,

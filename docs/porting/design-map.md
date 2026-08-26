@@ -1,4 +1,4 @@
-# zeroShiru → Flutter DESIGN PORTING MAP
+# Zero → Flutter DESIGN PORTING MAP
 
 Surveyed from the `redo` branch (HEAD `d342051b`). Design pass reference: commit `f15bf68e` "cinema hero, accent pills, titled rails, soft posters, ambient depth". Base CSS framework was **quartermoon 1.2.3** overridden by `frontend/common/css.css`.
 
@@ -30,10 +30,10 @@ this document.
 | Token | Value | Hex | Role |
 |---|---|---|---|
 | `--accent-color` | `#e5204c` | **#E5204C** | Seekbar progress + thumb only. User-overridable raw hex. |
-| `--tertiary-color` | hsl(217,77%,54%) | **#2F75E4** | The real UI accent. Hero CTA, active nav pill, rail title tab, focus ring, favourite glow, ambient bloom, card hover ring. |
-| `--tertiary-color-light` | hsl(217,77%,64%) | **#5D93EA** | CTA hover, rail-tab gradient top. |
-| `--tertiary-color-very-light` | hsl(217,77%,79%) | **#A0C0F3** | Active nav icon color, section-title hover. |
-| `--tertiary-color-dim` | hsl(217,77%,30%) | **#123F87** | Link hover. |
+| `--tertiary-color` | hsl(217,77%,54%) | **#7C3AED** | The real UI accent. Hero CTA, active nav pill, rail title tab, focus ring, favourite glow, ambient bloom, card hover ring. |
+| `--tertiary-color-light` | hsl(217,77%,64%) | **#9F67FF** | CTA hover, rail-tab gradient top. |
+| `--tertiary-color-very-light` | hsl(217,77%,79%) | **#C4B5FD** | Active nav icon color, section-title hover. |
+| `--tertiary-color-dim` | hsl(217,77%,30%) | **#4C1D95** | Link hover. |
 | `--highlight-color` | `#FFFFFF` | **#FFFFFF** | On-accent text, active nav label. |
 | `--dark-color` | hsl(220,10%,10%) | **#17191C** | Page base. |
 | `--dark-color-light` | hsl(220,10%,14%) | **#202327** | Panels, toast bg. |
@@ -352,7 +352,7 @@ AudioLabel (sub/dub/CC chip) · CustomDropdown (multi-select include/exclude) ·
 ## 5. Porting rules
 
 1. **rem ≠ 16px** — multiply by 7.68/8.0/9.92 by window width, times uiScale.
-2. **Two accents**: #E5204C is only the seekbar; #2F75E4 is the app's color.
+2. **Two accents**: #E5204C is only the seekbar; #7C3AED is the app's color.
 3. **Elevation = rim + bloom**, bloom tinted per-poster from `coverImage.color`.
 4. **Shadows never animate** — stack a pre-painted shadow layer and animate its opacity.
 5. **Hover only on pointer devices** — must not exist on touch.

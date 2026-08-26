@@ -25,19 +25,15 @@ jobs:
           cache: true
 
       - name: Pub get
-        working-directory: app
         run: flutter pub get
 
       - name: Format check
-        working-directory: app
         run: dart format --output=none --set-exit-if-changed lib test
 
       - name: Analyze
-        working-directory: app
         run: flutter analyze
 
       - name: Unit & widget tests
-        working-directory: app
         run: flutter test
 
   build-linux:
@@ -58,5 +54,4 @@ jobs:
           cache: true
 
       - name: Build release
-        working-directory: app
         run: flutter build linux --release

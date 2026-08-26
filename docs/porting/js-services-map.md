@@ -1,4 +1,4 @@
-# zeroShiru → Flutter: Application/Service Layer Porting Map
+# Zero → Flutter: Application/Service Layer Porting Map
 
 Surveyed from the `redo` branch (commit d342051b era). Old code reference: `git show redo:<path>`.
 
@@ -9,9 +9,9 @@ Repo layout there: `frontend/common/` (Svelte 4 + JS app, ~36k lines), `hosts/ta
 ## 1. bridge.js contract (the host seam)
 
 Contract file: `frontend/common/modules/bridge.js` (173 lines, the **only** file in `common/` allowed to touch a host API).
-Host implementation: `hosts/tauri/src/bridge.js` (injects `window.torrent/common/android/desktop/shiru`), backed by `hosts/tauri/src/commands.rs`, `torrent.rs`, `debrid.rs`, `desktop.rs`, `graphics.rs`, `net.rs`, `updater.rs`, `diagnostics.rs`.
+Host implementation: `hosts/tauri/src/bridge.js` (injects `window.torrent/common/android/desktop/zero`), backed by `hosts/tauri/src/commands.rs`, `torrent.rs`, `debrid.rs`, `desktop.rs`, `graphics.rs`, `net.rs`, `updater.rs`, `diagnostics.rs`.
 
-Mechanism: page-side namespaces are `{...defaults, ...window.X}` merges over noops, so a host may implement its surface incrementally. Commands go down as Tauri `invoke`; state comes back on **three** event channels: `shiru://torrent`, `shiru://debrid`, `shiru://update`, plus `shiru://protocol` and `shiru://exit-intent`. In Dart this becomes 5 capability ports (Torrent, Common/Host, Debrid, Desktop, Diagnostics) + 3 broadcast streams.
+Mechanism: page-side namespaces are `{...defaults, ...window.X}` merges over noops, so a host may implement its surface incrementally. Commands go down as Tauri `invoke`; state comes back on **three** event channels: `zero://torrent`, `zero://debrid`, `zero://update`, plus `zero://protocol` and `zero://exit-intent`. In Dart this becomes 5 capability ports (Torrent, Common/Host, Debrid, Desktop, Diagnostics) + 3 broadcast streams.
 
 ### TORRENT (`window.torrent` → `torrent_*` commands)
 | Member | Payload / shape | Purpose |
@@ -25,7 +25,7 @@ Mechanism: page-side namespaces are `{...defaults, ...window.X}` merges over noo
 | `launchExternal(current)` | file object | open in configured external player (mpv/VLC, signed URL via stdin) |
 | `updateSettings(settings)` | same shape as `start` | live settings apply |
 
-Events (all on `shiru://torrent` as `{type, data}`, fanned out by type): `stats` (full snapshot `{current, staging[], seeding[], completed[]}`), `currentStats` (`{numPeers, uploadSpeed, downloadSpeed}`), `progress`, `files` (`PlayerFile[]`), `loaded` (`{infoHash, name, magnet}`), `notify` (`{type:'info'|'warn'|'error', message}`), `externalReady`, `externalWatched` (last two are single-slot listeners, re-registered per playback).
+Events (all on `zero://torrent` as `{type, data}`, fanned out by type): `stats` (full snapshot `{current, staging[], seeding[], completed[]}`), `currentStats` (`{numPeers, uploadSpeed, downloadSpeed}`), `progress`, `files` (`PlayerFile[]`), `loaded` (`{infoHash, name, magnet}`), `notify` (`{type:'info'|'warn'|'error', message}`), `externalReady`, `externalWatched` (last two are single-slot listeners, re-registered per playback).
 
 `PlayerFile` (from `crates/torrent/src/session.rs:115`) — **the universal player file shape, also produced by debrid**: `{ infoHash, fileHash, torrent_name, name, type (mime), size, path, url }`.
 
@@ -36,9 +36,9 @@ Events (all on `shiru://torrent` as `{type, data}`, fanned out by type): `stats`
 `minimize`, `showSplash`, `toast`, `onBackButton`, `hideStatusBar`, `setSystemStyle('LIGHT'|'DARK')`, `requestFileAccess()→{granted}`, `launchExternal`.
 
 ### DESKTOP (`window.desktop`)
-`exit`, `getGraphics()→{mode,modes[],overridden}`, `setGraphics(mode)`, `isMinimized`, `isFullScreen`, `onMinimize`, `onFullScreen`, `hideWindow`, `showAndFocus`, `onExitIntent`, `openDevTools`, `setUnreadCount(n)`, `setDiscordRPC(mode)`, `setPresence(data)`, `clearPresence()`, `getYouTube()`. (Plus `window.shiruWindow.minimize/toggleMaximize`.)
+`exit`, `getGraphics()→{mode,modes[],overridden}`, `setGraphics(mode)`, `isMinimized`, `isFullScreen`, `onMinimize`, `onFullScreen`, `hideWindow`, `showAndFocus`, `onExitIntent`, `openDevTools`, `setUnreadCount(n)`, `setDiscordRPC(mode)`, `setPresence(data)`, `clearPresence()`, `getYouTube()`. (Plus `window.zeroWindow.minimize/toggleMaximize`.)
 
-### DEBRID (`window.shiru.debrid`)
+### DEBRID (`window.zero.debrid`)
 | Member | Shape |
 |---|---|
 | `services` | inlined plain data `[{id, title, check_adds_magnets, …}]`; providers are `alldebrid, premiumize, realdebrid, torbox` (`crates/debrid/src/manager.rs:18`) |
@@ -49,14 +49,14 @@ Events (all on `shiru://torrent` as `{type, data}`, fanned out by type): `stats`
 | `remember(service, apiKey, hash, state)` | record a proven answer |
 | `resolve(service, apiKey, magnet, episode\|null)` | → `{hash, name, files: PlayerFile[], target}` |
 | `forgetResolved(service, apiKey, hash)` | invalidate a dead direct link |
-| `onEvent(cb)` | `shiru://debrid` `{type, data}` |
+| `onEvent(cb)` | `zero://debrid` `{type, data}` |
 
 Debrid events: `availability` `{hash, state, name, requestId}`, `checking` `{active, requestId}`, `outage` `{kind, message, requestId}`, `settled` `{requestId}`. Error `kind` vocabulary (contract with `outageNotice`): `auth | network | timeout | not-cached | unavailable | rejected | service`.
 
-### DIAGNOSTICS (`window.shiru.diagnostics`)
+### DIAGNOSTICS (`window.zero.diagnostics`)
 `snapshot()` → host health or null; `setLogFilter(filter)` (tracing directives).
 
-**Dead/unused**: `window.shiru.routePlayback` / `route_playback` is exposed by the host but not called anywhere in `frontend/` — don't port.
+**Dead/unused**: `window.zero.routePlayback` / `route_playback` is exposed by the host but not called anywhere in `frontend/` — don't port.
 
 ---
 
@@ -74,7 +74,7 @@ Debrid events: `availability` `{hash, state, name, requestId}`, `checking` `{act
 - **`util.js` (927)** — `defaults` (all settings), `generalDefaults`, `historyDefaults`, `debounce`, `uniqueStore`, `chunks`, `matchKeys`, `matchPhrase`, `isValidNumber`, `getRandomInt`, `sleep`, `codes` (HTTP messages), `fontRx`/`matroskaRx`/`matchFontFiles`/`matchSubtitleFiles`.
 - **`networking.js` (308)** — `status` writable (`'online'|'offline'|…`), `printError`, `isOffline`/`isAnilistDown` outage checkers (debounced/backoff via `newOutageChecker`), external-fetch wrapper, ping `https://cp.cloudflare.com/generate_204`.
 - **`navigation.js` (641)** — `page` and `modal` state machines (HOME/PLAYER/SEARCH/SETTINGS/WATCH_TOGETHER/TORRENT_MANAGER; modals ANIME_DETAILS/TORRENT_MENU/…), `playPage`, `drawerOpen`; deep-link entry points.
-- **`protocol.js` (71)** — `shiru://` and `magnet:` routing; registers `onTorrentRequest`, `onProviderToken`, `onRequestPage`, `onRequestModal`, `onRequestPlay`, `onLobbyInvite`.
+- **`protocol.js` (71)** — `zero://` and `magnet:` routing; registers `onTorrentRequest`, `onProviderToken`, `onRequestPage`, `onRequestModal`, `onRequestPlay`, `onLobbyInvite`.
 - **`sections.js` (418)** — home-rail definitions/`SectionsManager`, search state store (`search`, `key`, `hasNextPage`), `lastSearched` history; subscribes to `swrRevalidated`.
 - **`rss.js` (259)** — `RSSManager` (`getMediaForRSS`, `getContentChanged`, `findNewReleasesAndNotify`, `structureResolveResults`), RSS→media resolution for home feeds, cached in `QUERY_RSS`. Feeds are nyaa/sukebei (base64'd).
 - **`episodes.js` (153)** — `episodesList`, MAL episode metadata via **Jikan** `https://api.jikan.moe/v4/anime/{id}/episodes` and Kitsu `https://kitsu.app/api/edge/anime/{id}/episodes`, with a `Bottleneck` limiter (60/min, 3 concurrent, minTime 333ms) and retry-after handling.
@@ -127,7 +127,7 @@ See §3.
 ## 3. AniList / MyAnimeList integration
 
 ### Auth
-- **AniList** (`modules/settings.js` + `providers/anilist/anilist.js`): implicit-grant. Host opens the browser (`COMMON.openURI`/`linkAccount`); the token returns via `shiru://` protocol (`onProviderToken`) **or** by the user pasting the redirect URL (a global `paste` listener parses `access_token=…&token_type`). Token stored in `localStorage['ALviewer']` as `{token, expires_in, reauth, viewer}`. No refresh exists — expiry is set to **now + 335 days** (≈1 month before AniList's ~12mo), `validateToken()` marks `reauth` and toasts "Login Expiring"/"Expired" (hard expiry = `expires_in + 30d`).
+- **AniList** (`modules/settings.js` + `providers/anilist/anilist.js`): implicit-grant. Host opens the browser (`COMMON.openURI`/`linkAccount`); the token returns via `zero://` protocol (`onProviderToken`) **or** by the user pasting the redirect URL (a global `paste` listener parses `access_token=…&token_type`). Token stored in `localStorage['ALviewer']` as `{token, expires_in, reauth, viewer}`. No refresh exists — expiry is set to **now + 335 days** (≈1 month before AniList's ~12mo), `validateToken()` marks `reauth` and toasts "Login Expiring"/"Expired" (hard expiry = `expires_in + 30d`).
 - **MyAnimeList** (`providers/myanimelist/myanimelist.js`): OAuth2 PKCE, `client_id` base64'd in source (`bb7dce3881d803e656c45aa39bda9ccc`, app type "other", plain code_verifier stashed in `sessionStorage[state]`). Token exchange `POST https://myanimelist.net/v1/oauth2/token` (`authorization_code`, then `refresh_token`). Stored in `localStorage['MALviewer']` as `{token, refresh, refresh_in, reauth, viewer}`; `refresh_in` = **now + 14 days**; `refreshMalToken()` handles rotation, failure sets `reauth`.
 - **Multi-profile**: `profiles` store (localStorage), `swapProfiles()` moves the active viewer in/out, `cache.abandon(viewerId)` re-points the user IndexedDB, then `location.reload()`. `sync` store lists profile ids that receive mirrored writes.
 

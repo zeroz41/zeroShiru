@@ -1,7 +1,7 @@
 name: Bug Report
 description: Unwanted behavior that was not intended or expected.
 labels: ["bug"]
-assignees: RockinChaos
+assignees: []
 body:
   - type: dropdown
     id: operating_system
@@ -90,11 +90,9 @@ body:
       label: Checklist
       description: Let's make sure this report is valid.
       options:
-        - label: I am using the [latest stable](https://github.com/RockinChaos/Shiru/releases/latest) version of the app.
+        - label: I am using the [latest stable](https://github.com/zeroz41/zero/releases/latest) version of the app.
           required: true
-        - label: I have searched the [frequently asked questions](https://github.com/RockinChaos/Shiru/wiki/faq) and did not find a fix.
-          required: true
-        - label: I have searched the [issue tracker](https://github.com/RockinChaos/Shiru/issues) and confirmed this bug has not been reported before.
+        - label: I have searched the [issue tracker](https://github.com/zeroz41/zero/issues) and confirmed this bug has not been reported before.
           required: true
         - label: I ticked all of these boxes without actually reading them.
           required: false

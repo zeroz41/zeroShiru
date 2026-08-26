@@ -125,10 +125,10 @@ Origin: TorBox wedges per-endpoint, accepting connections and never answering, f
 **External player** (`session.rs`):
 - Discovery: configured `playerPath` wins; otherwise on Linux try `mpv`, `vlc`, `gst-play-1.0`, `ffplay` via `$PATH` + executable bit.
 - **mpv special-case**: args `--force-media-title=<title>` + `--playlist=-`, URL written to **stdin** then the pipe closed — argv leaks a signed URL to process viewers and mpv's derived title leaks it in the window title. Other players get the historical one-argument contract.
-- Title: `zeroShiru — <name>`, control chars stripped, 160 chars max; `zeroShiru` when empty.
+- Title: `Zero — <name>`, control chars stripped, 160 chars max; `Zero` when empty.
 - Emits `ExternalReady` on spawn, `ExternalWatched(seconds)` on exit.
 
-**Session lifecycle / roles**: `Current | Staging | Seeding | Completed`, persisted to `<downloadDir>/shiru-session.json` (name, size, magnet, date, role, incomplete). Ops: `stream`, `stage`, `unload`, `untrack` (deletes data), `complete` (stop seeding, keep files), `rescan`, `set_playback`, `launch_external`, `update_settings`, `scrape`. Demotion: finished → Seeding (seeding limit enforced by evicting the **highest-ratio** torrent to Completed); unfinished + persist → Staging; else delete with data.
+**Session lifecycle / roles**: `Current | Staging | Seeding | Completed`, persisted to `<downloadDir>/zero-session.json` (name, size, magnet, date, role, incomplete). Ops: `stream`, `stage`, `unload`, `untrack` (deletes data), `complete` (stop seeding, keep files), `rescan`, `set_playback`, `launch_external`, `update_settings`, `scrape`. Demotion: finished → Seeding (seeding limit enforced by evicting the **highest-ratio** torrent to Completed); unfinished + persist → Staging; else delete with data.
 
 **Wire events**: `stats`, `currentStats`, `progress`, `files`, `loaded`, `notify`, `externalReady`, `externalWatched`. Loops: 200ms current-stats tick, 5s progress/snapshot tick. Speeds are `mbps * 125_000`.
 
@@ -202,9 +202,9 @@ Streaming EBML parser over a byte prefix. `NeedMoreData` is a normal signal, not
 |---|---|
 | **Windowing** | min 320×390, initial 1280×800, background `#17191C`, show only after first paint |
 | **Tray** | icon with Show/Quit; left-click restores |
-| **Deep links** | `shiru://` and `magnet:` schemes; single-instance forwarding; routing table stays in the app |
+| **Deep links** | `zero://` and `magnet:` schemes; single-instance forwarding; routing table stays in the app |
 | **Updater** | signed only; stable `…/releases/latest/download/latest.json`, nightly `…/releases/download/nightly/latest.json`; events available→progress→downloaded; statuses `available/up-to-date/unconfigured/failed`; `unconfigured` when no signing key; checks every 30 min |
-| **Log file** | `<configDir>/main.log`, rotated once at startup past 8 MB to `main.log.1`; live-swappable level; export (`zeroshiru-<epoch>.log`) and reset (truncate in place, same inode). Capture `FlutterError.onError` + zone errors into the same file, clamp 2000 bytes/line, 20 000 lines/run |
+| **Log file** | `<configDir>/main.log`, rotated once at startup past 8 MB to `main.log.1`; live-swappable level; export (`zero-<epoch>.log`) and reset (truncate in place, same inode). Capture `FlutterError.onError` + zone errors into the same file, clamp 2000 bytes/line, 20 000 lines/run |
 | **Diagnostics snapshot** | pull-based `{version, uptimeMs, log{path,sizeBytes,rendererLines,cap}, debrid: [ServiceHealth{service, quiet, unansweredTimeouts, latencyMs, rememberedAnswers, orphanedRemovals, sweeping, requestsInFlight, requestsWaiting, pausedForMs}], mediaCache}` — every debugging session started by discovering the explaining state existed only in memory |
 | **Art cache** | content-addressed `<cacheDir>/media/<sha256(url)>`, mtime LRU, cap 512 MB trim to 90%, max image 24 MB, 25s fetch timeout, in-flight dedup, failure memo 10 min in memory only |
 | **Host debrid state** | provider cache keyed by `(service, apiKey)`, **4 slots** LRU (1 slot: the settings "test" button evicted the live account mid-flight). Resolved-link cache: TTL **15 min**, 64 slots, keyed by (service, key, hash, target-window); `retarget` re-picks from a cached window and is **strict** (a cached slice is not the whole release). `forget_resolved` drops **every** window for a hash |

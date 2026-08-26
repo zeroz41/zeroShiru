@@ -5,7 +5,7 @@
 Render a shareable copy from the repository root:
 
 ```bash
-pandoc docs/architecture/flutter-rewrite-architecture.md --standalone --toc --number-sections --css report.css --metadata pagetitle='zeroShiru Flutter Rewrite' -o docs/architecture/flutter-rewrite-architecture.html
+pandoc docs/architecture/flutter-rewrite-architecture.md --standalone --toc --number-sections --css report.css --metadata pagetitle='Zero Architecture' -o docs/architecture/flutter-rewrite-architecture.html
 chromium --headless --no-sandbox --disable-gpu --allow-file-access-from-files --no-pdf-header-footer --print-to-pdf="$PWD/docs/architecture/flutter-rewrite-architecture.pdf" "file://$PWD/docs/architecture/flutter-rewrite-architecture.html"
 ```
 
