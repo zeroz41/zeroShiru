@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
 import '../../domain/models/media.dart';
 
@@ -84,8 +85,8 @@ class _EpisodeSelectorState extends State<EpisodeSelector> {
         final fillAvailable = widget.expanded || constraints.maxHeight.isFinite;
         final content = DecoratedBox(
           decoration: BoxDecoration(
-            color: const Color(0xB8121416),
-            border: Border.all(color: ZeroTokens.surfaceBorder),
+            color: context.zeroPalette.shell.withValues(alpha: 0.72),
+            border: Border.all(color: context.zeroPalette.border),
             borderRadius: BorderRadius.circular(ZeroTokens.radiusCard),
           ),
           child: Padding(
@@ -188,10 +189,13 @@ class _EpisodeHeader extends StatelessWidget {
           width: 4,
           height: 23,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [ZeroTokens.accentLight, ZeroTokens.accent],
+              colors: [
+                context.zeroPalette.accentHover,
+                context.zeroPalette.accent,
+              ],
             ),
             borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
           ),
@@ -206,7 +210,7 @@ class _EpisodeHeader extends StatelessWidget {
           Text(
             'Up next',
             style: Theme.of(context).textTheme.labelSmall
-                ?.copyWith(color: ZeroTokens.accentVeryLight),
+                ?.copyWith(color: context.zeroPalette.accentSoft),
           ),
         ],
         const SizedBox(width: ZeroTokens.space1),
@@ -235,8 +239,8 @@ class _EpisodeHeader extends StatelessWidget {
           ],
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: ZeroTokens.surfacePanel,
-              border: Border.all(color: ZeroTokens.surfaceBorder),
+              color: context.zeroPalette.panel,
+              border: Border.all(color: context.zeroPalette.border),
               borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
             ),
             child: Padding(
@@ -278,8 +282,10 @@ class _CountBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0x297C3AED),
-        border: Border.all(color: const Color(0x669F67FF)),
+        color: context.zeroPalette.navSelected,
+        border: Border.all(
+          color: context.zeroPalette.accentHover.withValues(alpha: 0.4),
+        ),
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
       ),
       child: Padding(
@@ -290,7 +296,7 @@ class _CountBadge extends StatelessWidget {
         child: Text(
           '$selected of $count',
           style: Theme.of(context).textTheme.labelMedium
-              ?.copyWith(color: ZeroTokens.accentVeryLight),
+              ?.copyWith(color: context.zeroPalette.accentSoft),
         ),
       ),
     );
@@ -412,13 +418,15 @@ class _EpisodeRow extends StatelessWidget {
             curve: ZeroTokens.easeSettle,
             decoration: BoxDecoration(
               color: selected
-                  ? const Color(0xE6262E3A)
-                  : ZeroTokens.surfacePanel,
+                  ? context.zeroPalette.surfaceRaised
+                  : context.zeroPalette.panel,
               borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
               boxShadow: selected
-                  ? const [
+                  ? [
                       BoxShadow(
-                        color: Color(0x307C3AED),
+                        color: context.zeroPalette.accent.withValues(
+                          alpha: 0.19,
+                        ),
                         blurRadius: 18,
                         spreadRadius: -5,
                       ),
@@ -431,8 +439,8 @@ class _EpisodeRow extends StatelessWidget {
             foregroundDecoration: BoxDecoration(
               border: Border.all(
                 color: selected
-                    ? ZeroTokens.accentLight
-                    : ZeroTokens.surfaceBorder,
+                    ? context.zeroPalette.accentHover
+                    : context.zeroPalette.border,
                 width: selected ? 1.4 : 1,
               ),
               borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
@@ -487,7 +495,7 @@ class _EpisodeRow extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                   style: Theme.of(context).textTheme.titleMedium
                                       ?.copyWith(
-                                        color: ZeroTokens.highlight,
+                                        color: context.zeroPalette.text,
                                         fontWeight: FontWeight.w800,
                                       ),
                                 ),
@@ -522,10 +530,10 @@ class _EpisodeRow extends StatelessWidget {
                                     : Icons.play_circle_outline_rounded,
                                 size: 15,
                                 color: next || selected
-                                    ? ZeroTokens.accentVeryLight
+                                    ? context.zeroPalette.accentSoft
                                     : watched
-                                    ? ZeroTokens.completed
-                                    : ZeroTokens.textMuted,
+                                    ? context.zeroPalette.success
+                                    : context.zeroPalette.textMuted,
                               ),
                               const SizedBox(width: ZeroTokens.space1),
                               Expanded(
@@ -538,10 +546,10 @@ class _EpisodeRow extends StatelessWidget {
                                   style: Theme.of(context).textTheme.labelSmall
                                       ?.copyWith(
                                         color: next || selected
-                                            ? ZeroTokens.accentVeryLight
+                                            ? context.zeroPalette.accentSoft
                                             : watched
-                                            ? ZeroTokens.completed
-                                            : ZeroTokens.textMuted,
+                                            ? context.zeroPalette.success
+                                            : context.zeroPalette.textMuted,
                                       ),
                                 ),
                               ),
@@ -569,12 +577,12 @@ class _EpisodeArtwork extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (url == null || url!.isEmpty) {
-      return const ColoredBox(
-        color: ZeroTokens.darkVeryLight,
+      return ColoredBox(
+        color: context.zeroPalette.surfaceRaised,
         child: Center(
           child: Icon(
             Icons.movie_filter_outlined,
-            color: ZeroTokens.grayVeryDim,
+            color: context.zeroPalette.inactive,
           ),
         ),
       );
@@ -582,12 +590,12 @@ class _EpisodeArtwork extends StatelessWidget {
     return Image(
       image: CachedNetworkImageProvider(url!),
       fit: BoxFit.cover,
-      errorBuilder: (_, _, _) => const ColoredBox(
-        color: ZeroTokens.darkVeryLight,
+      errorBuilder: (_, _, _) => ColoredBox(
+        color: context.zeroPalette.surfaceRaised,
         child: Center(
           child: Icon(
             Icons.movie_filter_outlined,
-            color: ZeroTokens.grayVeryDim,
+            color: context.zeroPalette.inactive,
           ),
         ),
       ),
@@ -600,25 +608,26 @@ class _WatchedMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xD90A160A),
-        border: Border.all(color: const Color(0x8069D454)),
+        color: colors.success.withValues(alpha: 0.18),
+        border: Border.all(color: colors.success.withValues(alpha: 0.5)),
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
       ),
-      child: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.check_rounded, size: 12, color: ZeroTokens.completed),
-            SizedBox(width: 3),
+            Icon(Icons.check_rounded, size: 12, color: colors.success),
+            const SizedBox(width: 3),
             Text(
               'WATCHED',
               style: TextStyle(
                 fontSize: 9,
                 fontWeight: FontWeight.w800,
-                color: ZeroTokens.completed,
+                color: colors.success,
               ),
             ),
           ],
@@ -637,7 +646,7 @@ class _NoEpisodes extends StatelessWidget {
       child: Text(
         'No episodes match this view.',
         style: Theme.of(context).textTheme.bodyMedium
-            ?.copyWith(color: ZeroTokens.textMuted),
+            ?.copyWith(color: context.zeroPalette.textMuted),
       ),
     );
   }

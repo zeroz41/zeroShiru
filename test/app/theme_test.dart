@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zero/app/theme/palette.dart';
 import 'package:zero/app/theme/theme.dart';
 import 'package:zero/app/theme/tokens.dart';
+import 'package:zero/domain/models/settings.dart';
 
 void main() {
   group('ZeroTokens', () {
@@ -94,6 +96,75 @@ void main() {
       expect(theme.textTheme.headlineMedium?.fontWeight, FontWeight.w700);
       expect(theme.textTheme.displayMedium?.fontWeight, FontWeight.w900);
       expect(theme.dialogTheme.backgroundColor, ZeroTokens.darkVeryDim);
+    });
+
+    test('catalog covers every persisted preset with its own palette', () {
+      expect(
+        ZeroThemeCatalog.values.map((theme) => theme.id),
+        AppThemePreset.values,
+      );
+
+      for (final definition in ZeroThemeCatalog.values) {
+        final theme = definition.buildTheme();
+        expect(theme.extension<ZeroPalette>(), definition.palette);
+        expect(theme.brightness, definition.palette.brightness);
+        expect(theme.colorScheme.primary, definition.palette.accent);
+      }
+    });
+
+    test('light and OLED presets have the expected platform brightness', () {
+      final light = ZeroThemeCatalog.light.buildTheme();
+      final oled = ZeroThemeCatalog.oled.buildTheme();
+
+      expect(light.brightness, Brightness.light);
+      expect(light.scaffoldBackgroundColor, const Color(0xFFF6F7FB));
+      expect(oled.brightness, Brightness.dark);
+      expect(oled.scaffoldBackgroundColor, Colors.black);
+    });
+
+    test('light mode supplies dark, accent-matched video chrome', () {
+      final app = ZeroThemeCatalog.light.palette;
+      final player = app.forPlayer;
+
+      expect(player.brightness, Brightness.dark);
+      expect(player.background, Colors.black);
+      expect(player.accent, app.accent);
+      expect(player.text.computeLuminance(), greaterThan(0.7));
+    });
+
+    test('community presets retain their signature base colors', () {
+      expect(
+        ZeroThemeCatalog.catppuccinMocha.palette.background,
+        const Color(0xFF1E1E2E),
+      );
+      expect(
+        ZeroThemeCatalog.catppuccinMocha.palette.accent,
+        const Color(0xFFCBA6F7),
+      );
+      expect(
+        ZeroThemeCatalog.gruvboxDark.palette.background,
+        const Color(0xFF282828),
+      );
+      expect(
+        ZeroThemeCatalog.gruvboxDark.palette.accent,
+        const Color(0xFFFE8019),
+      );
+      expect(
+        ZeroThemeCatalog.solarizedDark.palette.background,
+        const Color(0xFF002B36),
+      );
+      expect(
+        ZeroThemeCatalog.solarizedDark.palette.accent,
+        const Color(0xFF2AA198),
+      );
+      expect(
+        ZeroThemeCatalog.everforestDark.palette.background,
+        const Color(0xFF2D353B),
+      );
+      expect(
+        ZeroThemeCatalog.everforestDark.palette.accent,
+        const Color(0xFFA7C080),
+      );
     });
   });
 }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
 import '../../application/library/providers.dart';
 import '../../application/playback/request.dart';
@@ -192,7 +193,7 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
             widthFactor: compact ? 1 : 0.985,
             heightFactor: compact ? 1 : 0.985,
             child: Material(
-              color: ZeroTokens.darkVeryDim,
+              color: context.zeroPalette.surfaceModal,
               clipBehavior: Clip.antiAlias,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(
@@ -200,7 +201,7 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
                 ),
                 side: compact
                     ? BorderSide.none
-                    : const BorderSide(color: ZeroTokens.surfaceBorder),
+                    : BorderSide(color: context.zeroPalette.border),
               ),
               child: Stack(
                 fit: StackFit.expand,
@@ -268,35 +269,38 @@ class _DetailsBackdrop extends StatelessWidget {
             height: 330,
             width: double.infinity,
             child: image == null
-                ? const ColoredBox(color: ZeroTokens.darkDim)
+                ? ColoredBox(color: context.zeroPalette.backgroundTop)
                 : Image(
                     image: CachedNetworkImageProvider(image),
                     fit: BoxFit.cover,
                     errorBuilder: (_, _, _) =>
-                        const ColoredBox(color: ZeroTokens.darkDim),
+                        ColoredBox(color: context.zeroPalette.backgroundTop),
                   ),
           ),
         ),
-        const DecoratedBox(
+        DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                Color(0x5C090A0B),
-                Color(0xD9090A0B),
-                ZeroTokens.darkVeryDim,
+                context.zeroPalette.surfaceModal.withValues(alpha: 0.36),
+                context.zeroPalette.surfaceModal.withValues(alpha: 0.85),
+                context.zeroPalette.surfaceModal,
               ],
               stops: [0, 0.29, 0.55],
             ),
           ),
         ),
-        const DecoratedBox(
+        DecoratedBox(
           decoration: BoxDecoration(
             gradient: RadialGradient(
               center: Alignment(0.85, -0.75),
               radius: 1.1,
-              colors: [Color(0x004C1D95), Color(0x80090A0B)],
+              colors: [
+                context.zeroPalette.accentDim.withValues(alpha: 0),
+                context.zeroPalette.surfaceModal.withValues(alpha: 0.5),
+              ],
             ),
           ),
         ),
@@ -663,8 +667,10 @@ class _AboutMedia extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 900),
           child: Text(
             _plainDescription(media.description),
-            style: Theme.of(context).textTheme.bodyLarge
-                ?.copyWith(height: 1.6, color: ZeroTokens.textLight),
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              height: 1.6,
+              color: context.zeroPalette.textSecondary,
+            ),
           ),
         ),
       ],
@@ -1015,15 +1021,15 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
       width: double.infinity,
       padding: const EdgeInsets.all(ZeroTokens.space3),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xF0202327), Color(0xF0121416)],
+          colors: [context.zeroPalette.surface, context.zeroPalette.shell],
         ),
         border: Border.all(
           color: widget.open
-              ? const Color(0x669F67FF)
-              : ZeroTokens.surfaceBorder,
+              ? context.zeroPalette.accentHover.withValues(alpha: 0.4)
+              : context.zeroPalette.border,
         ),
         borderRadius: BorderRadius.circular(ZeroTokens.radiusCard),
       ),
@@ -1053,8 +1059,8 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
                           : 'Connect TorBox in Settings to play',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: connected
-                            ? ZeroTokens.completed
-                            : ZeroTokens.warning,
+                            ? context.zeroPalette.success
+                            : context.zeroPalette.warning,
                       ),
                     ),
                   ],
@@ -1155,7 +1161,7 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
                 child: Text(
                   '${_sourceErrors.length} source operation${_sourceErrors.length == 1 ? '' : 's'} failed; other results remain available.',
                   style: Theme.of(context).textTheme.bodySmall
-                      ?.copyWith(color: ZeroTokens.warning),
+                      ?.copyWith(color: context.zeroPalette.warning),
                 ),
               ),
             TextButton.icon(
@@ -1203,7 +1209,7 @@ class _SourceToolbar extends StatelessWidget {
         Text(
           'Sort',
           style: Theme.of(context).textTheme.labelMedium
-              ?.copyWith(color: ZeroTokens.textMuted),
+              ?.copyWith(color: context.zeroPalette.textMuted),
         ),
         const SizedBox(width: ZeroTokens.space1),
         PopupMenuButton<_ReleaseSort>(
@@ -1228,8 +1234,8 @@ class _SourceToolbar extends StatelessWidget {
           ],
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: ZeroTokens.surfacePanel,
-              border: Border.all(color: ZeroTokens.surfaceBorder),
+              color: context.zeroPalette.panel,
+              border: Border.all(color: context.zeroPalette.border),
               borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
             ),
             child: Padding(
@@ -1262,14 +1268,17 @@ class _SourceCloudIcon extends StatelessWidget {
   const _SourceCloudIcon();
 
   @override
-  Widget build(BuildContext context) => const DecoratedBox(
-    decoration: BoxDecoration(color: Color(0x297C3AED), shape: BoxShape.circle),
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: context.zeroPalette.navSelected,
+      shape: BoxShape.circle,
+    ),
     child: Padding(
-      padding: EdgeInsets.all(7),
+      padding: const EdgeInsets.all(7),
       child: Icon(
         Icons.cloud_outlined,
         size: 18,
-        color: ZeroTokens.accentVeryLight,
+        color: context.zeroPalette.accentSoft,
       ),
     ),
   );
@@ -1301,7 +1310,7 @@ class _EmptyReleaseResults extends ConsumerWidget {
                     ? Icons.extension_off_outlined
                     : Icons.manage_search_rounded,
                 size: 32,
-                color: ZeroTokens.grayVeryDim,
+                color: context.zeroPalette.inactive,
               ),
               const SizedBox(height: ZeroTokens.space2),
               Text(
@@ -1314,7 +1323,7 @@ class _EmptyReleaseResults extends ConsumerWidget {
                     : 'No matching releases found.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium
-                    ?.copyWith(color: ZeroTokens.textLight),
+                    ?.copyWith(color: context.zeroPalette.textSecondary),
               ),
               if (!loading) ...[
                 const SizedBox(height: ZeroTokens.space2),
@@ -1356,7 +1365,7 @@ class _ReleaseResultTile extends StatelessWidget {
             availability == Availability.cached ||
             availability == Availability.unknown);
     return Material(
-      color: ZeroTokens.darkVeryLight,
+      color: context.zeroPalette.surfaceRaised,
       borderRadius: BorderRadius.circular(ZeroTokens.radiusBase),
       child: InkWell(
         key: ValueKey('source-result-${result.hash ?? result.link.hashCode}'),
@@ -1387,7 +1396,7 @@ class _ReleaseResultTile extends StatelessWidget {
                         Text(
                           result.sourceId ?? 'Source',
                           style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: ZeroTokens.accentVeryLight),
+                              ?.copyWith(color: context.zeroPalette.accentSoft),
                         ),
                         if (result.size != null) Text(_fileSize(result.size!)),
                         if (result.seeders != null)
@@ -1413,8 +1422,8 @@ class _ReleaseResultTile extends StatelessWidget {
                 child: Icon(
                   Icons.play_circle_fill_rounded,
                   color: canPlay
-                      ? ZeroTokens.accentLight
-                      : ZeroTokens.grayVeryDim,
+                      ? context.zeroPalette.accentHover
+                      : context.zeroPalette.inactive,
                   size: 30,
                 ),
               ),
@@ -1434,27 +1443,28 @@ class _AvailabilityBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     final (label, color, icon) = checking
-        ? ('Checking', ZeroTokens.textLight, Icons.sync_rounded)
+        ? ('Checking', colors.textSecondary, Icons.sync_rounded)
         : switch (state) {
             Availability.cached => (
               'Cached',
-              ZeroTokens.completed,
+              colors.success,
               Icons.bolt_rounded,
             ),
             Availability.available => (
               'Not cached',
-              ZeroTokens.warning,
+              colors.warning,
               Icons.cloud_queue_rounded,
             ),
             Availability.unavailable => (
               'Unavailable',
-              ZeroTokens.errorVeryLight,
+              colors.error,
               Icons.cloud_off_outlined,
             ),
             Availability.unknown => (
               'Unknown',
-              ZeroTokens.textLight,
+              colors.textSecondary,
               Icons.help_outline_rounded,
             ),
           };
@@ -1513,7 +1523,7 @@ class _ManualRelease extends StatelessWidget {
           Text(
             error!,
             style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: ZeroTokens.errorVeryLight),
+                ?.copyWith(color: context.zeroPalette.error),
           ),
         ],
         const SizedBox(height: ZeroTokens.space2),
@@ -1571,18 +1581,20 @@ class _ConnectionDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return Tooltip(
       message: connected ? 'Connected' : 'Not configured',
       child: Container(
         width: 9,
         height: 9,
         decoration: BoxDecoration(
-          color: connected ? ZeroTokens.completed : ZeroTokens.warning,
+          color: connected ? colors.success : colors.warning,
           shape: BoxShape.circle,
           boxShadow: [
             BoxShadow(
-              color: (connected ? ZeroTokens.completed : ZeroTokens.warning)
-                  .withValues(alpha: 0.35),
+              color: (connected ? colors.success : colors.warning).withValues(
+                alpha: 0.35,
+              ),
               blurRadius: 8,
               spreadRadius: 2,
             ),
@@ -1601,14 +1613,15 @@ class _Cover extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return Container(
       width: width,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(ZeroTokens.radiusCard),
-        border: Border.all(color: const Color(0x38FFFFFF)),
-        boxShadow: const [
+        border: Border.all(color: colors.border),
+        boxShadow: [
           BoxShadow(
-            color: Color(0xA6000000),
+            color: Colors.black.withValues(alpha: colors.isLight ? 0.24 : 0.65),
             blurRadius: 28,
             offset: Offset(0, 12),
           ),
@@ -1619,12 +1632,12 @@ class _Cover extends StatelessWidget {
         child: AspectRatio(
           aspectRatio: ZeroTokens.cardArtAspect,
           child: media.coverImage == null
-              ? const ColoredBox(color: ZeroTokens.darkVeryLight)
+              ? ColoredBox(color: colors.surfaceRaised)
               : Image(
                   image: CachedNetworkImageProvider(media.coverImage!),
                   fit: BoxFit.cover,
                   errorBuilder: (_, _, _) =>
-                      const ColoredBox(color: ZeroTokens.darkVeryLight),
+                      ColoredBox(color: colors.surfaceRaised),
                 ),
         ),
       ),
@@ -1643,7 +1656,7 @@ class _MetaItem extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 19, color: ZeroTokens.textLight),
+        Icon(icon, size: 19, color: context.zeroPalette.textSecondary),
         const SizedBox(width: ZeroTokens.space1),
         Text(label, style: Theme.of(context).textTheme.bodyMedium),
       ],
@@ -1658,10 +1671,11 @@ class _StatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0x1F69D454),
-        border: Border.all(color: const Color(0x5269D454)),
+        color: colors.success.withValues(alpha: 0.12),
+        border: Border.all(color: colors.success.withValues(alpha: 0.32)),
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
       ),
       child: Padding(
@@ -1672,7 +1686,7 @@ class _StatusPill extends StatelessWidget {
         child: Text(
           '${_capitalize(entry.status.name)} · ${entry.progress} watched',
           style: Theme.of(context).textTheme.labelMedium
-              ?.copyWith(color: ZeroTokens.completed),
+              ?.copyWith(color: colors.success),
         ),
       ),
     );
@@ -1692,7 +1706,7 @@ class _SectionTitle extends StatelessWidget {
           width: 4,
           height: 24,
           decoration: BoxDecoration(
-            color: ZeroTokens.accent,
+            color: context.zeroPalette.accent,
             borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
           ),
         ),
@@ -1710,12 +1724,13 @@ class _CloseButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xD9202327),
-        border: Border.all(color: ZeroTokens.surfaceBorder),
+        color: colors.surface.withValues(alpha: 0.85),
+        border: Border.all(color: colors.border),
         shape: BoxShape.circle,
-        boxShadow: const [BoxShadow(color: Color(0x80000000), blurRadius: 12)],
+        boxShadow: colors.toastShadow,
       ),
       child: IconButton(
         tooltip: 'Close',

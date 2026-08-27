@@ -15,6 +15,7 @@ import '../../domain/ports/debrid_client.dart';
 extension SettingsJson on Settings {
   /// Everything persistable. Deliberately absent: `debridApiKeys`.
   Map<String, dynamic> toJson() => {
+    'themePreset': themePreset.name,
     'titleLanguage': titleLanguage,
     'cardSize': cardSize,
     'adultContent': adultContent,
@@ -62,6 +63,11 @@ extension SettingsJson on Settings {
 Settings settingsFromJson(Map<String, dynamic> json) {
   const defaults = Settings();
   return Settings(
+    themePreset:
+        (json['themePreset'] is String
+            ? AppThemePreset.values.asNameMap()[json['themePreset']]
+            : null) ??
+        defaults.themePreset,
     titleLanguage: _string(json['titleLanguage'], defaults.titleLanguage),
     cardSize: _string(json['cardSize'], defaults.cardSize),
     adultContent: _string(json['adultContent'], defaults.adultContent),

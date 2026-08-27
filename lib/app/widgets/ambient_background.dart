@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import '../theme/palette.dart';
 import '../theme/tokens.dart';
 
 /// The app-wide ambient page background (design-map §1.11).
@@ -22,7 +23,7 @@ class AmbientBackground extends StatelessWidget {
   Widget build(BuildContext context) {
     return RepaintBoundary(
       child: DecoratedBox(
-        decoration: const _AmbientDecoration(),
+        decoration: _AmbientDecoration(context.zeroPalette),
         child: child ?? const SizedBox.expand(),
       ),
     );
@@ -30,13 +31,20 @@ class AmbientBackground extends StatelessWidget {
 }
 
 class _AmbientDecoration extends Decoration {
-  const _AmbientDecoration();
+  const _AmbientDecoration(this.palette);
+
+  final ZeroPalette palette;
 
   @override
-  BoxPainter createBoxPainter([VoidCallback? onChanged]) => _AmbientPainter();
+  BoxPainter createBoxPainter([VoidCallback? onChanged]) =>
+      _AmbientPainter(palette);
 }
 
 class _AmbientPainter extends BoxPainter {
+  _AmbientPainter(this.palette);
+
+  final ZeroPalette palette;
+
   @override
   void paint(Canvas canvas, Offset offset, ImageConfiguration configuration) {
     final size = configuration.size ?? Size.zero;
@@ -53,7 +61,7 @@ class _AmbientPainter extends BoxPainter {
         ..shader = LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: const [ZeroTokens.darkDim, ZeroTokens.dark],
+          colors: [palette.backgroundTop, palette.background],
           stops: [0, settleExtent / size.height],
         ).createShader(rect),
     );
@@ -69,7 +77,7 @@ class _AmbientPainter extends BoxPainter {
       ),
       radiusX: ZeroTokens.rem(110),
       radiusY: ZeroTokens.rem(55),
-      color: ZeroTokens.ambientBloomTopRight,
+      color: palette.ambientPrimary,
       fadeStop: 0.62,
     );
 
@@ -83,7 +91,7 @@ class _AmbientPainter extends BoxPainter {
       ),
       radiusX: ZeroTokens.rem(80),
       radiusY: ZeroTokens.rem(55),
-      color: ZeroTokens.ambientBloomBottomLeft,
+      color: palette.ambientSecondary,
       fadeStop: 0.68,
     );
 

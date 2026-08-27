@@ -79,6 +79,7 @@ void main() {
   group('Settings codec', () {
     test('roundtrips every persisted field', () {
       const settings = Settings(
+        themePreset: AppThemePreset.midnight,
         titleLanguage: 'english',
         cardSize: 'large',
         adultContent: 'hentai',
@@ -124,6 +125,7 @@ void main() {
       expect(back.debridService, DebridService.torbox);
       expect(back.debridMode, DebridMode.only);
       expect(back.volume, 0.25);
+      expect(back.themePreset, AppThemePreset.midnight);
     });
 
     test('API keys never serialize (standing contract)', () {
@@ -138,6 +140,7 @@ void main() {
 
     test('an empty or legacy blob decodes to the schema defaults', () {
       final settings = settingsFromJson(const {});
+      expect(settings.themePreset, AppThemePreset.standard);
       expect(settings.titleLanguage, 'romaji');
       expect(settings.volume, 1.0);
       expect(settings.playerAutocompleteThreshold, 85);
@@ -149,6 +152,14 @@ void main() {
       expect(settings.torrentSpeedBytes, 5 * 1024 * 1024);
     });
 
+    test('every built-in theme preset survives persisted decoding', () {
+      for (final preset in AppThemePreset.values) {
+        final settings = settingsFromJson({'themePreset': preset.name});
+        expect(settings.themePreset, preset);
+        expect(settings.toJson()['themePreset'], preset.name);
+      }
+    });
+
     test('unknown fields and mistyped values are tolerated', () {
       final settings = settingsFromJson(const {
         'someFutureField': true,
@@ -157,12 +168,14 @@ void main() {
         'maxConnections': 25.0,
         'learningTranslationLanguage': 'klingon',
         'subtitleTextScale': 99,
+        'themePreset': 'futureTheme',
       });
       expect(settings.volume, 1.0);
       expect(settings.debridService, isNull);
       expect(settings.maxConnections, 25);
       expect(settings.learningTranslationLanguage, 'eng');
       expect(settings.subtitleTextScale, 1.0);
+      expect(settings.themePreset, AppThemePreset.standard);
     });
 
     test('migrates the old learning-only scale into the shared text size', () {

@@ -1,6 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../theme/palette.dart';
 import '../theme/tokens.dart';
 import 'hover_region.dart';
 
@@ -67,6 +68,7 @@ class _TitledRailState extends State<TitledRail> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -111,7 +113,7 @@ class _TitledRailState extends State<TitledRail> {
                     ),
                   ),
                   // Right edge fade: 8rem, dark -> transparent.
-                  const Positioned(
+                  Positioned(
                     top: 0,
                     bottom: 0,
                     right: 0,
@@ -123,7 +125,10 @@ class _TitledRailState extends State<TitledRail> {
                             gradient: LinearGradient(
                               begin: Alignment.centerRight,
                               end: Alignment.centerLeft,
-                              colors: [ZeroTokens.dark, Color(0x0017191C)],
+                              colors: [
+                                colors.background,
+                                colors.background.withValues(alpha: 0),
+                              ],
                             ),
                           ),
                         ),
@@ -169,6 +174,7 @@ class _RailHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return HoverRegion(
       cursor: onTap == null ? MouseCursor.defer : SystemMouseCursors.click,
       builder: (context, hovered) {
@@ -185,10 +191,10 @@ class _RailHeader extends StatelessWidget {
                 margin: const EdgeInsets.only(right: ZeroTokens.remPx),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
-                  gradient: const LinearGradient(
+                  gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [ZeroTokens.accentLight, ZeroTokens.accent],
+                    colors: [colors.accentHover, colors.accent],
                   ),
                 ),
               ),
@@ -198,9 +204,7 @@ class _RailHeader extends StatelessWidget {
                   fontFamily: ZeroTokens.fontFamily,
                   fontSize: ZeroTokens.fontScale24,
                   fontWeight: FontWeight.w700,
-                  color: hovered
-                      ? ZeroTokens.accentVeryLight
-                      : ZeroTokens.highlight,
+                  color: hovered ? colors.accentSoft : colors.text,
                 ),
               ),
               if (onTap != null) ...[
@@ -208,9 +212,7 @@ class _RailHeader extends StatelessWidget {
                 Icon(
                   Icons.chevron_right_rounded,
                   size: 20,
-                  color: hovered
-                      ? ZeroTokens.accentVeryLight
-                      : ZeroTokens.textMuted,
+                  color: hovered ? colors.accentSoft : colors.textMuted,
                 ),
               ],
             ],
@@ -234,6 +236,7 @@ class _RailChevron extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return Center(
       child: AnimatedOpacity(
         opacity: visible ? 1 : 0,
@@ -251,15 +254,13 @@ class _RailChevron extends StatelessWidget {
                   height: ZeroTokens.navButtonSize + 4,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: hovered
-                        ? ZeroTokens.darkVeryLight
-                        : ZeroTokens.surfaceShell,
-                    border: Border.all(color: ZeroTokens.surfaceBorder),
+                    color: hovered ? colors.surfaceRaised : colors.shell,
+                    border: Border.all(color: colors.border),
                   ),
                   child: Icon(
                     icon,
                     size: 18,
-                    color: hovered ? ZeroTokens.highlight : ZeroTokens.text,
+                    color: hovered ? colors.text : colors.textSecondary,
                   ),
                 ),
               );

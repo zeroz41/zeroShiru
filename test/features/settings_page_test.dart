@@ -50,6 +50,18 @@ void main() {
       expect(find.text('Extensions'), findsOneWidget);
       expect(find.text('Downloads'), findsOneWidget);
       expect(find.text('Debrid'), findsOneWidget);
+      expect(find.text('Default'), findsOneWidget);
+      expect(find.text('Crimson'), findsOneWidget);
+      expect(find.text('OLED'), findsOneWidget);
+      expect(find.text('Light'), findsOneWidget);
+      expect(find.text('Midnight Blue'), findsOneWidget);
+      expect(find.text('Catppuccin Mocha'), findsOneWidget);
+      expect(find.text('Gruvbox Dark'), findsOneWidget);
+      expect(find.text('Solarized Dark'), findsOneWidget);
+      expect(find.text('Everforest Dark'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('theme-preset-midnight')));
+      await tester.pumpAndSettle();
+      expect(repository.current.themePreset, AppThemePreset.midnight);
       await tester.tap(find.byKey(const ValueKey('settings-section-player')));
       await tester.pumpAndSettle();
       expect(find.text('Subtitle text size'), findsOneWidget);

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/widgets/empty_state.dart';
 import '../../app/widgets/skeleton.dart';
@@ -99,9 +100,9 @@ class _ScheduleToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: ZeroTokens.surfacePanelStrong,
-        border: Border(bottom: BorderSide(color: ZeroTokens.surfaceBorder)),
+      decoration: BoxDecoration(
+        color: context.zeroPalette.panelStrong,
+        border: Border(bottom: BorderSide(color: context.zeroPalette.border)),
       ),
       child: SafeArea(
         bottom: false,
@@ -120,7 +121,7 @@ class _ScheduleToolbar extends StatelessWidget {
                   Text(
                     'Upcoming TV episodes, ordered by airtime.',
                     style: Theme.of(context).textTheme.bodyMedium
-                        ?.copyWith(color: ZeroTokens.textLight),
+                        ?.copyWith(color: context.zeroPalette.textSecondary),
                   ),
                 ],
               );
@@ -255,7 +256,7 @@ class _ScheduleCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: ZeroTokens.textLight,
+                    color: context.zeroPalette.textSecondary,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -264,8 +265,8 @@ class _ScheduleCard extends StatelessWidget {
                   maxLines: 1,
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     color: countdown == 'Airing now'
-                        ? ZeroTokens.completed
-                        : ZeroTokens.text,
+                        ? context.zeroPalette.success
+                        : context.zeroPalette.text,
                     fontWeight: FontWeight.w800,
                   ),
                 ),

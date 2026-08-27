@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../theme/palette.dart';
 import '../theme/tokens.dart';
 
 /// Loading skeleton with the sweep shimmer (design-map §1.13):
@@ -35,13 +36,14 @@ class _SkeletonState extends State<Skeleton>
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return SizedBox(
       width: widget.width,
       height: widget.height,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(widget.borderRadius),
         child: DecoratedBox(
-          decoration: const BoxDecoration(color: ZeroTokens.surfacePanel),
+          decoration: BoxDecoration(color: colors.panel),
           child: AnimatedBuilder(
             animation: _controller,
             builder: (context, _) {
@@ -54,10 +56,10 @@ class _SkeletonState extends State<Skeleton>
                   gradient: LinearGradient(
                     begin: Alignment(x - 1, 0),
                     end: Alignment(x + 1, 0),
-                    colors: const [
-                      Color(0x00FFFFFF),
-                      ZeroTokens.skeletonHighlight,
-                      Color(0x00FFFFFF),
+                    colors: [
+                      colors.skeletonHighlight.withValues(alpha: 0),
+                      colors.skeletonHighlight,
+                      colors.skeletonHighlight.withValues(alpha: 0),
                     ],
                   ),
                 ),

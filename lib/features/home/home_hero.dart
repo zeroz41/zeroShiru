@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/widgets/accent_pill.dart';
 import '../../domain/models/media.dart';
@@ -139,8 +140,8 @@ class _HomeHeroState extends State<HomeHero> {
                             ),
                             decoration: BoxDecoration(
                               color: i == _index
-                                  ? ZeroTokens.accent
-                                  : ZeroTokens.textMuted,
+                                  ? context.zeroPalette.accent
+                                  : context.zeroPalette.textMuted,
                               borderRadius: BorderRadius.circular(
                                 ZeroTokens.radiusPill,
                               ),
@@ -172,18 +173,17 @@ class _HeroArrow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return Center(
       child: Material(
-        color: const Color(0xB3121416),
-        shape: const CircleBorder(
-          side: BorderSide(color: ZeroTokens.surfaceBorder),
-        ),
+        color: colors.shell.withValues(alpha: 0.7),
+        shape: CircleBorder(side: BorderSide(color: colors.border)),
         elevation: 6,
         shadowColor: Colors.black,
         child: IconButton(
           tooltip: tooltip,
           onPressed: onPressed,
-          icon: Icon(icon, color: ZeroTokens.highlight),
+          icon: Icon(icon, color: colors.text),
         ),
       ),
     );
@@ -199,6 +199,7 @@ class _HeroSlide extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final image = media.bannerImage ?? media.coverImage;
+    final colors = context.zeroPalette;
     return ClipRRect(
       borderRadius: const BorderRadius.only(
         bottomLeft: Radius.circular(ZeroTokens.radiusSurfaceTop),
@@ -213,31 +214,34 @@ class _HeroSlide extends StatelessWidget {
               fit: BoxFit.cover,
               alignment: Alignment.centerRight,
               errorBuilder: (_, _, _) =>
-                  const ColoredBox(color: ZeroTokens.darkDim),
+                  ColoredBox(color: colors.backgroundTop),
             )
           else
-            const ColoredBox(color: ZeroTokens.darkDim),
-          const DecoratedBox(
+            ColoredBox(color: colors.backgroundTop),
+          DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.centerLeft,
                 end: Alignment.centerRight,
                 colors: [
-                  ZeroTokens.dark,
-                  Color(0xD117191C),
-                  Color(0x7317191C),
-                  Color(0x0017191C),
+                  colors.background,
+                  colors.background.withValues(alpha: 0.82),
+                  colors.background.withValues(alpha: 0.45),
+                  colors.background.withValues(alpha: 0),
                 ],
                 stops: [0, 0.42, 0.72, 1],
               ),
             ),
           ),
-          const DecoratedBox(
+          DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.bottomCenter,
                 end: Alignment.topCenter,
-                colors: [ZeroTokens.dark, Color(0x0017191C)],
+                colors: [
+                  colors.background,
+                  colors.background.withValues(alpha: 0),
+                ],
                 stops: [0, 0.46],
               ),
             ),
@@ -287,7 +291,7 @@ class _HeroSlide extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(color: ZeroTokens.textLight),
+                              ?.copyWith(color: colors.textSecondary),
                         ),
                         if (!narrow && media.description != null) ...[
                           const SizedBox(height: ZeroTokens.space2),

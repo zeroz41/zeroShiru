@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
 import '../../application/settings/providers.dart';
 import '../../domain/models/settings.dart';
@@ -74,7 +75,7 @@ class _Header extends StatelessWidget {
                 Text(
                   'Active transfers, completed files, and seeding sessions.',
                   style: Theme.of(context).textTheme.bodyLarge
-                      ?.copyWith(color: ZeroTokens.textLight),
+                      ?.copyWith(color: context.zeroPalette.textSecondary),
                 ),
               ],
             ),
@@ -101,13 +102,16 @@ class _EmptyTransferPanel extends StatelessWidget {
       constraints: const BoxConstraints(minHeight: 300),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(ZeroTokens.radiusCard),
-        border: Border.all(color: ZeroTokens.surfaceBorder),
-        gradient: const LinearGradient(
+        border: Border.all(color: context.zeroPalette.border),
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [ZeroTokens.surfacePanel, Color(0x8017191C)],
+          colors: [
+            context.zeroPalette.panel,
+            context.zeroPalette.background.withValues(alpha: 0.5),
+          ],
         ),
-        boxShadow: ZeroTokens.cardShadow,
+        boxShadow: context.zeroPalette.cardShadow,
       ),
       child: Center(
         child: Padding(
@@ -120,13 +124,15 @@ class _EmptyTransferPanel extends StatelessWidget {
                 height: 64,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0x207C3AED),
-                  border: Border.all(color: const Color(0x597C3AED)),
+                  color: context.zeroPalette.accent.withValues(alpha: 0.13),
+                  border: Border.all(
+                    color: context.zeroPalette.accent.withValues(alpha: 0.35),
+                  ),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.download_done_rounded,
                   size: 30,
-                  color: ZeroTokens.accentVeryLight,
+                  color: context.zeroPalette.accentSoft,
                 ),
               ),
               const SizedBox(height: ZeroTokens.space4),
@@ -141,8 +147,10 @@ class _EmptyTransferPanel extends StatelessWidget {
                   'Torrent-backed episodes appear here while they download or seed. '
                   'Direct debrid streams stay remote and do not create a local transfer.',
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium
-                      ?.copyWith(color: ZeroTokens.textLight, height: 1.45),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: context.zeroPalette.textSecondary,
+                    height: 1.45,
+                  ),
                 ),
               ),
             ],
@@ -162,9 +170,9 @@ class _TransferDefaults extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: ZeroTokens.surfacePanel,
+        color: context.zeroPalette.panel,
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
-        border: Border.all(color: ZeroTokens.surfaceBorder),
+        border: Border.all(color: context.zeroPalette.border),
       ),
       child: Padding(
         padding: const EdgeInsets.all(ZeroTokens.space4),
@@ -215,9 +223,9 @@ class _DefaultChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: ZeroTokens.darkVeryLight,
+        color: context.zeroPalette.surfaceRaised,
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
-        border: Border.all(color: ZeroTokens.surfaceBorder),
+        border: Border.all(color: context.zeroPalette.border),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(
@@ -227,7 +235,7 @@ class _DefaultChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 16, color: ZeroTokens.accentVeryLight),
+            Icon(icon, size: 16, color: context.zeroPalette.accentSoft),
             const SizedBox(width: ZeroTokens.space2),
             Text(label, style: Theme.of(context).textTheme.labelMedium),
           ],

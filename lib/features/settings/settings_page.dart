@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/theme/palette.dart';
+import '../../app/theme/theme.dart';
 import '../../app/theme/tokens.dart';
 import '../../application/learning/providers.dart';
 import '../../application/learning/subtitle_providers.dart';
@@ -96,6 +98,14 @@ class _SettingsBodyState extends ConsumerState<_SettingsBody> {
         title: 'Interface',
         icon: Icons.palette_outlined,
         children: [
+          _ThemePicker(
+            selected: settings.themePreset,
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(themePreset: value),
+              ),
+            ),
+          ),
           _DropdownRow<String>(
             label: 'Title language',
             description: 'Which AniList title is preferred throughout the app.',
@@ -425,7 +435,7 @@ class _SettingsHeader extends StatelessWidget {
           Text(
             'Playback, library, and account preferences for this device.',
             style: Theme.of(context).textTheme.bodyLarge
-                ?.copyWith(color: ZeroTokens.textLight),
+                ?.copyWith(color: context.zeroPalette.textSecondary),
           ),
         ],
       ),
@@ -443,7 +453,7 @@ class _SettingsMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 224,
-      color: const Color(0x45121416),
+      color: context.zeroPalette.shell.withValues(alpha: 0.27),
       padding: const EdgeInsets.fromLTRB(
         ZeroTokens.space4,
         ZeroTokens.space5,
@@ -458,7 +468,7 @@ class _SettingsMenu extends StatelessWidget {
             child: Text(
               'PREFERENCES',
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: ZeroTokens.textMuted,
+                color: context.zeroPalette.textMuted,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 1.2,
               ),
@@ -486,7 +496,7 @@ class _SettingsMenu extends StatelessWidget {
             child: Text(
               'Changes save automatically on this device.',
               style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: ZeroTokens.textMuted, height: 1.4),
+                  ?.copyWith(color: context.zeroPalette.textMuted, height: 1.4),
             ),
           ),
         ],
@@ -528,11 +538,15 @@ class _SettingsMenuItem extends StatelessWidget {
             ),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
-              color: selected ? ZeroTokens.navPillGradTop : Colors.transparent,
+              color: selected
+                  ? context.zeroPalette.navSelected
+                  : Colors.transparent,
               border: Border.all(
-                color: selected ? ZeroTokens.navPillRing : Colors.transparent,
+                color: selected
+                    ? context.zeroPalette.navSelectedBorder
+                    : Colors.transparent,
               ),
-              boxShadow: selected ? ZeroTokens.navPillGlow : null,
+              boxShadow: selected ? context.zeroPalette.navigationGlow : null,
             ),
             child: Row(
               children: [
@@ -540,8 +554,8 @@ class _SettingsMenuItem extends StatelessWidget {
                   section.icon,
                   size: 20,
                   color: selected
-                      ? ZeroTokens.accentVeryLight
-                      : ZeroTokens.textMuted,
+                      ? context.zeroPalette.accentSoft
+                      : context.zeroPalette.textMuted,
                 ),
                 const SizedBox(width: ZeroTokens.space3),
                 Expanded(
@@ -552,8 +566,8 @@ class _SettingsMenuItem extends StatelessWidget {
                         section.label,
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           color: selected
-                              ? ZeroTokens.highlight
-                              : ZeroTokens.text,
+                              ? context.zeroPalette.text
+                              : context.zeroPalette.textSecondary,
                           fontWeight: selected
                               ? FontWeight.w800
                               : FontWeight.w600,
@@ -591,8 +605,8 @@ class _CompactSettingsMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: ZeroTokens.surfacePanelStrong,
-        border: Border.all(color: ZeroTokens.surfaceBorder),
+        color: context.zeroPalette.panelStrong,
+        border: Border.all(color: context.zeroPalette.border),
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
       ),
       child: Padding(
@@ -603,7 +617,7 @@ class _CompactSettingsMenu extends StatelessWidget {
             value: selected,
             isExpanded: true,
             borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
-            dropdownColor: ZeroTokens.darkLight,
+            dropdownColor: context.zeroPalette.surface,
             icon: const Icon(Icons.expand_more_rounded),
             items: [
               for (final section in _SettingsSection.values)
@@ -933,8 +947,8 @@ class _JimakuPanelState extends ConsumerState<_JimakuPanel> {
     final connected = connection.value?.isNotEmpty ?? false;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: ZeroTokens.darkVeryLight,
-        border: Border.all(color: ZeroTokens.surfaceBorder),
+        color: context.zeroPalette.surfaceRaised,
+        border: Border.all(color: context.zeroPalette.border),
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
       ),
       child: Padding(
@@ -947,8 +961,8 @@ class _JimakuPanelState extends ConsumerState<_JimakuPanel> {
                 Icon(
                   connected ? Icons.cloud_done_outlined : Icons.cloud_outlined,
                   color: connected
-                      ? ZeroTokens.completed
-                      : ZeroTokens.accentVeryLight,
+                      ? context.zeroPalette.success
+                      : context.zeroPalette.accentSoft,
                 ),
                 const SizedBox(width: ZeroTokens.space3),
                 Expanded(
@@ -964,8 +978,8 @@ class _JimakuPanelState extends ConsumerState<_JimakuPanel> {
                         key: const ValueKey('jimaku-connection-status'),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: connected
-                              ? ZeroTokens.completed
-                              : ZeroTokens.textLight,
+                              ? context.zeroPalette.success
+                              : context.zeroPalette.textSecondary,
                         ),
                       ),
                     ],
@@ -1032,8 +1046,8 @@ class _JimakuPanelState extends ConsumerState<_JimakuPanel> {
                 key: const ValueKey('jimaku-connection-message'),
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: _error
-                      ? ZeroTokens.errorVeryLight
-                      : ZeroTokens.completed,
+                      ? context.zeroPalette.error
+                      : context.zeroPalette.success,
                 ),
               ),
             ],
@@ -1076,8 +1090,8 @@ class _DictionaryPanel extends StatelessWidget {
     };
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: ZeroTokens.darkVeryLight,
-        border: Border.all(color: ZeroTokens.surfaceBorder),
+        color: context.zeroPalette.surfaceRaised,
+        border: Border.all(color: context.zeroPalette.border),
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
       ),
       child: Padding(
@@ -1092,8 +1106,8 @@ class _DictionaryPanel extends StatelessWidget {
                       ? Icons.offline_pin_outlined
                       : Icons.menu_book_outlined,
                   color: installed
-                      ? ZeroTokens.completed
-                      : ZeroTokens.accentVeryLight,
+                      ? context.zeroPalette.success
+                      : context.zeroPalette.accentSoft,
                 ),
                 const SizedBox(width: ZeroTokens.space3),
                 Expanded(
@@ -1109,8 +1123,8 @@ class _DictionaryPanel extends StatelessWidget {
                         key: const ValueKey('learning-dictionary-status'),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: status.phase == LearningDictionaryPhase.failed
-                              ? ZeroTokens.errorVeryLight
-                              : ZeroTokens.textLight,
+                              ? context.zeroPalette.error
+                              : context.zeroPalette.textSecondary,
                         ),
                       ),
                     ],
@@ -1152,7 +1166,7 @@ class _DictionaryPanel extends StatelessWidget {
               Text(
                 message!,
                 style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: ZeroTokens.errorVeryLight),
+                    ?.copyWith(color: context.zeroPalette.error),
               ),
             ],
           ],
@@ -1270,8 +1284,8 @@ class _ExtensionsCardState extends ConsumerState<_ExtensionsCard> {
                 _message!,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: _error
-                      ? ZeroTokens.errorVeryLight
-                      : ZeroTokens.completed,
+                      ? context.zeroPalette.error
+                      : context.zeroPalette.success,
                 ),
               ),
             ),
@@ -1331,7 +1345,7 @@ class _EmptyExtensions extends StatelessWidget {
     child: Text(
       'No catalogs installed. Add a gh: source to restore release search.',
       style: Theme.of(context).textTheme.bodyMedium
-          ?.copyWith(color: ZeroTokens.textLight),
+          ?.copyWith(color: context.zeroPalette.textSecondary),
     ),
   );
 }
@@ -1368,9 +1382,9 @@ class _ExtensionTileState extends ConsumerState<_ExtensionTile> {
     return Container(
       margin: const EdgeInsets.only(top: ZeroTokens.space2),
       decoration: BoxDecoration(
-        color: ZeroTokens.darkVeryLight,
+        color: context.zeroPalette.surfaceRaised,
         borderRadius: BorderRadius.circular(ZeroTokens.radiusBase),
-        border: Border.all(color: ZeroTokens.surfaceBorder),
+        border: Border.all(color: context.zeroPalette.border),
       ),
       child: ExpansionTile(
         tilePadding: const EdgeInsets.symmetric(horizontal: ZeroTokens.space3),
@@ -1383,8 +1397,8 @@ class _ExtensionTileState extends ConsumerState<_ExtensionTile> {
         leading: Icon(
           extension.supported ? Icons.hub_outlined : Icons.code_off_rounded,
           color: extension.supported
-              ? ZeroTokens.accentVeryLight
-              : ZeroTokens.warning,
+              ? context.zeroPalette.accentSoft
+              : context.zeroPalette.warning,
         ),
         title: Row(
           children: [
@@ -1424,7 +1438,7 @@ class _ExtensionTileState extends ConsumerState<_ExtensionTile> {
               child: Text(
                 description.replaceAll(RegExp(r'<[^>]+>'), ''),
                 style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: ZeroTokens.textLight),
+                    ?.copyWith(color: context.zeroPalette.textSecondary),
               ),
             ),
           for (final field in extension.fields)
@@ -1545,10 +1559,14 @@ class _SmallBadge extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
     decoration: BoxDecoration(
-      color: warning ? const Color(0x2233AE17) : ZeroTokens.surfaceHighlight,
+      color: warning
+          ? context.zeroPalette.warning.withValues(alpha: 0.14)
+          : context.zeroPalette.surfaceHighlight,
       borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
       border: Border.all(
-        color: warning ? ZeroTokens.warning : ZeroTokens.surfaceBorder,
+        color: warning
+            ? context.zeroPalette.warning
+            : context.zeroPalette.border,
       ),
     ),
     child: Text(label, style: Theme.of(context).textTheme.labelSmall),
@@ -1767,13 +1785,184 @@ class _DebridCardState extends ConsumerState<_DebridCard> {
                 key: const ValueKey('debrid-validation-result'),
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: _resultIsError
-                      ? ZeroTokens.errorVeryLight
-                      : ZeroTokens.completed,
+                      ? context.zeroPalette.error
+                      : context.zeroPalette.success,
                 ),
               ),
             ),
         ],
       ],
+    );
+  }
+}
+
+class _ThemePicker extends StatelessWidget {
+  const _ThemePicker({required this.selected, required this.onChanged});
+
+  final AppThemePreset selected;
+  final ValueChanged<AppThemePreset> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(
+        top: ZeroTokens.space2,
+        bottom: ZeroTokens.space4,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Theme', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: ZeroTokens.space1),
+          Text(
+            'Choose a palette. Changes apply immediately across the app.',
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: context.zeroPalette.textSecondary),
+          ),
+          const SizedBox(height: ZeroTokens.space3),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= 720
+                  ? 3
+                  : constraints.maxWidth >= 430
+                  ? 2
+                  : 1;
+              final gap = ZeroTokens.space2 * (columns - 1);
+              final width = (constraints.maxWidth - gap) / columns;
+              return Wrap(
+                spacing: ZeroTokens.space2,
+                runSpacing: ZeroTokens.space2,
+                children: [
+                  for (final theme in ZeroThemeCatalog.values)
+                    SizedBox(
+                      width: width,
+                      child: _ThemeChoice(
+                        theme: theme,
+                        selected: theme.id == selected,
+                        onTap: () => onChanged(theme.id),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThemeChoice extends StatelessWidget {
+  const _ThemeChoice({
+    required this.theme,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final ZeroThemeDefinition theme;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = context.zeroPalette;
+    final preview = theme.palette;
+    return Semantics(
+      selected: selected,
+      button: true,
+      label: '${theme.label} theme',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: ValueKey('theme-preset-${theme.id.name}'),
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
+          child: AnimatedContainer(
+            duration: ZeroTokens.motionQuick,
+            padding: const EdgeInsets.all(ZeroTokens.space3),
+            decoration: BoxDecoration(
+              color: selected ? current.navSelected : current.surfaceRaised,
+              borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
+              border: Border.all(
+                color: selected ? current.accent : current.border,
+                width: selected ? 1.5 : 1,
+              ),
+              boxShadow: selected ? current.navigationGlow : null,
+            ),
+            child: Row(
+              children: [
+                _ThemeSwatch(palette: preview),
+                const SizedBox(width: ZeroTokens.space3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        theme.label,
+                        style: Theme.of(context).textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        theme.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelSmall,
+                      ),
+                    ],
+                  ),
+                ),
+                if (selected) ...[
+                  const SizedBox(width: ZeroTokens.space1),
+                  Icon(
+                    Icons.check_circle_rounded,
+                    size: 18,
+                    color: current.accentSoft,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ThemeSwatch extends StatelessWidget {
+  const _ThemeSwatch({required this.palette});
+
+  final ZeroPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: palette.background,
+        shape: BoxShape.circle,
+        border: Border.all(color: palette.border),
+      ),
+      alignment: Alignment.center,
+      child: Container(
+        width: 21,
+        height: 21,
+        decoration: BoxDecoration(
+          color: palette.surfaceRaised,
+          shape: BoxShape.circle,
+          border: Border.all(color: palette.border),
+        ),
+        alignment: Alignment.center,
+        child: Container(
+          width: 9,
+          height: 9,
+          decoration: BoxDecoration(
+            color: palette.accent,
+            shape: BoxShape.circle,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1795,8 +1984,8 @@ class _SettingsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: ZeroTokens.surfacePanel,
-        border: Border.all(color: ZeroTokens.surfaceBorder),
+        color: context.zeroPalette.panel,
+        border: Border.all(color: context.zeroPalette.border),
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
       ),
       child: Padding(
@@ -1806,7 +1995,7 @@ class _SettingsCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(icon, color: ZeroTokens.accentVeryLight),
+                Icon(icon, color: context.zeroPalette.accentSoft),
                 const SizedBox(width: ZeroTokens.space2),
                 Text(title, style: Theme.of(context).textTheme.titleLarge),
               ],
@@ -1816,7 +2005,7 @@ class _SettingsCard extends StatelessWidget {
               Text(
                 subtitle!,
                 style: Theme.of(context).textTheme.bodyMedium
-                    ?.copyWith(color: ZeroTokens.textLight),
+                    ?.copyWith(color: context.zeroPalette.textSecondary),
               ),
             ],
             const SizedBox(height: ZeroTokens.space3),
@@ -1875,7 +2064,7 @@ class _DropdownRow<T> extends StatelessWidget {
         value: value,
         underline: const SizedBox.shrink(),
         borderRadius: BorderRadius.circular(ZeroTokens.radiusBase),
-        dropdownColor: ZeroTokens.darkLight,
+        dropdownColor: context.zeroPalette.surface,
         items: [
           for (final MapEntry(:key, :value) in items.entries)
             DropdownMenuItem(value: key, child: Text(value)),
@@ -1904,8 +2093,8 @@ class _SettingRow extends StatelessWidget {
     return Container(
       constraints: const BoxConstraints(minHeight: 64),
       padding: const EdgeInsets.symmetric(vertical: ZeroTokens.space2),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: ZeroTokens.surfaceBorder)),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: context.zeroPalette.border)),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -1917,7 +2106,7 @@ class _SettingRow extends StatelessWidget {
               Text(
                 description,
                 style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: ZeroTokens.textLight),
+                    ?.copyWith(color: context.zeroPalette.textSecondary),
               ),
             ],
           );

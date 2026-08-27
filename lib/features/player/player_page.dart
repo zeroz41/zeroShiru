@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/theme/palette.dart';
+import '../../app/theme/theme.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/widgets/hover_region.dart';
 import '../../application/learning/providers.dart';
@@ -891,92 +893,97 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   Widget build(BuildContext context) {
     final learningSettings =
         ref.watch(settingsControllerProvider).value ?? const Settings();
-    return PopScope<Object?>(
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) unawaited(_pauseForExit());
-      },
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Focus(
-          autofocus: true,
-          onKeyEvent: _onKeyEvent,
-          child: StreamBuilder<PlaybackSnapshot>(
-            stream: _engine.state,
-            initialData: _idleSnapshot,
-            builder: (context, state) {
-              final snapshot = state.data ?? _idleSnapshot;
-              _latest = snapshot;
-              if (snapshot.phase != PlaybackPhase.idle &&
-                  snapshot.phase != PlaybackPhase.opening) {
-                _syncSubtitleScale(learningSettings.subtitleTextScale);
-              }
-              _maybePrepareLearningTracks(snapshot, learningSettings);
-              return _PlayerStage(
-                snapshot: snapshot,
-                snapshots: _engine.state,
-                learningSettings: learningSettings,
-                source: _source,
-                launch: _launch,
-                resolving: _resolving,
-                resolveStatus: _resolveStatus,
-                resolveError: _resolveError,
-                surface: _fit == BoxFit.contain
-                    ? _surface
-                    : _backend.buildSurface(
-                        key: const ValueKey('playback-surface'),
-                        fit: _fit,
-                      ),
-                fit: _fit,
-                primaryCue: _primaryCue,
-                secondaryCue: _secondaryCue,
-                learningPreparationPending: _learningPreparationPending,
-                learningPreparationResult: _learningPreparationResult,
-                onBack: () => unawaited(_leave()),
-                onRetry: _source == null && _launch == null
-                    ? null
-                    : () => unawaited(_retry()),
-                onTogglePlayback: () => _run(_togglePlayback),
-                onPreviousEpisode: (_launch?.episode ?? 1) > 1
-                    ? () => unawaited(_switchEpisode(-1))
-                    : null,
-                onNextEpisode:
-                    _launch != null &&
-                        _launch!.media.maxEpisode != null &&
-                        _launch!.episode < _launch!.media.maxEpisode!
-                    ? () => unawaited(_switchEpisode(1))
-                    : null,
-                onSeek: (position) => _run(() => _engine.seek(position)),
-                onVolume: (volume) => _run(() => _engine.setVolume(volume)),
-                onToggleMute: () => _run(_toggleMute),
-                onSpeed: (speed) => _run(() => _engine.setSpeed(speed)),
-                onAudio: (track) => _run(() => _selectAudioTrack(track)),
-                onSubtitle: (track) =>
-                    _run(() => _selectPrimarySubtitle(track)),
-                onSecondarySubtitle: (track) =>
-                    _run(() => _selectSecondarySubtitle(track)),
-                onSubtitleRendering: _setSubtitleRendering,
-                onPrepareLearningTracks: _prepareLearningTracks,
-                onLearningLookup: () {
-                  if (snapshot.phase == PlaybackPhase.playing ||
-                      snapshot.phase == PlaybackPhase.buffering) {
-                    _run(_engine.pause);
-                  }
-                },
-                onSubtitleDelay: (delay, secondary) => _run(
-                  () =>
-                      _setAndRememberSubtitleDelay(delay, secondary: secondary),
-                ),
-                onAddSubtitle: (request) => _run(() async {
-                  final trackId = await _engine.addSubtitle(
-                    request.source,
-                    title: request.title,
-                    language: request.language,
-                  );
-                  _pickedPrimarySubtitle = trackId;
-                }),
-                onToggleFit: _toggleFit,
-              );
-            },
+    return Theme(
+      data: buildZeroTheme(context.zeroPalette.forPlayer),
+      child: PopScope<Object?>(
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) unawaited(_pauseForExit());
+        },
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Focus(
+            autofocus: true,
+            onKeyEvent: _onKeyEvent,
+            child: StreamBuilder<PlaybackSnapshot>(
+              stream: _engine.state,
+              initialData: _idleSnapshot,
+              builder: (context, state) {
+                final snapshot = state.data ?? _idleSnapshot;
+                _latest = snapshot;
+                if (snapshot.phase != PlaybackPhase.idle &&
+                    snapshot.phase != PlaybackPhase.opening) {
+                  _syncSubtitleScale(learningSettings.subtitleTextScale);
+                }
+                _maybePrepareLearningTracks(snapshot, learningSettings);
+                return _PlayerStage(
+                  snapshot: snapshot,
+                  snapshots: _engine.state,
+                  learningSettings: learningSettings,
+                  source: _source,
+                  launch: _launch,
+                  resolving: _resolving,
+                  resolveStatus: _resolveStatus,
+                  resolveError: _resolveError,
+                  surface: _fit == BoxFit.contain
+                      ? _surface
+                      : _backend.buildSurface(
+                          key: const ValueKey('playback-surface'),
+                          fit: _fit,
+                        ),
+                  fit: _fit,
+                  primaryCue: _primaryCue,
+                  secondaryCue: _secondaryCue,
+                  learningPreparationPending: _learningPreparationPending,
+                  learningPreparationResult: _learningPreparationResult,
+                  onBack: () => unawaited(_leave()),
+                  onRetry: _source == null && _launch == null
+                      ? null
+                      : () => unawaited(_retry()),
+                  onTogglePlayback: () => _run(_togglePlayback),
+                  onPreviousEpisode: (_launch?.episode ?? 1) > 1
+                      ? () => unawaited(_switchEpisode(-1))
+                      : null,
+                  onNextEpisode:
+                      _launch != null &&
+                          _launch!.media.maxEpisode != null &&
+                          _launch!.episode < _launch!.media.maxEpisode!
+                      ? () => unawaited(_switchEpisode(1))
+                      : null,
+                  onSeek: (position) => _run(() => _engine.seek(position)),
+                  onVolume: (volume) => _run(() => _engine.setVolume(volume)),
+                  onToggleMute: () => _run(_toggleMute),
+                  onSpeed: (speed) => _run(() => _engine.setSpeed(speed)),
+                  onAudio: (track) => _run(() => _selectAudioTrack(track)),
+                  onSubtitle: (track) =>
+                      _run(() => _selectPrimarySubtitle(track)),
+                  onSecondarySubtitle: (track) =>
+                      _run(() => _selectSecondarySubtitle(track)),
+                  onSubtitleRendering: _setSubtitleRendering,
+                  onPrepareLearningTracks: _prepareLearningTracks,
+                  onLearningLookup: () {
+                    if (snapshot.phase == PlaybackPhase.playing ||
+                        snapshot.phase == PlaybackPhase.buffering) {
+                      _run(_engine.pause);
+                    }
+                  },
+                  onSubtitleDelay: (delay, secondary) => _run(
+                    () => _setAndRememberSubtitleDelay(
+                      delay,
+                      secondary: secondary,
+                    ),
+                  ),
+                  onAddSubtitle: (request) => _run(() async {
+                    final trackId = await _engine.addSubtitle(
+                      request.source,
+                      title: request.title,
+                      language: request.language,
+                    );
+                    _pickedPrimarySubtitle = trackId;
+                  }),
+                  onToggleFit: _toggleFit,
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -1104,9 +1111,9 @@ class _PlayerStage extends StatelessWidget {
           if (!artworkLoading &&
               snapshot.phase == PlaybackPhase.buffering &&
               resolveError == null)
-            const Center(
+            Center(
               child: CircularProgressIndicator(
-                color: ZeroTokens.highlight,
+                color: context.zeroPalette.text,
                 strokeWidth: 2,
               ),
             ),
@@ -1353,7 +1360,9 @@ class _TopChrome extends StatelessWidget {
                           Text(
                             subtitle!,
                             style: Theme.of(context).textTheme.labelMedium
-                                ?.copyWith(color: ZeroTokens.textLight),
+                                ?.copyWith(
+                                  color: context.zeroPalette.textSecondary,
+                                ),
                           ),
                       ],
                     ),
@@ -1362,8 +1371,10 @@ class _TopChrome extends StatelessWidget {
                     const SizedBox(width: ZeroTokens.space3),
                     DecoratedBox(
                       decoration: BoxDecoration(
-                        color: const Color(0xCC202327),
-                        border: Border.all(color: ZeroTokens.surfaceBorder),
+                        color: context.zeroPalette.surface.withValues(
+                          alpha: 0.8,
+                        ),
+                        border: Border.all(color: context.zeroPalette.border),
                         borderRadius: BorderRadius.circular(
                           ZeroTokens.radiusPill,
                         ),
@@ -1376,10 +1387,10 @@ class _TopChrome extends StatelessWidget {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(
+                            Icon(
                               Icons.cloud_outlined,
                               size: 16,
-                              color: ZeroTokens.accentVeryLight,
+                              color: context.zeroPalette.accentSoft,
                             ),
                             const SizedBox(width: ZeroTokens.space1),
                             Text(
@@ -1420,10 +1431,10 @@ class _PlayerLoading extends StatelessWidget {
             image: CachedNetworkImageProvider(background),
             fit: BoxFit.cover,
             errorBuilder: (_, _, _) =>
-                const ColoredBox(color: ZeroTokens.darkVeryDim),
+                ColoredBox(color: context.zeroPalette.surfaceModal),
           )
         else
-          const ColoredBox(color: ZeroTokens.darkVeryDim),
+          ColoredBox(color: context.zeroPalette.surfaceModal),
         const DecoratedBox(
           decoration: BoxDecoration(
             gradient: RadialGradient(
@@ -1490,13 +1501,14 @@ class _LoadingCover extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(ZeroTokens.radiusCard),
-        border: Border.all(color: const Color(0x38FFFFFF)),
-        boxShadow: const [
+        border: Border.all(color: colors.border),
+        boxShadow: [
           BoxShadow(
-            color: Color(0xA6000000),
+            color: Colors.black.withValues(alpha: 0.65),
             blurRadius: 30,
             offset: Offset(0, 14),
           ),
@@ -1507,12 +1519,12 @@ class _LoadingCover extends StatelessWidget {
         child: AspectRatio(
           aspectRatio: ZeroTokens.cardArtAspect,
           child: url == null
-              ? const ColoredBox(color: ZeroTokens.darkVeryLight)
+              ? ColoredBox(color: colors.surfaceRaised)
               : Image(
                   image: CachedNetworkImageProvider(url!),
                   fit: BoxFit.cover,
                   errorBuilder: (_, _, _) =>
-                      const ColoredBox(color: ZeroTokens.darkVeryLight),
+                      ColoredBox(color: colors.surfaceRaised),
                 ),
         ),
       ),
@@ -1549,13 +1561,13 @@ class _LoadingCopy extends StatelessWidget {
         Text(
           'Episode $episode',
           style: Theme.of(context).textTheme.titleMedium
-              ?.copyWith(color: ZeroTokens.textLight),
+              ?.copyWith(color: context.zeroPalette.textSecondary),
         ),
         const SizedBox(height: ZeroTokens.space4),
         DecoratedBox(
           decoration: BoxDecoration(
-            color: const Color(0xD9090A0B),
-            border: Border.all(color: ZeroTokens.surfaceBorder),
+            color: context.zeroPalette.surfaceModal.withValues(alpha: 0.85),
+            border: Border.all(color: context.zeroPalette.border),
             borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
           ),
           child: Padding(
@@ -1566,11 +1578,11 @@ class _LoadingCopy extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const SizedBox.square(
+                SizedBox.square(
                   dimension: 15,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: ZeroTokens.accentVeryLight,
+                    color: context.zeroPalette.accentSoft,
                   ),
                 ),
                 const SizedBox(width: ZeroTokens.space2),
@@ -1600,10 +1612,10 @@ class _IdlePlayer extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
+          Icon(
             Icons.play_circle_outline_rounded,
             size: 52,
-            color: ZeroTokens.textMuted,
+            color: context.zeroPalette.textMuted,
           ),
           const SizedBox(height: ZeroTokens.space3),
           Text(
@@ -1639,10 +1651,10 @@ class _PlayerFailure extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
+                Icon(
                   Icons.error_outline_rounded,
                   size: 46,
-                  color: ZeroTokens.errorVeryLight,
+                  color: context.zeroPalette.error,
                 ),
                 const SizedBox(height: ZeroTokens.space4),
                 Text(
@@ -1794,10 +1806,10 @@ class _PlayerControls extends StatelessWidget {
                       Text(
                         '${_formatDuration(snapshot.position)} / '
                         '${_formatDuration(duration)}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: ZeroTokens.fontFamilyStats,
                           fontSize: ZeroTokens.fontSize12,
-                          color: ZeroTokens.text,
+                          color: context.zeroPalette.text,
                         ),
                       ),
                       const Spacer(),
@@ -1946,10 +1958,12 @@ class _SeekBarState extends State<_SeekBar> {
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
               trackHeight: 3,
-              activeTrackColor: ZeroTokens.seekbarAccent,
+              activeTrackColor: context.zeroPalette.seekbarAccent,
               inactiveTrackColor: Colors.transparent,
-              thumbColor: ZeroTokens.seekbarAccent,
-              overlayColor: const Color(0x33E5204C),
+              thumbColor: context.zeroPalette.seekbarAccent,
+              overlayColor: context.zeroPalette.seekbarAccent.withValues(
+                alpha: 0.2,
+              ),
               thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
             ),
             child: Slider(
@@ -2498,7 +2512,9 @@ class _LearningWord extends StatelessWidget {
       duration: ZeroTokens.motionQuick,
       padding: const EdgeInsets.symmetric(horizontal: 1, vertical: 1),
       decoration: BoxDecoration(
-        color: selected ? const Color(0x593F8CFF) : Colors.transparent,
+        color: selected
+            ? context.zeroPalette.accent.withValues(alpha: 0.35)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(ZeroTokens.radiusBase),
       ),
       child: Column(
@@ -2523,9 +2539,9 @@ class _LearningWord extends StatelessWidget {
             ),
           Text(
             main,
-            style: _learningMainTextStyle(
-              scale,
-            ).copyWith(color: selected ? ZeroTokens.highlight : Colors.white),
+            style: _learningMainTextStyle(scale).copyWith(
+              color: selected ? context.zeroPalette.text : Colors.white,
+            ),
           ),
           if (showRomaji && (showKanji || showKana))
             SizedBox(
@@ -2604,12 +2620,17 @@ class _DefinitionPanel extends StatelessWidget {
           ZeroTokens.space3,
         ),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
+          gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xD9202327), Color(0xC7121416)],
+            colors: [
+              context.zeroPalette.surface.withValues(alpha: 0.85),
+              context.zeroPalette.shell.withValues(alpha: 0.78),
+            ],
           ),
-          border: Border.all(color: const Color(0x4D9F67FF)),
+          border: Border.all(
+            color: context.zeroPalette.accentHover.withValues(alpha: 0.3),
+          ),
           borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
           boxShadow: const [
             BoxShadow(
@@ -2628,7 +2649,7 @@ class _DefinitionPanel extends StatelessWidget {
                 Text(
                   token.baseForm ?? token.surface,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: ZeroTokens.highlight,
+                    color: context.zeroPalette.text,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -2639,7 +2660,7 @@ class _DefinitionPanel extends StatelessWidget {
                       reading,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall
-                          ?.copyWith(color: ZeroTokens.accentVeryLight),
+                          ?.copyWith(color: context.zeroPalette.accentSoft),
                     ),
                   ),
                 ],
@@ -2647,7 +2668,7 @@ class _DefinitionPanel extends StatelessWidget {
                   const SizedBox(width: ZeroTokens.space2),
                   DecoratedBox(
                     decoration: BoxDecoration(
-                      color: const Color(0x247C3AED),
+                      color: context.zeroPalette.navSelected,
                       borderRadius: BorderRadius.circular(
                         ZeroTokens.radiusPill,
                       ),
@@ -2659,8 +2680,9 @@ class _DefinitionPanel extends StatelessWidget {
                       ),
                       child: Text(
                         token.partOfSpeech!,
-                        style: Theme.of(context).textTheme.labelSmall
-                            ?.copyWith(color: ZeroTokens.textLight),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: context.zeroPalette.textSecondary,
+                        ),
                       ),
                     ),
                   ),
@@ -2709,8 +2731,10 @@ class _DefinitionPanel extends StatelessWidget {
                     summary,
                     maxLines: 3,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyMedium
-                        ?.copyWith(color: ZeroTokens.text, height: 1.3),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: context.zeroPalette.text,
+                      height: 1.3,
+                    ),
                   );
                 },
               ),
@@ -2735,8 +2759,8 @@ class _LearningNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) => DecoratedBox(
     decoration: BoxDecoration(
-      color: const Color(0xB3121416),
-      border: Border.all(color: const Color(0x38FFFFFF)),
+      color: context.zeroPalette.shell.withValues(alpha: 0.7),
+      border: Border.all(color: context.zeroPalette.border),
       borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
       boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 10)],
     ),
@@ -2754,10 +2778,10 @@ class _LearningNotice extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           else
-            const Icon(
+            Icon(
               Icons.subtitles_off_rounded,
               size: 17,
-              color: ZeroTokens.warning,
+              color: context.zeroPalette.warning,
             ),
           const SizedBox(width: ZeroTokens.space2),
           Flexible(
@@ -3044,12 +3068,12 @@ class _SubtitlePanelState extends ConsumerState<_SubtitlePanel> {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 640, maxHeight: 680),
       child: Material(
-        color: ZeroTokens.surfaceShell,
+        color: context.zeroPalette.shell,
         elevation: 24,
         shadowColor: Colors.black,
         clipBehavior: Clip.antiAlias,
         shape: RoundedRectangleBorder(
-          side: const BorderSide(color: ZeroTokens.surfaceBorder),
+          side: BorderSide(color: context.zeroPalette.border),
           borderRadius: BorderRadius.circular(ZeroTokens.radiusSurfaceTop),
         ),
         child: SingleChildScrollView(
@@ -3059,9 +3083,9 @@ class _SubtitlePanelState extends ConsumerState<_SubtitlePanel> {
             children: [
               Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.translate_rounded,
-                    color: ZeroTokens.accentVeryLight,
+                    color: context.zeroPalette.accentSoft,
                   ),
                   const SizedBox(width: ZeroTokens.space2),
                   Expanded(
@@ -3150,14 +3174,14 @@ class _SubtitlePanelState extends ConsumerState<_SubtitlePanel> {
                 DecoratedBox(
                   decoration: BoxDecoration(
                     color: _learningMessagePositive
-                        ? const Color(0x1F22C55E)
-                        : const Color(0x2233AE17),
+                        ? context.zeroPalette.success.withValues(alpha: 0.12)
+                        : context.zeroPalette.warning.withValues(alpha: 0.13),
                     border: Border.all(
                       color: _learningMessagePositive
-                          ? ZeroTokens.completed
+                          ? context.zeroPalette.success
                           : _findingJapanese
-                          ? ZeroTokens.accentLight
-                          : ZeroTokens.warning,
+                          ? context.zeroPalette.accentHover
+                          : context.zeroPalette.warning,
                     ),
                     borderRadius: BorderRadius.circular(ZeroTokens.radiusBase),
                   ),
@@ -3177,8 +3201,8 @@ class _SubtitlePanelState extends ConsumerState<_SubtitlePanel> {
                                 ? Icons.check_circle_outline_rounded
                                 : Icons.info_outline_rounded,
                             color: _learningMessagePositive
-                                ? ZeroTokens.completed
-                                : ZeroTokens.warning,
+                                ? context.zeroPalette.success
+                                : context.zeroPalette.warning,
                             size: 19,
                           ),
                         const SizedBox(width: ZeroTokens.space2),
@@ -3345,8 +3369,8 @@ class _TrackPickerRow extends StatelessWidget {
       ],
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: ZeroTokens.surfacePanel,
-          border: Border.all(color: ZeroTokens.surfaceBorder),
+          color: context.zeroPalette.panel,
+          border: Border.all(color: context.zeroPalette.border),
           borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
         ),
         child: Padding(
@@ -3369,7 +3393,7 @@ class _TrackPickerRow extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyMedium
-                          ?.copyWith(color: ZeroTokens.accentVeryLight),
+                          ?.copyWith(color: context.zeroPalette.accentSoft),
                     ),
                   ],
                 ),

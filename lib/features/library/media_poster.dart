@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/widgets/poster_card.dart';
 import '../../domain/models/media.dart';
@@ -26,14 +27,14 @@ class MediaPoster extends StatelessWidget {
       bloomColor: parseMediaColor(media.coverColor),
       airing: media.status == MediaStatus.releasing,
       progress: _progress(media),
-      metadata: _metadata(media),
+      metadata: _metadata(media, context.zeroPalette),
       width: width,
       onTap: onTap,
     );
   }
 }
 
-List<PosterCardMetadata> _metadata(Media media) {
+List<PosterCardMetadata> _metadata(Media media, ZeroPalette colors) {
   final identity = [
     if (media.seasonYear != null) '${media.seasonYear}',
     if (media.format != null && media.format != MediaFormat.unknown)
@@ -47,7 +48,7 @@ List<PosterCardMetadata> _metadata(Media media) {
               ? 'Episode ${entry.progress}'
               : 'Ep ${entry.progress} of ${media.maxEpisode}',
           icon: Icons.play_circle_outline_rounded,
-          color: ZeroTokens.accentVeryLight,
+          color: colors.accentSoft,
         ),
     if (media.listEntry?.progress == null || media.listEntry!.progress == 0)
       if (identity.isNotEmpty) PosterCardMetadata(identity),
@@ -55,7 +56,7 @@ List<PosterCardMetadata> _metadata(Media media) {
       PosterCardMetadata(
         '${media.averageScore}%',
         icon: Icons.star_rounded,
-        color: ZeroTokens.warning,
+        color: colors.warning,
       ),
   ];
 }

@@ -3,11 +3,25 @@ import 'debrid_route.dart';
 
 const Object _unsetSetting = Object();
 
+/// Stable identifiers for the built-in visual themes.
+enum AppThemePreset {
+  standard,
+  crimson,
+  oled,
+  light,
+  midnight,
+  catppuccinMocha,
+  gruvboxDark,
+  solarizedDark,
+  everforestDark,
+}
+
 /// Typed application settings with the redo branch's defaults. Persisted as a
 /// keyed map by SettingsRepository; this class is the schema.
 class Settings {
   const Settings({
     // Interface
+    this.themePreset = AppThemePreset.standard,
     this.titleLanguage = 'romaji',
     this.cardSize = 'small',
     this.adultContent = 'none',
@@ -55,6 +69,7 @@ class Settings {
     this.torrentPath = '',
   });
 
+  final AppThemePreset themePreset;
   final String titleLanguage;
   final String cardSize;
   final String adultContent;
@@ -136,6 +151,7 @@ class Settings {
   /// Field-wise immutable update. [debridService] distinguishes an omitted
   /// value from an explicit `null`, which disables the selected service.
   Settings copyWith({
+    AppThemePreset? themePreset,
     String? titleLanguage,
     String? cardSize,
     String? adultContent,
@@ -178,6 +194,7 @@ class Settings {
     String? torrentPath,
   }) {
     return Settings(
+      themePreset: themePreset ?? this.themePreset,
       titleLanguage: titleLanguage ?? this.titleLanguage,
       cardSize: cardSize ?? this.cardSize,
       adultContent: adultContent ?? this.adultContent,

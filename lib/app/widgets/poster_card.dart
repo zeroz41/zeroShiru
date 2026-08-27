@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../theme/palette.dart';
 import '../theme/tokens.dart';
 import 'hover_region.dart';
 
@@ -137,6 +138,7 @@ class _PosterCardState extends State<PosterCard> {
 
   Widget _buildCard(BuildContext context, bool hovered, bool lifted) {
     final showHoverSkin = hovered || _pressed;
+    final colors = context.zeroPalette;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -150,7 +152,7 @@ class _PosterCardState extends State<PosterCard> {
             child: DecoratedBox(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(ZeroTokens.radiusCard),
-                boxShadow: ZeroTokens.liftShadow(widget.bloomColor),
+                boxShadow: colors.liftShadow(widget.bloomColor),
               ),
             ),
           ),
@@ -160,16 +162,16 @@ class _PosterCardState extends State<PosterCard> {
           child: DecoratedBox(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(ZeroTokens.radiusCard),
-              border: Border.all(color: ZeroTokens.surfaceBorder),
-              gradient: const LinearGradient(
+              border: Border.all(color: colors.border),
+              gradient: LinearGradient(
                 begin: Alignment(-0.42, -1), // ~165deg
                 end: Alignment(0.42, 1),
                 colors: [
-                  ZeroTokens.surfacePanel,
-                  Color(0xB817191C), // hsla(220,10%,10%,.72)
+                  colors.panel,
+                  colors.background.withValues(alpha: colors.panel.a),
                 ],
               ),
-              boxShadow: ZeroTokens.cardShadow,
+              boxShadow: colors.cardShadow,
             ),
           ),
         ),
@@ -183,8 +185,8 @@ class _PosterCardState extends State<PosterCard> {
             child: DecoratedBox(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(ZeroTokens.radiusCard),
-                border: Border.all(color: ZeroTokens.cardHoverBorder),
-                color: ZeroTokens.cardHoverBg,
+                border: Border.all(color: colors.cardHoverBorder),
+                color: colors.cardHover,
               ),
             ),
           ),
@@ -212,7 +214,7 @@ class _PosterCardState extends State<PosterCard> {
                             child: LinearProgressIndicator(
                               value: progress,
                               minHeight: 3,
-                              color: ZeroTokens.accentLight,
+                              color: colors.accentHover,
                               backgroundColor: const Color(0x99000000),
                             ),
                           ),
@@ -226,12 +228,12 @@ class _PosterCardState extends State<PosterCard> {
                     widget.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: ZeroTokens.fontFamily,
                       fontSize: ZeroTokens.fontScale14,
                       fontWeight: FontWeight.w700,
                       height: 1.2,
-                      color: ZeroTokens.text,
+                      color: colors.text,
                     ),
                   ),
                 ),
@@ -263,7 +265,7 @@ class _PosterCardState extends State<PosterCard> {
                     ZeroTokens.radiusCard + ZeroTokens.focusRingOffset,
                   ),
                   border: Border.all(
-                    color: ZeroTokens.accent,
+                    color: colors.accent,
                     width: ZeroTokens.focusRingWidth,
                   ),
                 ),
@@ -275,17 +277,17 @@ class _PosterCardState extends State<PosterCard> {
   }
 
   Widget _artwork(BuildContext context) {
+    final colors = context.zeroPalette;
     if (widget.imageBuilder != null) return widget.imageBuilder!(context);
     if (widget.image != null) {
       return Image(
         image: widget.image!,
         fit: BoxFit.cover,
         gaplessPlayback: true,
-        errorBuilder: (_, _, _) =>
-            const ColoredBox(color: ZeroTokens.darkVeryLight),
+        errorBuilder: (_, _, _) => ColoredBox(color: colors.surfaceRaised),
       );
     }
-    return const ColoredBox(color: ZeroTokens.darkVeryLight);
+    return ColoredBox(color: colors.surfaceRaised);
   }
 }
 
@@ -319,7 +321,7 @@ class _MetadataItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = item.color ?? ZeroTokens.textMuted;
+    final color = item.color ?? context.zeroPalette.textMuted;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -351,32 +353,33 @@ class _AiringBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xE6192B20),
-        border: Border.all(color: const Color(0x8A69D454)),
+        color: colors.success.withValues(alpha: 0.18),
+        border: Border.all(color: colors.success.withValues(alpha: 0.55)),
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
       ),
-      child: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             DecoratedBox(
               decoration: BoxDecoration(
-                color: ZeroTokens.completed,
+                color: colors.success,
                 shape: BoxShape.circle,
               ),
-              child: SizedBox.square(dimension: 5),
+              child: const SizedBox.square(dimension: 5),
             ),
-            SizedBox(width: 4),
+            const SizedBox(width: 4),
             Text(
               'AIRING',
               style: TextStyle(
                 fontFamily: ZeroTokens.fontFamily,
                 fontSize: 8,
                 fontWeight: FontWeight.w800,
-                color: ZeroTokens.highlight,
+                color: colors.text,
                 letterSpacing: 0.6,
               ),
             ),

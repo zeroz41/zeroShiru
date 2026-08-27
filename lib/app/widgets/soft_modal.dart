@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../theme/palette.dart';
 import '../theme/tokens.dart';
 
 /// Shows a dialog with the app's soft-modal treatment (design-map §1.11/§1.13):
@@ -83,6 +84,7 @@ class SoftModal extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return Center(
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: maxWidth),
@@ -90,10 +92,10 @@ class SoftModal extends StatelessWidget {
           type: MaterialType.transparency,
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: ZeroTokens.darkVeryDim,
+              color: colors.surfaceModal,
               borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
-              border: Border.all(color: ZeroTokens.surfaceBorder),
-              boxShadow: ZeroTokens.toastShadow,
+              border: Border.all(color: colors.border),
+              boxShadow: colors.toastShadow,
             ),
             child: Padding(padding: padding, child: child),
           ),

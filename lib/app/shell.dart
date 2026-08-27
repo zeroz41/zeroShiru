@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../application/library/providers.dart';
 import '../domain/models/tracking_account.dart';
+import 'theme/palette.dart';
 import 'theme/tokens.dart';
 import 'widgets/ambient_background.dart';
 import 'widgets/empty_state.dart';
@@ -103,6 +104,7 @@ class _SideRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final colors = context.zeroPalette;
     return RepaintBoundary(
       child: AnimatedContainer(
         key: const ValueKey('desktop-navigation-rail'),
@@ -111,14 +113,14 @@ class _SideRail extends StatelessWidget {
             : ZeroTokens.sidebarWidth,
         duration: reduceMotion ? Duration.zero : ZeroTokens.motion,
         curve: ZeroTokens.easeSettle,
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [ZeroTokens.surfacePanelStrong, ZeroTokens.surfaceShell],
+            colors: [colors.panelStrong, colors.shell],
           ),
-          border: Border(right: BorderSide(color: ZeroTokens.surfaceBorder)),
-          boxShadow: ZeroTokens.sidebarShadow,
+          border: Border(right: BorderSide(color: colors.border)),
+          boxShadow: colors.sidebarShadow,
         ),
         child: ClipRect(
           child: Column(
@@ -188,6 +190,7 @@ class _RailHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final colors = context.zeroPalette;
     return SizedBox(
       height: ZeroTokens.brandMarkSize,
       child: AnimatedSwitcher(
@@ -214,14 +217,14 @@ class _RailHeader extends StatelessWidget {
                   children: [
                     const _BrandMark(size: 36),
                     const SizedBox(width: ZeroTokens.space2),
-                    const Expanded(
+                    Expanded(
                       child: Text(
                         'Zero',
                         maxLines: 1,
                         overflow: TextOverflow.fade,
                         softWrap: false,
                         style: TextStyle(
-                          color: ZeroTokens.highlight,
+                          color: colors.text,
                           fontWeight: FontWeight.w800,
                           fontSize: ZeroTokens.fontScale16,
                         ),
@@ -254,16 +257,17 @@ class _BottomBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return Container(
       height: ZeroTokens.sidebarWidth,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.bottomCenter,
           end: Alignment.topCenter,
-          colors: [ZeroTokens.surfacePanelStrong, ZeroTokens.surfaceShell],
+          colors: [colors.panelStrong, colors.shell],
         ),
-        border: Border(top: BorderSide(color: ZeroTokens.surfaceBorder)),
-        boxShadow: ZeroTokens.bottombarShadow,
+        border: Border(top: BorderSide(color: colors.border)),
+        boxShadow: colors.bottomBarShadow,
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -350,16 +354,17 @@ class _PanelHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return Row(
       children: [
         DecoratedBox(
-          decoration: const BoxDecoration(
-            color: Color(0x297C3AED),
+          decoration: BoxDecoration(
+            color: colors.navSelected,
             shape: BoxShape.circle,
           ),
           child: Padding(
             padding: const EdgeInsets.all(ZeroTokens.space2),
-            child: Icon(icon, color: ZeroTokens.accentVeryLight),
+            child: Icon(icon, color: colors.accentSoft),
           ),
         ),
         const SizedBox(width: ZeroTokens.space3),
@@ -476,23 +481,24 @@ class _AccountMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: ZeroTokens.surfacePanel,
+        color: colors.panel,
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
-        border: Border.all(color: ZeroTokens.surfaceBorder),
+        border: Border.all(color: colors.border),
       ),
       child: Padding(
         padding: const EdgeInsets.all(ZeroTokens.space4),
         child: Row(
           children: [
-            Icon(icon, color: ZeroTokens.textLight),
+            Icon(icon, color: colors.textSecondary),
             const SizedBox(width: ZeroTokens.space3),
             Expanded(
               child: Text(
                 message,
                 style: Theme.of(context).textTheme.bodyMedium
-                    ?.copyWith(color: ZeroTokens.textLight, height: 1.4),
+                    ?.copyWith(color: colors.textSecondary, height: 1.4),
               ),
             ),
             ?action,
@@ -510,6 +516,7 @@ class _TrackingAccountRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     final (service, color) = switch (account.service) {
       TrackingAccountService.aniList => ('AniList', ZeroTokens.aniList),
       TrackingAccountService.myAnimeList => (
@@ -520,25 +527,25 @@ class _TrackingAccountRow extends StatelessWidget {
     final (status, statusColor, statusIcon) = switch (account.health) {
       TrackingAccountHealth.connected => (
         'Connected',
-        ZeroTokens.completed,
+        colors.success,
         Icons.check_circle_outline_rounded,
       ),
       TrackingAccountHealth.attention => (
         'Reconnect soon',
-        ZeroTokens.warning,
+        colors.warning,
         Icons.schedule_rounded,
       ),
       TrackingAccountHealth.expired => (
         'Reconnect required',
-        ZeroTokens.errorVeryLight,
+        colors.error,
         Icons.error_outline_rounded,
       ),
     };
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: ZeroTokens.surfacePanel,
+        color: colors.panel,
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
-        border: Border.all(color: ZeroTokens.surfaceBorder),
+        border: Border.all(color: colors.border),
       ),
       child: Padding(
         padding: const EdgeInsets.all(ZeroTokens.space3),
@@ -551,8 +558,8 @@ class _TrackingAccountRow extends StatelessWidget {
                   : NetworkImage(account.avatarUrl!),
               child: Text(
                 service.characters.first,
-                style: const TextStyle(
-                  color: ZeroTokens.highlight,
+                style: TextStyle(
+                  color: colors.onAccent,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -631,11 +638,12 @@ class _Shortcut extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: ZeroTokens.darkVeryLight,
+        color: colors.surfaceRaised,
         borderRadius: BorderRadius.circular(ZeroTokens.radiusBase),
-        border: Border.all(color: ZeroTokens.surfaceBorder),
+        border: Border.all(color: colors.border),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(
@@ -656,6 +664,7 @@ class _BrandMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return Container(
       width: size,
       height: size,
@@ -663,11 +672,11 @@ class _BrandMark extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(ZeroTokens.radiusBrand),
         color: const Color(0xFFF7F5FF),
-        border: Border.all(color: const Color(0x4DC4B5FD)),
-        boxShadow: const [
+        border: Border.all(color: colors.accentSoft.withValues(alpha: 0.3)),
+        boxShadow: [
           BoxShadow(
-            color: Color(0x527C3AED),
-            offset: Offset(0, 4),
+            color: colors.accent.withValues(alpha: 0.32),
+            offset: const Offset(0, 4),
             blurRadius: 12,
           ),
         ],
@@ -676,9 +685,8 @@ class _BrandMark extends StatelessWidget {
         'assets/images/zero-app-icon.png',
         fit: BoxFit.cover,
         filterQuality: FilterQuality.high,
-        errorBuilder: (_, _, _) => const Center(
-          child: Icon(Icons.play_arrow_rounded, color: ZeroTokens.accent),
-        ),
+        errorBuilder: (_, _, _) =>
+            Center(child: Icon(Icons.play_arrow_rounded, color: colors.accent)),
       ),
     );
   }
@@ -723,6 +731,7 @@ class _NavItemState extends State<_NavItem> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     final d = widget.destination;
     final icon = d?.icon ?? widget.icon!;
     final label = d?.label ?? widget.label!;
@@ -731,11 +740,11 @@ class _NavItemState extends State<_NavItem> {
       cursor: SystemMouseCursors.click,
       builder: (context, hovered) {
         final iconColor = widget.active
-            ? ZeroTokens.accentVeryLight
-            : (hovered ? ZeroTokens.highlight : ZeroTokens.textMuted);
+            ? colors.accentSoft
+            : (hovered ? colors.text : colors.textMuted);
         final labelColor = widget.active
-            ? ZeroTokens.highlight
-            : (hovered ? ZeroTokens.highlight : ZeroTokens.textMuted);
+            ? colors.text
+            : (hovered ? colors.text : colors.textMuted);
         return Semantics(
           selected: widget.active,
           button: true,
@@ -764,16 +773,16 @@ class _NavItemState extends State<_NavItem> {
                           borderRadius: BorderRadius.circular(
                             ZeroTokens.radiusPanel,
                           ),
-                          gradient: const LinearGradient(
+                          gradient: LinearGradient(
                             begin: Alignment(-0.57, -1), // ~145deg
                             end: Alignment(0.57, 1),
                             colors: [
-                              ZeroTokens.navPillGradTop,
-                              ZeroTokens.navPillGradBottom,
+                              colors.navSelected,
+                              colors.navSelected.withValues(alpha: 0.48),
                             ],
                           ),
-                          border: Border.all(color: ZeroTokens.navPillRing),
-                          boxShadow: ZeroTokens.navPillGlow,
+                          border: Border.all(color: colors.navSelectedBorder),
+                          boxShadow: colors.navigationGlow,
                         ),
                       ),
                     ),
@@ -793,9 +802,7 @@ class _NavItemState extends State<_NavItem> {
                           borderRadius: BorderRadius.circular(
                             ZeroTokens.radiusPanel,
                           ),
-                          color: _pressed
-                              ? ZeroTokens.navPressWash
-                              : ZeroTokens.navHoverWash,
+                          color: _pressed ? colors.navPress : colors.navHover,
                         ),
                       ),
                     ),

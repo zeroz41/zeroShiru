@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/widgets/empty_state.dart';
 import '../../app/widgets/page_motion.dart';
@@ -360,16 +361,10 @@ class _SearchToolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: ZeroTokens.surfacePanelStrong,
-        border: Border(bottom: BorderSide(color: ZeroTokens.surfaceBorder)),
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x40000000),
-            offset: Offset(0, 7),
-            blurRadius: 18,
-          ),
-        ],
+      decoration: BoxDecoration(
+        color: context.zeroPalette.panelStrong,
+        border: Border(bottom: BorderSide(color: context.zeroPalette.border)),
+        boxShadow: context.zeroPalette.cardShadow,
       ),
       child: SafeArea(
         bottom: false,
@@ -626,10 +621,10 @@ class _SortMenu extends StatelessWidget {
     return MenuAnchor(
       useRootOverlay: true,
       animated: true,
-      style: const MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(ZeroTokens.darkLight),
+      style: MenuStyle(
+        backgroundColor: WidgetStatePropertyAll(context.zeroPalette.surface),
         side: WidgetStatePropertyAll(
-          BorderSide(color: ZeroTokens.surfaceBorder),
+          BorderSide(color: context.zeroPalette.border),
         ),
       ),
       menuChildren: [
@@ -640,8 +635,8 @@ class _SortMenu extends StatelessWidget {
                   ? Icons.radio_button_checked_rounded
                   : Icons.radio_button_unchecked_rounded,
               color: sort == value
-                  ? ZeroTokens.accentVeryLight
-                  : ZeroTokens.textMuted,
+                  ? context.zeroPalette.accentSoft
+                  : context.zeroPalette.textMuted,
             ),
             onPressed: () => onChanged(sort),
             child: Text(_sortLabel(sort)),
@@ -716,9 +711,9 @@ class _DiscoveryPanel extends StatelessWidget {
     final currentYear = DateTime.now().year;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0x9917191C),
+        color: context.zeroPalette.background.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
-        border: Border.all(color: ZeroTokens.surfaceBorder),
+        border: Border.all(color: context.zeroPalette.border),
       ),
       child: Padding(
         padding: const EdgeInsets.all(ZeroTokens.space4),
@@ -848,9 +843,9 @@ class _SelectMenu<T> extends StatelessWidget {
     return MenuAnchor(
       useRootOverlay: true,
       animated: true,
-      style: const MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(ZeroTokens.darkLight),
-        maximumSize: WidgetStatePropertyAll(Size(260, 360)),
+      style: MenuStyle(
+        backgroundColor: WidgetStatePropertyAll(context.zeroPalette.surface),
+        maximumSize: const WidgetStatePropertyAll(Size(260, 360)),
       ),
       menuChildren: [
         MenuItemButton(
@@ -865,7 +860,7 @@ class _SelectMenu<T> extends StatelessWidget {
             leadingIcon: Icon(
               item == value ? Icons.check_rounded : Icons.remove_rounded,
               color: item == value
-                  ? ZeroTokens.accentVeryLight
+                  ? context.zeroPalette.accentSoft
                   : Colors.transparent,
             ),
             onPressed: () => onChanged(item),
@@ -963,7 +958,7 @@ class _FilterSummary extends StatelessWidget {
             child: Text(
               resultCount == 0 ? 'Discover' : '$resultCount loaded',
               style: Theme.of(context).textTheme.labelMedium
-                  ?.copyWith(color: ZeroTokens.textLight),
+                  ?.copyWith(color: context.zeroPalette.textSecondary),
             ),
           ),
         Expanded(
@@ -1133,7 +1128,7 @@ class _PageLoadFailure extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: ZeroTokens.darkLight,
+      color: context.zeroPalette.surface,
       elevation: 8,
       borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
       child: Padding(

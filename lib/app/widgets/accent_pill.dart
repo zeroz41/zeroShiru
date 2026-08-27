@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../theme/palette.dart';
 import '../theme/tokens.dart';
 import 'hover_region.dart';
 
@@ -33,15 +34,12 @@ class AccentPill extends StatefulWidget {
 }
 
 class _AccentPillState extends State<AccentPill> {
-  static const _altBg = Color(0x17FFFFFF); // white .09
-  static const _altBgHover = Color(0x29FFFFFF); // white .16
-  static const _altBorder = Color(0x2EFFFFFF); // white .18
-
   bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
     final isCta = widget.variant == AccentPillVariant.cta;
+    final colors = context.zeroPalette;
     return HoverRegion(
       cursor: widget.onTap == null
           ? MouseCursor.defer
@@ -61,21 +59,21 @@ class _AccentPillState extends State<AccentPill> {
               children: [
                 // Pre-painted CTA glow, faded — never a transitioned shadow.
                 if (isCta)
-                  const Positioned.fill(
+                  Positioned.fill(
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.all(
+                        borderRadius: const BorderRadius.all(
                           Radius.circular(ZeroTokens.radiusPill),
                         ),
-                        boxShadow: ZeroTokens.ctaGlow,
+                        boxShadow: colors.ctaGlow,
                       ),
                     ),
                   ),
                 // Base skin.
                 Positioned.fill(
                   child: _skin(
-                    color: isCta ? ZeroTokens.accent : _altBg,
-                    border: isCta ? null : _altBorder,
+                    color: isCta ? colors.accent : colors.navHover,
+                    border: isCta ? null : colors.border,
                   ),
                 ),
                 // Hover skin faded in on top (colors never tween).
@@ -85,14 +83,14 @@ class _AccentPillState extends State<AccentPill> {
                     duration: ZeroTokens.motion,
                     curve: ZeroTokens.easeSettle,
                     child: _skin(
-                      color: isCta ? ZeroTokens.accentLight : _altBgHover,
-                      border: isCta ? null : _altBorder,
+                      color: isCta ? colors.accentHover : colors.navPress,
+                      border: isCta ? null : colors.border,
                     ),
                   ),
                 ),
                 // The single content copy sizes the stack; the skins
                 // stretch behind it.
-                _content(),
+                _content(colors),
               ],
             ),
           ),
@@ -111,7 +109,7 @@ class _AccentPillState extends State<AccentPill> {
     );
   }
 
-  Widget _content() {
+  Widget _content(ZeroPalette colors) {
     return Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: ZeroTokens.space4,
@@ -124,17 +122,21 @@ class _AccentPillState extends State<AccentPill> {
             Icon(
               widget.icon,
               size: ZeroTokens.fontScale16,
-              color: ZeroTokens.highlight,
+              color: widget.variant == AccentPillVariant.cta
+                  ? colors.onAccent
+                  : colors.text,
             ),
             const SizedBox(width: ZeroTokens.space1),
           ],
           Text(
             widget.label,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: ZeroTokens.fontFamily,
               fontSize: ZeroTokens.fontScale14,
               fontWeight: FontWeight.w700,
-              color: ZeroTokens.highlight,
+              color: widget.variant == AccentPillVariant.cta
+                  ? colors.onAccent
+                  : colors.text,
             ),
           ),
         ],

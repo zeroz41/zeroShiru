@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../theme/palette.dart';
 import '../theme/tokens.dart';
 
 /// Calm "nothing here" state: 4.8rem glyph at white .28, min-height 24rem.
@@ -19,6 +20,7 @@ class EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: ZeroTokens.emptyMinHeight),
       child: Center(
@@ -29,17 +31,17 @@ class EmptyState extends StatelessWidget {
             Icon(
               icon,
               size: ZeroTokens.emptyGlyphSize,
-              color: ZeroTokens.emptyGlyphColor,
+              color: colors.emptyGlyph,
             ),
             const SizedBox(height: ZeroTokens.space3),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: ZeroTokens.fontFamily,
                 fontSize: ZeroTokens.fontScale16,
                 fontWeight: FontWeight.w600,
-                color: ZeroTokens.textLight,
+                color: colors.textSecondary,
               ),
             ),
             if (detail != null) ...[
@@ -47,10 +49,10 @@ class EmptyState extends StatelessWidget {
               Text(
                 detail!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: ZeroTokens.fontFamily,
                   fontSize: ZeroTokens.fontScale14,
-                  color: ZeroTokens.textMuted,
+                  color: colors.textMuted,
                 ),
               ),
             ],
