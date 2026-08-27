@@ -25,6 +25,7 @@ and platform projects live at the repository root.
 
 ```bash
 flutter pub get
+flutter test
 flutter run -d linux
 ```
 

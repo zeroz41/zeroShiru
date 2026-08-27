@@ -26,6 +26,7 @@ class PlaybackLaunch {
     required this.magnet,
     required this.service,
     this.releaseEpisode,
+    this.alternatives = const [],
   });
 
   final Media media;
@@ -36,6 +37,40 @@ class PlaybackLaunch {
   /// Episode number used by the release's files when it differs from the
   /// library episode (typically absolute numbering for a later season).
   final int? releaseEpisode;
+
+  /// Lower-ranked releases that automatic selection may try when the first
+  /// choice proves it cannot serve the requested episode. Manual picks leave
+  /// this empty so an explicit user choice is never silently replaced.
+  final List<PlaybackRelease> alternatives;
+
+  Iterable<PlaybackRelease> get releases sync* {
+    final seen = <String>{};
+    final primary = PlaybackRelease(
+      magnet: magnet,
+      releaseEpisode: releaseEpisode,
+    );
+    for (final release in [primary, ...alternatives]) {
+      final identity = '${release.magnet}\u0000${release.releaseEpisode ?? ''}';
+      if (seen.add(identity)) yield release;
+    }
+  }
+}
+
+/// One release identity in an automatically ranked playback plan.
+class PlaybackRelease {
+  const PlaybackRelease({required this.magnet, this.releaseEpisode});
+
+  final String magnet;
+  final int? releaseEpisode;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PlaybackRelease &&
+      other.magnet == magnet &&
+      other.releaseEpisode == releaseEpisode;
+
+  @override
+  int get hashCode => Object.hash(magnet, releaseEpisode);
 }
 
 /// The episode the user asked for, and which show they asked it of.

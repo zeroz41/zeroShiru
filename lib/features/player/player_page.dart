@@ -20,6 +20,8 @@ import '../../application/playback/preferences.dart';
 import '../../application/playback/providers.dart';
 import '../../application/playback/request.dart';
 import '../../application/settings/providers.dart';
+import '../../application/sources/best_source_search.dart';
+import '../../application/sources/providers.dart';
 import '../../domain/models/torrent.dart';
 import '../../domain/models/media.dart';
 import '../../domain/models/settings.dart';
@@ -78,6 +80,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   BoxFit _fit = BoxFit.contain;
   double _lastAudibleVolume = 1;
   bool _exitHandled = false;
+  int? _retryBestEpisode;
 
   MediaEngine get _engine => _backend.engine;
 
@@ -168,53 +171,101 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           '${_serviceTitle(launch.service)} is unavailable in this build.',
         );
       }
-      if (mounted && generation == _resolveGeneration) {
+      final releases = launch.releases.toList(growable: false);
+      PlayerFile? source;
+      ResolvedDebrid? resolved;
+      PlaybackRelease? selectedRelease;
+      var selectedIndex = 0;
+      DebridException? lastReleaseError;
+      for (var index = 0; index < releases.length; index++) {
+        final release = releases[index];
+        if (!mounted || generation != _resolveGeneration) return;
         setState(() {
-          _resolveStatus =
-              'Resolving episode ${launch.episode} with ${_serviceTitle(launch.service)}…';
+          _resolveStatus = releases.length == 1
+              ? 'Resolving episode ${launch.episode} with ${_serviceTitle(launch.service)}…'
+              : 'Resolving best source ${index + 1} of ${releases.length} for episode ${launch.episode}…';
         });
+        requestPlayback(episode: launch.episode, mediaId: launch.media.id);
+        try {
+          final candidate = await client
+              .resolve(
+                key,
+                release.magnet,
+                episode: release.releaseEpisode ?? launch.episode,
+              )
+              .timeout(
+                _playbackResolveTimeout,
+                onTimeout: () => throw DebridException(
+                  DebridErrorKind.timeout,
+                  '${_serviceTitle(launch.service)} did not prepare the release '
+                  'within ${_playbackResolveTimeout.inSeconds}s.',
+                ),
+              );
+          final candidateSource = _pickResolvedTarget(
+            candidate,
+            launch.episode,
+          );
+          final probeTransport = ref.read(playbackProbeTransportProvider);
+          if (probeTransport != null) {
+            if (mounted && generation == _resolveGeneration) {
+              setState(() {
+                _resolveStatus = 'Checking stream health before opening MPV…';
+              });
+            }
+            final verdict = await verifiedStream(
+              candidateSource.url,
+              transport: probeTransport,
+            );
+            if (!verdict.alive) {
+              await client.forgetResolved(key, candidate.hash);
+              throw DebridException(
+                DebridErrorKind.unavailable,
+                'The selected ${_serviceTitle(launch.service)} stream did not deliver media bytes.',
+              );
+            }
+          }
+          source = candidateSource;
+          resolved = candidate;
+          selectedRelease = release;
+          selectedIndex = index;
+          break;
+        } on DebridException catch (error) {
+          lastReleaseError = error;
+          final hasFallback = index + 1 < releases.length;
+          if (!hasFallback || !_canTryAnotherRelease(error)) rethrow;
+          ref
+              .read(appLogProvider)
+              .log(
+                'warn',
+                'playback-resolve',
+                'Best source ${index + 1} rejected for episode '
+                    '${launch.episode} (${error.kind.name}); trying the next.',
+              );
+        }
       }
-      requestPlayback(episode: launch.episode, mediaId: launch.media.id);
-      final resolved = await client
-          .resolve(
-            key,
-            launch.magnet,
-            episode: launch.releaseEpisode ?? launch.episode,
-          )
-          .timeout(
-            _playbackResolveTimeout,
-            onTimeout: () => throw DebridException(
-              DebridErrorKind.timeout,
-              '${_serviceTitle(launch.service)} did not prepare the release '
-              'within ${_playbackResolveTimeout.inSeconds}s.',
-            ),
-          );
-      final source = _pickResolvedTarget(resolved, launch.episode);
-      final probeTransport = ref.read(playbackProbeTransportProvider);
-      if (probeTransport != null) {
-        if (mounted && generation == _resolveGeneration) {
-          setState(() {
-            _resolveStatus = 'Checking stream health before opening MPV…';
-          });
-        }
-        final verdict = await verifiedStream(
-          source.url,
-          transport: probeTransport,
-        );
-        if (!verdict.alive) {
-          await client.forgetResolved(key, resolved.hash);
-          throw DebridException(
-            DebridErrorKind.unavailable,
-            'The selected ${_serviceTitle(launch.service)} stream did not deliver media bytes. Retry for a fresh link or choose another release.',
-          );
-        }
+      if (source == null || resolved == null || selectedRelease == null) {
+        throw lastReleaseError ??
+            const DebridException(
+              DebridErrorKind.unavailable,
+              'No selected release could be prepared for playback.',
+            );
       }
       if (!mounted || generation != _resolveGeneration) return;
+      final activeLaunch = PlaybackLaunch(
+        media: launch.media,
+        episode: launch.episode,
+        magnet: selectedRelease.magnet,
+        service: launch.service,
+        releaseEpisode: selectedRelease.releaseEpisode,
+        alternatives: releases.skip(selectedIndex + 1).toList(growable: false),
+      );
       setState(() {
+        _launch = activeLaunch;
         _source = source;
         _resolving = false;
         _resolveStatus =
             'Opening secure ${_serviceTitle(launch.service)} stream…';
+        _retryBestEpisode = null;
       });
       ref
           .read(appLogProvider)
@@ -262,6 +313,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Future<void> _retry() async {
+    if (_retryBestEpisode case final episode?) {
+      await _resolveBestEpisode(episode, pauseFirst: false);
+      return;
+    }
     final launch = _launch;
     if (launch == null) {
       final source = _source;
@@ -801,23 +856,122 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         (maximum != null && target > maximum)) {
       return;
     }
-    try {
-      await _engine.pause();
-    } on PlaybackFailure {
-      // Resolution below will replace the current source either way.
+    await _resolveBestEpisode(target);
+  }
+
+  Future<void> _resolveBestEpisode(
+    int episode, {
+    bool pauseFirst = true,
+  }) async {
+    final current = _launch;
+    if (current == null || _resolving) return;
+    if (pauseFirst) {
+      try {
+        await _engine.pause();
+      } on PlaybackFailure {
+        // The replacement source can still be prepared after a failed pause.
+      }
     }
     if (!mounted) return;
-    await _resolveLaunch(
-      PlaybackLaunch(
-        media: launch.media,
-        episode: target,
-        magnet: launch.magnet,
-        service: launch.service,
-        releaseEpisode: launch.releaseEpisode == null
-            ? null
-            : launch.releaseEpisode! + direction,
-      ),
+    final generation = ++_resolveGeneration;
+    _retryBestEpisode = episode;
+    final pendingLaunch = PlaybackLaunch(
+      media: current.media,
+      episode: episode,
+      magnet: current.magnet,
+      service: current.service,
     );
+    setState(() {
+      _launch = pendingLaunch;
+      _source = null;
+      _resolving = true;
+      _resolveError = null;
+      _resolveStatus = 'Finding the best source for episode $episode…';
+    });
+    try {
+      final settings = await ref.read(settingsControllerProvider.future);
+      final key = settings.debridApiKeys[current.service];
+      if (key == null || key.isEmpty) {
+        throw DebridException(
+          DebridErrorKind.auth,
+          '${_serviceTitle(current.service)} is not connected. Add its API key in Settings.',
+        );
+      }
+      final resolver = ref.read(sourceResolverProvider);
+      if (resolver == null) {
+        throw const DebridException(
+          DebridErrorKind.service,
+          'No source extension is enabled. Enable one in Settings and try again.',
+        );
+      }
+      final client = ref.read(debridClientsProvider)[current.service];
+      if (client == null) {
+        throw DebridException(
+          DebridErrorKind.service,
+          '${_serviceTitle(current.service)} is unavailable in this build.',
+        );
+      }
+      final best = await searchBestEpisodeSources(
+        resolver: resolver,
+        debrid: client,
+        apiKey: key,
+        media: current.media,
+        episode: episode,
+        preferences: settings,
+      );
+      if (!mounted || generation != _resolveGeneration) return;
+      if (best.releases.isEmpty) {
+        throw DebridException(
+          DebridErrorKind.unavailable,
+          best.sourceErrors.isEmpty
+              ? 'No playable source was found for episode $episode.'
+              : 'No playable source was found for episode $episode. Some source checks failed; try again.',
+        );
+      }
+      final selected = best.releases.first;
+      ref
+          .read(appLogProvider)
+          .log(
+            best.timedOut ? 'warn' : 'info',
+            'source-picker',
+            'Player navigation found ${best.releases.length} ranked release(s) '
+                'for media ${current.media.id} episode $episode.',
+          );
+      await _resolveLaunch(
+        PlaybackLaunch(
+          media: current.media,
+          episode: episode,
+          magnet: selected.magnet,
+          service: current.service,
+          releaseEpisode: selected.releaseEpisode,
+          alternatives: best.releases.skip(1).toList(growable: false),
+        ),
+      );
+    } on DebridException catch (error) {
+      if (!mounted || generation != _resolveGeneration) return;
+      setState(() {
+        _resolving = false;
+        _resolveStatus = null;
+        _resolveError = error;
+      });
+    } catch (error) {
+      if (!mounted || generation != _resolveGeneration) return;
+      ref
+          .read(appLogProvider)
+          .log(
+            'error',
+            'source-picker',
+            'Player episode $episode source search failed: $error',
+          );
+      setState(() {
+        _resolving = false;
+        _resolveStatus = null;
+        _resolveError = const DebridException(
+          DebridErrorKind.service,
+          'The best source search failed. Try again.',
+        );
+      });
+    }
   }
 
   Future<void> _togglePlayback() => switch (_latest.phase) {
@@ -3985,6 +4139,16 @@ PlayerFile _pickResolvedTarget(ResolvedDebrid resolved, int episode) {
     'The release did not identify a safe file for episode $episode. Choose another release.',
   );
 }
+
+bool _canTryAnotherRelease(DebridException error) => switch (error.kind) {
+  DebridErrorKind.notCached ||
+  DebridErrorKind.unavailable ||
+  DebridErrorKind.rejected => true,
+  DebridErrorKind.auth ||
+  DebridErrorKind.network ||
+  DebridErrorKind.timeout ||
+  DebridErrorKind.service => false,
+};
 
 String _serviceTitle(DebridService service) => switch (service) {
   DebridService.alldebrid => 'AllDebrid',

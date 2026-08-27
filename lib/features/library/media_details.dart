@@ -12,6 +12,7 @@ import '../../application/logging/providers.dart';
 import '../../application/playback/request.dart';
 import '../../application/settings/providers.dart';
 import '../../application/sources/best_source.dart';
+import '../../application/sources/best_source_search.dart';
 import '../../application/sources/providers.dart';
 import '../../application/sources/release_language.dart';
 import '../../application/playback/coverage.dart';
@@ -207,6 +208,7 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
         magnet: magnet,
         service: service,
         releaseEpisode: selected?.releaseEpisode,
+        alternatives: selected?.alternatives ?? const [],
       ),
     );
   }
@@ -1176,10 +1178,15 @@ class _SourcePickerOverlay extends StatelessWidget {
 }
 
 class _ReleaseChoice {
-  const _ReleaseChoice(this.magnet, {this.releaseEpisode});
+  const _ReleaseChoice(
+    this.magnet, {
+    this.releaseEpisode,
+    this.alternatives = const [],
+  });
 
   final String magnet;
   final int? releaseEpisode;
+  final List<PlaybackRelease> alternatives;
 }
 
 class _SourceRequestKey {
@@ -1451,18 +1458,11 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
       );
       return;
     }
-    final titles = {
-      widget.media.title.userPreferred,
-      widget.media.title.romaji,
-      widget.media.title.english,
-      widget.media.title.native,
-      ...widget.media.synonyms,
-    }.whereType<String>().where((item) => item.trim().isNotEmpty).toList();
     final stream = resolver.search(
       TorrentQuery(
         anilistId: widget.media.id,
         idMal: widget.media.idMal,
-        titles: titles.isEmpty ? [widget.media.title.display] : titles,
+        titles: sourceSearchTitles(widget.media),
         episode: widget.episode,
         episodeCount: widget.media.maxEpisode,
         resolution: searchSettings?.rssQuality ?? '',
@@ -1487,22 +1487,44 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
     _subscription = stream.listen(
       (batch) {
         if (!mounted || generation != _generation) return;
-        final existing = {for (final item in _results) ?_hashOf(item)};
-        final additions = batch.results
-            .where((item) {
-              final hash = _hashOf(item);
-              if (hash == null) return false;
-              if (!_holdsEpisode(item)) return false;
-              return existing.add(hash);
-            })
-            .toList(growable: false);
+        final merged = _results.toList();
+        final indices = <String, int>{
+          for (var index = 0; index < merged.length; index++)
+            ?_hashOf(merged[index]): index,
+        };
+        final changedHashes = <String>{};
+        for (final item in batch.results) {
+          final hash = _hashOf(item);
+          if (hash == null || !_holdsEpisode(item)) continue;
+          final existingIndex = indices[hash];
+          if (existingIndex == null) {
+            indices[hash] = merged.length;
+            merged.add(item);
+            changedHashes.add(hash);
+            continue;
+          }
+          final existing = merged[existingIndex];
+          if (_episodeIdentityConfidence(item) <=
+              _episodeIdentityConfidence(existing)) {
+            continue;
+          }
+          merged[existingIndex] = item;
+          changedHashes.add(hash);
+        }
         setState(() {
-          _results.addAll(additions);
+          _results
+            ..clear()
+            ..addAll(merged);
+          for (final hash in changedHashes) {
+            _releaseEpisodes.remove(hash);
+            _rejectedHashes.remove(hash);
+            _checked.remove(hash);
+          }
           if (batch.error != null) {
             _sourceErrors.add('${batch.source.name}: ${batch.error}');
           }
         });
-        if (additions.isNotEmpty) {
+        if (changedHashes.isNotEmpty) {
           _scheduleAvailability(generation);
           _scheduleQuickPlay(generation);
         }
@@ -1650,25 +1672,36 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
       );
       return;
     }
-    final result = results.first;
-    final hash = _hashOf(result);
-    final magnet = validatedTorrentMagnet(
-      declaredHash: result.hash,
-      link: result.link,
-    );
-    if (magnet == null) {
+    final releases = <PlaybackRelease>[];
+    for (final result in results) {
+      final hash = _hashOf(result);
+      final magnet = validatedTorrentMagnet(
+        declaredHash: result.hash,
+        link: result.link,
+      );
+      if (magnet == null) continue;
+      releases.add(
+        PlaybackRelease(
+          magnet: magnet,
+          releaseEpisode: hash == null
+              ? _titleEpisode(result)
+              : _releaseEpisodes[hash] ?? _titleEpisode(result),
+        ),
+      );
+    }
+    if (releases.isEmpty) {
       _finishQuickPlayWithError('The best source did not have a valid magnet.');
       return;
     }
+    final best = releases.first;
     _quickPlayPending = false;
     widget.onResolvingBest(false);
     widget.onBestError(null);
     widget.onLaunch(
       _ReleaseChoice(
-        magnet,
-        releaseEpisode: hash == null
-            ? _titleEpisode(result)
-            : _releaseEpisodes[hash] ?? _titleEpisode(result),
+        best.magnet,
+        releaseEpisode: best.releaseEpisode,
+        alternatives: releases.skip(1).toList(growable: false),
       ),
     );
   }
@@ -1695,6 +1728,12 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
     episode: widget.episode,
     absoluteEpisode: result.mappedEpisode,
   )?.round();
+
+  int _episodeIdentityConfidence(TorrentResult result) {
+    var score = _titleEpisode(result) == null ? 0 : 2;
+    if (result.mappedEpisode != null) score++;
+    return score;
+  }
 
   void _scheduleAvailability(int generation, {bool immediate = false}) {
     final settings =
@@ -1885,16 +1924,12 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
   bool _canShow(TorrentResult result) {
     final hash = _hashOf(result);
     if (hash == null || _rejectedHashes.contains(hash)) return false;
-    final settings = widget.settings;
-    final inspectingWithTorBox =
-        settings?.debridService == DebridService.torbox &&
-        settings?.activeDebridKey?.isNotEmpty == true;
-    if (inspectingWithTorBox) {
-      final detail = _availabilityDetails[hash];
-      if (detail?.availability == Availability.cached &&
-          detail?.files != null) {
-        return _releaseEpisodes.containsKey(hash);
-      }
+    if (availabilityOf(_availability, hash) == Availability.unavailable) {
+      return false;
+    }
+    final detail = _availabilityDetails[hash];
+    if (detail?.availability == Availability.cached && detail?.files != null) {
+      return _releaseEpisodes.containsKey(hash);
     }
     return _titleEpisode(result) != null ||
         widget.media.format == MediaFormat.movie ||

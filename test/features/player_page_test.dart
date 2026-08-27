@@ -15,9 +15,11 @@ import 'package:zero/application/library/providers.dart';
 import 'package:zero/application/learning/providers.dart';
 import 'package:zero/application/learning/subtitle_providers.dart';
 import 'package:zero/application/settings/providers.dart';
+import 'package:zero/application/sources/providers.dart';
 import 'package:zero/domain/models/availability.dart';
 import 'package:zero/domain/models/media.dart';
 import 'package:zero/domain/models/settings.dart';
+import 'package:zero/domain/models/source_extension.dart';
 import 'package:zero/domain/models/torrent.dart';
 import 'package:zero/domain/ports/ports.dart';
 import 'package:zero/features/player/player_page.dart';
@@ -1826,6 +1828,7 @@ void main() {
         const Settings(debridService: DebridService.torbox),
       );
       final credentials = _Credentials()..value = 'torbox-secret';
+      final sources = _EpisodeSources();
       const launch = PlaybackLaunch(
         media: Media(
           id: 42,
@@ -1846,6 +1849,7 @@ void main() {
             playbackProbeTransportProvider.overrideWithValue(probe),
             settingsRepositoryProvider.overrideWithValue(repository),
             credentialStoreProvider.overrideWithValue(credentials),
+            sourceResolverProvider.overrideWithValue(sources),
             debridClientsProvider.overrideWithValue({
               DebridService.torbox: debrid,
             }),
@@ -1874,12 +1878,76 @@ void main() {
       expect(find.textContaining('signed-token'), findsNothing);
 
       await tester.tap(find.byTooltip('Next episode (N)'));
+      for (var turn = 0; turn < 10; turn++) {
+        await tester.pump();
+      }
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(sources.queries.map((query) => query.episode), [8]);
+      expect(debrid.inspections, isNotEmpty);
+      expect(debrid.calls.last, (
+        'torbox-secret',
+        'magnet:?xt=urn:btih:8888888888888888888888888888888888888888',
+        20,
+      ));
+      expect(find.text('Episode 8'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'automatic launch falls through when the first ranked release rejects the episode',
+    (tester) async {
+      tester.view.physicalSize = const Size(500, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final engine = _FakeEngine();
+      final debrid = _FallbackDebrid();
+      final credentials = _Credentials()..value = 'torbox-secret';
+      const badMagnet =
+          'magnet:?xt=urn:btih:1111111111111111111111111111111111111111';
+      const goodMagnet =
+          'magnet:?xt=urn:btih:2222222222222222222222222222222222222222';
+      const launch = PlaybackLaunch(
+        media: Media(
+          id: 43,
+          title: MediaTitle(userPreferred: 'Fallback Show'),
+          episodes: 12,
+        ),
+        episode: 3,
+        magnet: badMagnet,
+        service: DebridService.torbox,
+        alternatives: [PlaybackRelease(magnet: goodMagnet, releaseEpisode: 3)],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            playbackBackendProvider.overrideWithValue(_FakeBackend(engine)),
+            settingsRepositoryProvider.overrideWithValue(
+              _SettingsRepository(
+                const Settings(debridService: DebridService.torbox),
+              ),
+            ),
+            credentialStoreProvider.overrideWithValue(credentials),
+            debridClientsProvider.overrideWithValue({
+              DebridService.torbox: debrid,
+            }),
+          ],
+          child: MaterialApp(
+            theme: buildZeroTheme(),
+            home: const PlayerPage(initialLaunch: launch),
+          ),
+        ),
+      );
       await tester.pump();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(debrid.calls.last, ('torbox-secret', launch.magnet, 20));
-      expect(find.text('Episode 8'), findsOneWidget);
+      expect(debrid.magnets, [badMagnet, goodMagnet]);
+      expect(engine.calls.take(2), ['open:Show - 03.mkv', 'play']);
+      expect(find.text('Episode 3'), findsOneWidget);
+      expect(find.textContaining('does not hold'), findsNothing);
     },
   );
 
@@ -2092,6 +2160,7 @@ class _LearningSubtitles implements LearningSubtitleRepository {
 
 class _ResolvingDebrid implements DebridClient {
   final calls = <(String, String, int?)>[];
+  final inspections = <List<String>>[];
 
   @override
   DebridService get service => DebridService.torbox;
@@ -2113,7 +2182,10 @@ class _ResolvingDebrid implements DebridClient {
   Future<Map<String, DebridAvailabilityDetail>> inspectAvailability(
     String apiKey,
     List<String> hashes,
-  ) async => const {};
+  ) async {
+    inspections.add(hashes);
+    return const {};
+  }
 
   @override
   Future<ResolvedDebrid> resolve(
@@ -2137,6 +2209,90 @@ class _ResolvingDebrid implements DebridClient {
 
   @override
   Future<void> forgetResolved(String apiKey, String hash) async {}
+}
+
+class _FallbackDebrid extends _ResolvingDebrid {
+  final magnets = <String>[];
+
+  @override
+  Future<ResolvedDebrid> resolve(
+    String apiKey,
+    String magnet, {
+    int? episode,
+  }) async {
+    magnets.add(magnet);
+    if (magnet.contains('1111111111')) {
+      throw const DebridException(
+        DebridErrorKind.rejected,
+        'The release does not hold the requested episode.',
+      );
+    }
+    const target = PlayerFile(
+      name: 'Show - 03.mkv',
+      url: 'https://cdn.example/fallback.mkv',
+    );
+    return const ResolvedDebrid(
+      hash: '2222222222222222222222222222222222222222',
+      name: 'Fallback Show',
+      files: [target],
+      target: target,
+    );
+  }
+}
+
+class _EpisodeSources implements SourceResolver {
+  final queries = <TorrentQuery>[];
+
+  static const extension = SourceExtension(
+    id: 'episodes',
+    name: 'Episode source',
+    version: '1',
+    origin: 'test',
+    supported: true,
+    enabled: true,
+  );
+
+  @override
+  Stream<SourceSearchBatch> search(TorrentQuery query, {bool movie = false}) {
+    queries.add(query);
+    return Stream.value(
+      const SourceSearchBatch(
+        source: extension,
+        results: [
+          TorrentResult(
+            title: 'Clean Player Show 20 1080p',
+            link:
+                'magnet:?xt=urn:btih:8888888888888888888888888888888888888888',
+            hash: '8888888888888888888888888888888888888888',
+            mappedEpisode: 20,
+            seeders: 20,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Future<SourceCatalog> catalog() async =>
+      const SourceCatalog(extensions: [extension]);
+
+  @override
+  Future<SourceCatalog> install(String source) => catalog();
+
+  @override
+  Future<SourceCatalog> remove(String source) => catalog();
+
+  @override
+  Future<SourceCatalog> setEnabled(String id, bool enabled) => catalog();
+
+  @override
+  Future<SourceCatalog> updateSettings(
+    String id,
+    Map<String, Object?> settings,
+  ) => catalog();
+
+  @override
+  Future<bool> validate(String id) async => true;
 }
 
 class _PendingDebrid extends _ResolvingDebrid {
