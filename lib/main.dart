@@ -10,6 +10,7 @@ import 'app/app.dart';
 import 'application/library/providers.dart';
 import 'application/learning/providers.dart';
 import 'application/learning/subtitle_providers.dart';
+import 'application/logging/providers.dart';
 import 'application/playback/providers.dart';
 import 'application/settings/providers.dart';
 import 'application/sources/providers.dart';
@@ -55,6 +56,7 @@ Future<void> main() async {
           sourceResolverProvider.overrideWithValue(services.sources),
           credentialStoreProvider.overrideWithValue(services.credentials),
           playbackBackendProvider.overrideWithValue(services.playback),
+          appLogProvider.overrideWithValue(services.log),
           languageLearningToolsProvider.overrideWithValue(services.learning),
           learningSubtitleRepositoryProvider.overrideWithValue(
             services.learningSubtitles,

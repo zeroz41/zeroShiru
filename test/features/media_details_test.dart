@@ -273,6 +273,75 @@ void main() {
     );
   });
 
+  testWidgets(
+    'progressive results stay usable when source and availability never finish',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      const hash = 'abababababababababababababababababababab';
+      const media = Media(
+        id: 81001,
+        title: MediaTitle(userPreferred: 'Bounded Source Show'),
+        episodes: 1,
+      );
+      final launches = <PlaybackLaunch>[];
+      final sources = _OpenSources(
+        const TorrentResult(
+          title: 'Bounded Source Show 01 1080p',
+          link: 'magnet:?xt=urn:btih:$hash',
+          hash: hash,
+          seeders: 12,
+        ),
+      );
+      addTearDown(sources.close);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            settingsRepositoryProvider.overrideWithValue(
+              _SettingsRepository(
+                const Settings(debridService: DebridService.torbox),
+              ),
+            ),
+            credentialStoreProvider.overrideWithValue(
+              const _Credentials('torbox-key'),
+            ),
+            sourceResolverProvider.overrideWithValue(sources),
+            debridClientsProvider.overrideWithValue({
+              DebridService.torbox: _HangingDebrid(),
+            }),
+          ],
+          child: MaterialApp(
+            theme: buildZeroTheme(),
+            home: _DetailsLauncher(media: media, onLaunch: launches.add),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('open-test-details')));
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('choose-source')));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      // The row is useful as soon as its provider answers; neither the open
+      // source stream nor the wedged cache inspection can blank the picker.
+      expect(find.text('Bounded Source Show 01 1080p'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('close-source-results')));
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(find.byKey(const ValueKey('watch-now')));
+      await tester.pump(const Duration(milliseconds: 701));
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pump();
+
+      expect(launches, hasLength(1));
+      expect(launches.single.magnet, contains(hash));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('row and hero play resolve the same best-ranked source', (
     tester,
   ) async {
@@ -721,6 +790,55 @@ class _Sources implements SourceResolver {
   Future<bool> validate(String id) async => true;
 }
 
+class _OpenSources implements SourceResolver {
+  _OpenSources(this.result);
+
+  final TorrentResult result;
+  final _controllers = <StreamController<SourceSearchBatch>>[];
+
+  Future<void> close() async {
+    for (final controller in _controllers) {
+      await controller.close();
+    }
+  }
+
+  @override
+  Future<SourceCatalog> catalog() async =>
+      const SourceCatalog(extensions: [_Sources.extension]);
+
+  @override
+  Stream<SourceSearchBatch> search(TorrentQuery query, {bool movie = false}) {
+    final controller = StreamController<SourceSearchBatch>();
+    _controllers.add(controller);
+    scheduleMicrotask(() {
+      if (!controller.isClosed) {
+        controller.add(
+          SourceSearchBatch(source: _Sources.extension, results: [result]),
+        );
+      }
+    });
+    return controller.stream;
+  }
+
+  @override
+  Future<SourceCatalog> install(String source) => catalog();
+
+  @override
+  Future<SourceCatalog> remove(String source) => catalog();
+
+  @override
+  Future<SourceCatalog> setEnabled(String id, bool enabled) => catalog();
+
+  @override
+  Future<SourceCatalog> updateSettings(
+    String id,
+    Map<String, Object?> settings,
+  ) => catalog();
+
+  @override
+  Future<bool> validate(String id) async => true;
+}
+
 class _DetailsLauncher extends StatelessWidget {
   const _DetailsLauncher({required this.media, required this.onLaunch});
 
@@ -823,6 +941,16 @@ class _Debrid implements DebridClient {
 
   @override
   Future<DebridAccount> validate(String apiKey) => throw UnimplementedError();
+}
+
+class _HangingDebrid extends _Debrid {
+  _HangingDebrid();
+
+  @override
+  Future<Map<String, DebridAvailabilityDetail>> inspectAvailability(
+    String apiKey,
+    List<String> hashes,
+  ) => Completer<Map<String, DebridAvailabilityDetail>>().future;
 }
 
 class _SettingsRepository implements SettingsRepository {

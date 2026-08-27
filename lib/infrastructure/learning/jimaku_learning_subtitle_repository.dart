@@ -611,7 +611,7 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
         .where((word) => word.length >= 3)
         .where(
           (word) => !RegExp(
-            r'^(1080|2160|720|480|264|265|hevc|avc|av1|aac|flac|mkv|ass|ssa|srt|vtt|episode|dual|audio|jpn|japanese)$',
+            r'^(2160|1440|1080|720|540|480|264|265|hevc|avc|av1|aac|flac|mkv|ass|ssa|srt|vtt|episode|dual|audio|jpn|japanese)$',
           ).hasMatch(word),
         )
         .toSet();

@@ -44,6 +44,42 @@ enum _SettingsSection {
   debrid,
 }
 
+const _audioLanguageOptions = {
+  'jpn': 'Japanese',
+  'eng': 'English',
+  'es': 'Spanish',
+  'pt': 'Portuguese',
+  'de': 'German',
+  'fr': 'French',
+  'it': 'Italian',
+  'ko': 'Korean',
+  'zh': 'Chinese',
+  'ru': 'Russian',
+  'und': 'Container default',
+};
+
+const _subtitleLanguageOptions = {
+  'eng': 'English',
+  'jpn': 'Japanese',
+  'es': 'Spanish',
+  'pt': 'Portuguese',
+  'de': 'German',
+  'fr': 'French',
+  'it': 'Italian',
+  'ko': 'Korean',
+  'zh': 'Chinese',
+  'ru': 'Russian',
+  'ar': 'Arabic',
+  'hi': 'Hindi',
+  'id': 'Indonesian',
+  'pl': 'Polish',
+  'th': 'Thai',
+  'tr': 'Turkish',
+  'uk': 'Ukrainian',
+  'vi': 'Vietnamese',
+  'und': 'Container default',
+};
+
 extension on _SettingsSection {
   String get label => switch (this) {
     _SettingsSection.interface => 'Interface',
@@ -162,60 +198,6 @@ class _SettingsBodyState extends ConsumerState<_SettingsBody> {
               ),
             ),
           ),
-          _DropdownRow<String>(
-            label: 'Audio language',
-            description: 'Preferred embedded audio and first release-ranking signal. Uses the container default only when that language is unavailable.',
-            value: settings.audioLanguage,
-            items: const {
-              'jpn': 'Japanese',
-              'eng': 'English',
-              'es': 'Spanish',
-              'pt': 'Portuguese',
-              'de': 'German',
-              'fr': 'French',
-              'it': 'Italian',
-              'ko': 'Korean',
-              'zh': 'Chinese',
-              'ru': 'Russian',
-              'und': 'Container default',
-            },
-            onChanged: (value) => unawaited(
-              controller.persist(
-                (current) => current.copyWith(audioLanguage: value),
-              ),
-            ),
-          ),
-          _DropdownRow<String>(
-            label: 'Subtitle language',
-            description: 'Preferred embedded subtitles and second release-ranking signal. Stays off when that language is unavailable.',
-            value: settings.subtitleLanguage,
-            items: const {
-              'eng': 'English',
-              'jpn': 'Japanese',
-              'es': 'Spanish',
-              'pt': 'Portuguese',
-              'de': 'German',
-              'fr': 'French',
-              'it': 'Italian',
-              'ko': 'Korean',
-              'zh': 'Chinese',
-              'ru': 'Russian',
-              'ar': 'Arabic',
-              'hi': 'Hindi',
-              'id': 'Indonesian',
-              'pl': 'Polish',
-              'th': 'Thai',
-              'tr': 'Turkish',
-              'uk': 'Ukrainian',
-              'vi': 'Vietnamese',
-              'und': 'Container default',
-            },
-            onChanged: (value) => unawaited(
-              controller.persist(
-                (current) => current.copyWith(subtitleLanguage: value),
-              ),
-            ),
-          ),
           _DropdownRow<double>(
             label: 'Subtitle text size',
             description:
@@ -241,11 +223,39 @@ class _SettingsBodyState extends ConsumerState<_SettingsBody> {
         icon: Icons.travel_explore_rounded,
         children: [
           _DropdownRow<String>(
+            label: 'Preferred audio language',
+            description: 'Ranks releases with this audio first and selects the matching embedded track for playback.',
+            value: settings.audioLanguage,
+            items: _audioLanguageOptions,
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(audioLanguage: value),
+              ),
+            ),
+          ),
+          _DropdownRow<String>(
+            label: 'Preferred subtitle language',
+            description: 'Ranks releases with these subtitles first and selects the matching embedded track.',
+            value: settings.subtitleLanguage,
+            items: _subtitleLanguageOptions,
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(subtitleLanguage: value),
+              ),
+            ),
+          ),
+          _DropdownRow<String>(
             label: 'Preferred quality',
             description:
                 'Ranks matching releases first when resolving an episode.',
             value: settings.rssQuality,
-            items: const {'720': '720p', '1080': '1080p', '2160': '2160p'},
+            items: const {
+              '480': '480p',
+              '720': '720p',
+              '1080': '1080p',
+              '1440': '1440p',
+              '2160': '2160p',
+            },
             onChanged: (value) => unawaited(
               controller.persist(
                 (current) => current.copyWith(rssQuality: value),

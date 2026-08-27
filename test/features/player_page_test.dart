@@ -1882,6 +1882,62 @@ void main() {
       expect(find.text('Episode 8'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'a debrid client cannot leave player resolution pending forever',
+    (tester) async {
+      tester.view.physicalSize = const Size(500, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final engine = _FakeEngine();
+      final credentials = _Credentials()..value = 'torbox-secret';
+      const launch = PlaybackLaunch(
+        media: Media(
+          id: 404,
+          title: MediaTitle(userPreferred: 'Deadline Show'),
+          episodes: 1,
+        ),
+        episode: 1,
+        magnet: '0123456789abcdef0123456789abcdef01234567',
+        service: DebridService.torbox,
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            playbackBackendProvider.overrideWithValue(_FakeBackend(engine)),
+            settingsRepositoryProvider.overrideWithValue(
+              _SettingsRepository(
+                const Settings(debridService: DebridService.torbox),
+              ),
+            ),
+            credentialStoreProvider.overrideWithValue(credentials),
+            debridClientsProvider.overrideWithValue({
+              DebridService.torbox: _PendingDebrid(),
+            }),
+          ],
+          child: MaterialApp(
+            theme: buildZeroTheme(),
+            home: const PlayerPage(initialLaunch: launch),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.textContaining('Resolving episode 1'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 66));
+      await tester.pump();
+
+      expect(
+        find.textContaining('did not prepare the release'),
+        findsOneWidget,
+      );
+      expect(find.text('Try again'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 class _SettingsRepository implements SettingsRepository {
@@ -2081,6 +2137,15 @@ class _ResolvingDebrid implements DebridClient {
 
   @override
   Future<void> forgetResolved(String apiKey, String hash) async {}
+}
+
+class _PendingDebrid extends _ResolvingDebrid {
+  @override
+  Future<ResolvedDebrid> resolve(
+    String apiKey,
+    String magnet, {
+    int? episode,
+  }) => Completer<ResolvedDebrid>().future;
 }
 
 class _ProbeTransport implements StreamingTransport {

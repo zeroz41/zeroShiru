@@ -72,6 +72,7 @@ class AppServices {
       shared: databases.shared,
     );
     final transport = PackageHttpTransport();
+    final log = FileLogSink(support.path);
     final playbackProbe = IoStreamingTransport();
     final credentials = SecureCredentialStore();
     final settings = SqliteSettingsRepository(databases.profile);
@@ -92,6 +93,7 @@ class AppServices {
     final sources = NativeSourceResolver(
       transport: GuardedHttpTransport(transport),
       settings: settings,
+      log: log,
     );
     final auth = TrackingAuthStore(credentials);
     final anilist = AnilistClient(transport: transport, cache: queryCache);
@@ -115,7 +117,7 @@ class AppServices {
       credentials: credentials,
       playback: playback,
       debrid: debrid,
-      log: FileLogSink(support.path),
+      log: log,
       playbackProbe: playbackProbe,
       sources: sources,
       learning: learning,

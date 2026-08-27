@@ -53,7 +53,7 @@ String? explicitReleaseLanguageLabel(TorrentResult result) {
 
 int _audioTitleScore(String title, String preferred) {
   final lower = title.toLowerCase();
-  final dual = RegExp(r'\bdual[ ._-]*audio\b').hasMatch(lower);
+  final dual = RegExp(r'\b(dual|multi)[ ._-]*audio\b').hasMatch(lower);
   final english = RegExp(r'\b(eng(?:lish)?[ ._-]*audio|dub(?:bed)?)\b')
       .hasMatch(lower);
   final japanese = RegExp(r'\b(jpn|japanese|ja)[ ._-]*(audio|dub)\b')

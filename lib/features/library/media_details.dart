@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
 import '../../application/library/providers.dart';
+import '../../application/logging/providers.dart';
 import '../../application/playback/request.dart';
 import '../../application/settings/providers.dart';
 import '../../application/sources/best_source.dart';
@@ -1276,10 +1277,16 @@ enum _ReleaseSort { best, seeders, quality, size }
 
 class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
   static const _snapshotLimit = 8;
+  static const _pickerSearchTimeout = Duration(seconds: 8);
+  static const _quickPlaySettle = Duration(milliseconds: 700);
+  static const _availabilityTimeout = Duration(seconds: 3);
   static final _snapshots = <_SourceRequestKey, _SourceSnapshot>{};
 
   StreamSubscription<SourceSearchBatch>? _subscription;
   Timer? _availabilityTimer;
+  Timer? _searchDeadlineTimer;
+  Timer? _quickPlayTimer;
+  Future<void> _availabilityTail = Future.value();
   final _results = <TorrentResult>[];
   final _availability = <String, Availability>{};
   final _availabilityDetails = <String, DebridAvailabilityDetail>{};
@@ -1292,6 +1299,7 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
   bool _cachedOnly = false;
   bool _quickPlayPending = false;
   bool _searchCompleted = false;
+  bool _finishingSearch = false;
   _SourceRequestKey? _activeRequest;
   _ReleaseSort _sort = _ReleaseSort.best;
   int _generation = 0;
@@ -1317,6 +1325,8 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
   void dispose() {
     _subscription?.cancel();
     _availabilityTimer?.cancel();
+    _searchDeadlineTimer?.cancel();
+    _quickPlayTimer?.cancel();
     super.dispose();
   }
 
@@ -1350,7 +1360,10 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
       _launchBest();
       return;
     }
-    if (_activeRequest == request && _loading) return;
+    if (_activeRequest == request && (_loading || _finishingSearch)) {
+      if (_results.isNotEmpty) _scheduleQuickPlay(_generation);
+      return;
+    }
     unawaited(_search());
   }
 
@@ -1359,7 +1372,10 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
   void prefetchBest() {
     if (ref.read(sourceResolverProvider) == null) return;
     final request = _requestKey();
-    if (_activeRequest == request && (_loading || _searchCompleted)) return;
+    if (_activeRequest == request &&
+        (_loading || _finishingSearch || _searchCompleted)) {
+      return;
+    }
     if (_restoreSnapshot(request)) return;
     unawaited(_search());
   }
@@ -1389,7 +1405,10 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
         ref.read(settingsControllerProvider).value ?? widget.settings;
     final request = _requestKey();
     if (!force) {
-      if (_activeRequest == request && (_loading || _searchCompleted)) return;
+      if (_activeRequest == request &&
+          (_loading || _finishingSearch || _searchCompleted)) {
+        return;
+      }
       if (_restoreSnapshot(request)) return;
     }
     final generation = ++_generation;
@@ -1397,9 +1416,24 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
     // and play callbacks in the same frame all join this one search.
     _activeRequest = request;
     _searchCompleted = false;
+    _finishingSearch = false;
     _loading = resolver != null;
-    await _subscription?.cancel();
+    final oldSubscription = _subscription;
+    _subscription = null;
+    if (oldSubscription != null) {
+      try {
+        await oldSubscription.cancel().timeout(
+          const Duration(milliseconds: 500),
+        );
+      } catch (_) {
+        // A new generation has already claimed the state. A broken old stream
+        // must not prevent the replacement search from starting.
+      }
+    }
     _availabilityTimer?.cancel();
+    _searchDeadlineTimer?.cancel();
+    _quickPlayTimer?.cancel();
+    _availabilityTail = Future.value();
     if (!mounted || generation != _generation) return;
     setState(() {
       _results.clear();
@@ -1436,48 +1470,120 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
       ),
       movie: widget.media.format == MediaFormat.movie,
     );
+    final started = Stopwatch()..start();
+    ref
+        .read(appLogProvider)
+        .log(
+          'info',
+          'source-picker',
+          'Search generation $generation started for media ${widget.media.id} '
+              'episode ${widget.episode}',
+        );
+    _searchDeadlineTimer = Timer(_pickerSearchTimeout, () {
+      unawaited(
+        _completeSearch(generation, request, started: started, timedOut: true),
+      );
+    });
     _subscription = stream.listen(
       (batch) {
         if (!mounted || generation != _generation) return;
         final existing = {for (final item in _results) ?_hashOf(item)};
-        final additions = batch.results.where((item) {
-          final hash = _hashOf(item);
-          if (hash == null) return false;
-          if (!_holdsEpisode(item)) return false;
-          return existing.add(hash);
-        });
+        final additions = batch.results
+            .where((item) {
+              final hash = _hashOf(item);
+              if (hash == null) return false;
+              if (!_holdsEpisode(item)) return false;
+              return existing.add(hash);
+            })
+            .toList(growable: false);
         setState(() {
           _results.addAll(additions);
           if (batch.error != null) {
             _sourceErrors.add('${batch.source.name}: ${batch.error}');
           }
         });
-      },
-      onDone: () async {
-        if (!mounted || generation != _generation) return;
-        _subscription = null;
-        setState(() => _loading = false);
-        _availabilityTimer?.cancel();
-        await _checkAvailability(generation);
-        if (!mounted || generation != _generation) return;
-        setState(() => _searchCompleted = true);
-        _saveSnapshot(request);
-        if (_quickPlayPending) {
-          _launchBest();
+        if (additions.isNotEmpty) {
+          _scheduleAvailability(generation);
+          _scheduleQuickPlay(generation);
         }
+      },
+      onDone: () {
+        unawaited(_completeSearch(generation, request, started: started));
       },
       onError: (Object error) {
         if (!mounted || generation != _generation) return;
-        _subscription = null;
         setState(() {
-          _loading = false;
-          _searchCompleted = true;
           _sourceErrors.add('$error');
         });
-        _saveSnapshot(request);
-        _finishQuickPlayWithError('Sources could not be searched. Try again.');
+        unawaited(_completeSearch(generation, request, started: started));
       },
     );
+  }
+
+  Future<void> _completeSearch(
+    int generation,
+    _SourceRequestKey request, {
+    required Stopwatch started,
+    bool timedOut = false,
+  }) async {
+    if (!mounted ||
+        generation != _generation ||
+        _searchCompleted ||
+        _finishingSearch) {
+      return;
+    }
+    _finishingSearch = true;
+    _searchDeadlineTimer?.cancel();
+    _quickPlayTimer?.cancel();
+    if (timedOut) {
+      final subscription = _subscription;
+      _subscription = null;
+      if (subscription != null) {
+        unawaited(subscription.cancel().catchError((_) {}));
+      }
+      if (!_sourceErrors.any((error) => error.startsWith('Search deadline'))) {
+        _sourceErrors.add(
+          'Search deadline: slow sources were stopped after '
+          '${_pickerSearchTimeout.inSeconds}s.',
+        );
+      }
+    } else {
+      _subscription = null;
+    }
+    setState(() => _loading = false);
+    _availabilityTimer?.cancel();
+    await _settleAvailability(generation);
+    if (!mounted || generation != _generation) return;
+    setState(() {
+      _finishingSearch = false;
+      _searchCompleted = true;
+    });
+    _saveSnapshot(request);
+    ref
+        .read(appLogProvider)
+        .log(
+          timedOut ? 'warn' : 'info',
+          'source-picker',
+          'Search generation $generation ${timedOut ? 'timed out' : 'finished'} '
+              'with ${_results.length} release(s) and ${_sourceErrors.length} '
+              'error(s) in ${started.elapsedMilliseconds}ms',
+        );
+    if (_quickPlayPending) _launchBest();
+  }
+
+  void _scheduleQuickPlay(int generation) {
+    if (!_quickPlayPending || _quickPlayTimer != null) return;
+    _quickPlayTimer = Timer(_quickPlaySettle, () {
+      _quickPlayTimer = null;
+      unawaited(_tryQuickPlay(generation));
+    });
+  }
+
+  Future<void> _tryQuickPlay(int generation) async {
+    if (!mounted || generation != _generation || !_quickPlayPending) return;
+    await _settleAvailability(generation);
+    if (!mounted || generation != _generation || !_quickPlayPending) return;
+    if (_rankedFor(_ReleaseSort.best).isNotEmpty) _launchBest();
   }
 
   bool _restoreSnapshot(_SourceRequestKey request) {
@@ -1490,6 +1596,7 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
     setState(() {
       _activeRequest = request;
       _searchCompleted = true;
+      _finishingSearch = false;
       _loading = false;
       _manual = false;
       _results
@@ -1590,10 +1697,13 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
   )?.round();
 
   void _scheduleAvailability(int generation, {bool immediate = false}) {
-    final settings = widget.settings;
+    final settings =
+        ref.read(settingsControllerProvider).value ?? widget.settings;
     final needsFileInspection = settings?.debridService == DebridService.torbox;
     if ((!needsFileInspection &&
+            !_quickPlayPending &&
             !_cachedOnly &&
+            settings?.torrentAutoScrape != true &&
             settings?.debridCacheCheck != true &&
             settings?.debridCachedOnly != true) ||
         settings?.debridService == null ||
@@ -1605,12 +1715,39 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
       immediate || _checked.isEmpty
           ? Duration.zero
           : const Duration(milliseconds: 45),
-      () => unawaited(_checkAvailability(generation)),
+      () => unawaited(_queueAvailability(generation)),
     );
   }
 
+  Future<void> _queueAvailability(int generation) {
+    final queued = _availabilityTail.then(
+      (_) => _checkAvailability(generation),
+    );
+    _availabilityTail = queued.catchError((_) {});
+    return queued;
+  }
+
+  Future<void> _settleAvailability(int generation) async {
+    _availabilityTimer?.cancel();
+    try {
+      await _queueAvailability(generation).timeout(_availabilityTimeout);
+    } on TimeoutException {
+      if (!mounted || generation != _generation) return;
+      ref
+          .read(appLogProvider)
+          .log(
+            'warn',
+            'source-picker',
+            'Availability did not settle within '
+                '${_availabilityTimeout.inSeconds}s for generation $generation',
+          );
+    }
+  }
+
   Future<void> _checkAvailability(int generation) async {
-    final settings = widget.settings;
+    if (!mounted || generation != _generation) return;
+    final settings =
+        ref.read(settingsControllerProvider).value ?? widget.settings;
     final service = settings?.debridService;
     final key = settings?.activeDebridKey;
     if (service == null || key == null || key.isEmpty) return;
@@ -1622,8 +1759,11 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
       if (hash != null && _checked.add(hash)) hashes.add(hash);
     }
     if (hashes.isEmpty) return;
+    final started = Stopwatch()..start();
     try {
-      final answers = await client.inspectAvailability(key, hashes);
+      final answers = await client
+          .inspectAvailability(key, hashes)
+          .timeout(_availabilityTimeout);
       if (!mounted || generation != _generation) return;
       setState(() {
         for (final hash in hashes) {
@@ -1644,9 +1784,35 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
           }
         }
       });
+      ref
+          .read(appLogProvider)
+          .log(
+            'info',
+            'source-picker',
+            'Availability answered ${answers.length}/${hashes.length} release(s) '
+                'in ${started.elapsedMilliseconds}ms',
+          );
     } catch (error) {
       if (!mounted || generation != _generation) return;
-      setState(() => _sourceErrors.add('Cache check: $error'));
+      setState(() {
+        for (final hash in hashes) {
+          _availability.putIfAbsent(hash, () => Availability.unknown);
+        }
+        _sourceErrors.add(
+          error is TimeoutException
+              ? 'Cache check: timed out after '
+                    '${_availabilityTimeout.inSeconds}s.'
+              : 'Cache check: $error',
+        );
+      });
+      ref
+          .read(appLogProvider)
+          .log(
+            error is TimeoutException ? 'warn' : 'error',
+            'source-picker',
+            'Availability failed for ${hashes.length} release(s) after '
+                '${started.elapsedMilliseconds}ms: $error',
+          );
     }
   }
 
@@ -1725,8 +1891,8 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
         settings?.activeDebridKey?.isNotEmpty == true;
     if (inspectingWithTorBox) {
       final detail = _availabilityDetails[hash];
-      if (detail == null) return false;
-      if (detail.availability == Availability.cached && detail.files != null) {
+      if (detail?.availability == Availability.cached &&
+          detail?.files != null) {
         return _releaseEpisodes.containsKey(hash);
       }
     }

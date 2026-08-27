@@ -156,6 +156,37 @@ void main() {
     transport.finishMapping();
     await done.future.timeout(const Duration(seconds: 1));
   });
+
+  test(
+    'a transport that ignores request timeouts cannot hold search open',
+    () async {
+      final transport = _HangingNyaaTransport();
+      final resolver = NativeSourceResolver(
+        transport: transport,
+        settings: _Settings(),
+        sourceTimeout: const Duration(milliseconds: 25),
+        searchTimeout: const Duration(milliseconds: 100),
+        mappingTimeout: const Duration(milliseconds: 10),
+      );
+      await resolver.install('gh:owner/repo');
+
+      final batches = await resolver
+          .search(
+            const TorrentQuery(
+              anilistId: 1,
+              titles: ['Example Show'],
+              episode: 4,
+              episodeCount: 12,
+            ),
+          )
+          .toList()
+          .timeout(const Duration(seconds: 1));
+
+      expect(batches, hasLength(1));
+      expect(batches.single.source.id, 'nyaa');
+      expect(batches.single.error, contains('Timed out'));
+    },
+  );
 }
 
 class _Transport implements HttpTransport {
@@ -295,6 +326,17 @@ class _SlowMappingTransport extends _Transport {
     if (request.url.host == 'api.ani.zip') {
       requests.add(request);
       return mapping.future;
+    }
+    return super.send(request);
+  }
+}
+
+class _HangingNyaaTransport extends _Transport {
+  @override
+  Future<HttpResponse> send(HttpRequest request) {
+    if (request.url.host == 'nyaa.si' || request.url.host == 'api.ani.zip') {
+      requests.add(request);
+      return Completer<HttpResponse>().future;
     }
     return super.send(request);
   }

@@ -16,6 +16,10 @@ class NativeSourceResolver implements SourceResolver {
   NativeSourceResolver({
     required HttpTransport transport,
     required this.settings,
+    this.log = const NoopAppLog(),
+    this.sourceTimeout = const Duration(seconds: 6),
+    this.searchTimeout = const Duration(seconds: 8),
+    this.mappingTimeout = const Duration(milliseconds: 2500),
   }) : _http = _SourceHttp(transport) {
     _adapters = {
       'nyaa': _NyaaAdapter(_http, adult: false),
@@ -32,6 +36,14 @@ class NativeSourceResolver implements SourceResolver {
 
   final _SourceHttp _http;
   final SettingsRepository settings;
+  final AppLog log;
+
+  /// One adapter may make several requests, but it never owns the picker
+  /// indefinitely. The stream-wide deadline is a second line of defence for
+  /// broken adapters and test transports which ignore [HttpRequest.timeout].
+  final Duration sourceTimeout;
+  final Duration searchTimeout;
+  final Duration mappingTimeout;
   late final Map<String, _NativeAdapter> _adapters;
   final Map<String, (DateTime, TorrentQuery)> _mappingCache = {};
   SourceCatalog? _catalog;
@@ -160,66 +172,138 @@ class NativeSourceResolver implements SourceResolver {
   @override
   Stream<SourceSearchBatch> search(TorrentQuery query, {bool movie = false}) {
     final controller = StreamController<SourceSearchBatch>();
+    var stopped = false;
+    var completed = false;
+    final started = Stopwatch()..start();
+    Timer? deadline;
+
+    void emit(SourceSearchBatch batch) {
+      if (!stopped && !controller.isClosed) controller.add(batch);
+    }
+
+    Future<void> finish() async {
+      if (completed) return;
+      completed = true;
+      stopped = true;
+      deadline?.cancel();
+      if (!controller.isClosed) await controller.close();
+    }
+
+    controller.onCancel = () {
+      stopped = true;
+      deadline?.cancel();
+    };
+    deadline = Timer(searchTimeout, () {
+      log.log(
+        'warn',
+        'sources',
+        'Search deadline reached for media ${query.anilistId} episode '
+            '${query.episode ?? 0} after ${started.elapsedMilliseconds}ms',
+      );
+      unawaited(finish());
+    });
+    log.log(
+      'info',
+      'sources',
+      'Search started for media ${query.anilistId} episode '
+          '${query.episode ?? 0}',
+    );
     unawaited(() async {
-      final current = await catalog();
-      final enabled = current.extensions
-          .where((item) => item.enabled && item.supported)
-          .toList(growable: false);
-      if (enabled.isEmpty) {
-        await controller.close();
-        return;
-      }
-      // Resolve AniZip once, but do not make title- and AniList-based sources
-      // wait for it. Their local-numbered results can reach the picker now;
-      // adapters which benefit from absolute numbering send a mapped follow-up.
-      final mapped = _mappedQuery(query);
-      var remaining = enabled.length;
-      for (final extension in enabled) {
-        unawaited(() async {
-          try {
-            final adapter = _adapters[extension.id]!;
-            Future<void> searchAndEmit(TorrentQuery effective) async {
-              final results = await adapter.search(
-                effective,
-                movie: movie,
-                settings: extension.settings,
-              );
-              if (controller.isClosed) return;
-              controller.add(
-                _safeBatch(
+      try {
+        final current = await catalog();
+        if (stopped) return;
+        final enabled = current.extensions
+            .where((item) => item.enabled && item.supported)
+            .toList(growable: false);
+        if (enabled.isEmpty) {
+          log.log('warn', 'sources', 'Search has no enabled source adapters');
+          await finish();
+          return;
+        }
+        // Resolve AniZip once, but do not make title- and AniList-based sources
+        // wait for it. Their local-numbered results can reach the picker now;
+        // adapters which benefit from absolute numbering send a mapped follow-up.
+        final mapped = _mappedQuery(query);
+        var remaining = enabled.length;
+        for (final extension in enabled) {
+          unawaited(() async {
+            final sourceStarted = Stopwatch()..start();
+            var acceptingResults = true;
+            try {
+              final adapter = _adapters[extension.id]!;
+              Future<void> searchAndEmit(TorrentQuery effective) async {
+                final results = await adapter.search(
+                  effective,
+                  movie: movie,
+                  settings: extension.settings,
+                );
+                // Future.timeout cannot cancel arbitrary adapter code. Ignore a
+                // late answer once this adapter's lane has already retired.
+                if (!acceptingResults || stopped) return;
+                final batch = _safeBatch(
                   extension,
                   results,
                   requested: query,
                   effective: effective,
-                ),
-              );
-            }
+                );
+                emit(batch);
+                log.log(
+                  'info',
+                  'sources',
+                  '${extension.id} returned ${batch.results.length} valid '
+                      'release(s) in ${sourceStarted.elapsedMilliseconds}ms',
+                );
+              }
 
-            if (adapter.requiresMapping) {
-              await searchAndEmit(await mapped);
-            } else {
-              await searchAndEmit(query);
-              if (adapter.searchesMappedEpisodes) {
-                final effective = await mapped;
-                if (effective.absoluteEpisode != null &&
-                    effective.absoluteEpisode != query.episode) {
-                  await searchAndEmit(effective);
+              await (() async {
+                if (adapter.requiresMapping) {
+                  await searchAndEmit(await mapped);
+                } else {
+                  await searchAndEmit(query);
+                  if (adapter.searchesMappedEpisodes) {
+                    final effective = await mapped;
+                    if (effective.absoluteEpisode != null &&
+                        effective.absoluteEpisode != query.episode) {
+                      await searchAndEmit(effective);
+                    }
+                  }
                 }
+              }()).timeout(
+                sourceTimeout,
+                onTimeout: () => throw const _SourceSearchTimeout(),
+              );
+            } catch (error) {
+              final message = error is _SourceSearchTimeout
+                  ? 'Timed out after ${sourceTimeout.inSeconds}s.'
+                  : _safeError(error);
+              emit(SourceSearchBatch(source: extension, error: message));
+              log.log(
+                error is _SourceSearchTimeout ? 'warn' : 'error',
+                'sources',
+                '${extension.id} failed after '
+                    '${sourceStarted.elapsedMilliseconds}ms: $message',
+              );
+            } finally {
+              acceptingResults = false;
+              remaining--;
+              if (remaining == 0) {
+                log.log(
+                  'info',
+                  'sources',
+                  'Search finished in ${started.elapsedMilliseconds}ms',
+                );
+                await finish();
               }
             }
-          } catch (error) {
-            if (!controller.isClosed) {
-              controller.add(
-                SourceSearchBatch(source: extension, error: _safeError(error)),
-              );
-            }
-          } finally {
-            remaining--;
-            if (remaining == 0 && !controller.isClosed) {
-              await controller.close();
-            }
-          }
-        }());
+          }());
+        }
+      } catch (error) {
+        log.log(
+          'error',
+          'sources',
+          'Search setup failed: ${_safeError(error)}',
+        );
+        await finish();
       }
     }());
     return controller.stream;
@@ -269,11 +353,14 @@ class NativeSourceResolver implements SourceResolver {
       return cached.$2;
     }
     try {
-      final root = await _http.json(
-        Uri.https('api.ani.zip', '/mappings', {
-          'anilist_id': '${query.anilistId}',
-        }),
-      );
+      final root = await _http
+          .json(
+            Uri.https('api.ani.zip', '/mappings', {
+              'anilist_id': '${query.anilistId}',
+            }),
+            timeout: mappingTimeout,
+          )
+          .timeout(mappingTimeout);
       if (root is! Map) return query;
       final mappings = root['mappings'];
       final base = query.copyWith(
@@ -285,7 +372,16 @@ class NativeSourceResolver implements SourceResolver {
       final mapped = _episodeMapping(base, query, episodes: root['episodes']);
       _mappingCache[cacheKey] = (DateTime.now(), mapped);
       return mapped;
-    } catch (_) {
+    } catch (error) {
+      // A mapping outage should cost one short attempt, not every adapter and
+      // every click. Local episode numbering remains useful for most sources.
+      _mappingCache[cacheKey] = (DateTime.now(), query);
+      log.log(
+        'warn',
+        'sources',
+        'Episode mapping unavailable for media ${query.anilistId}: '
+            '${_safeError(error)}',
+      );
       return query;
     }
   }
@@ -1149,6 +1245,10 @@ class _SourceHttp {
       jsonDecode(utf8.decode((await get(uri, timeout: timeout)).bodyBytes));
 
   Future<String> text(Uri uri) async => utf8.decode((await get(uri)).bodyBytes);
+}
+
+class _SourceSearchTimeout implements Exception {
+  const _SourceSearchTimeout();
 }
 
 List<Map> _nestedResults(Object? root) {

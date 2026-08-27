@@ -148,6 +148,28 @@ void main() {
       ),
     );
   });
+
+  test('deadline returns even when a provider ignores cancellation', () async {
+    final provider = FakeProvider(
+      _config(resolveMs: 1000),
+      support.ManualClock(),
+    );
+    final parked = Completer<ResolvedFiles>();
+    provider.resolveCall = (_, _, _) => parked.future;
+
+    await expectLater(
+      ManagedDebridProvider(provider)
+          .resolve(hashA, const ResolveOptions())
+          .timeout(const Duration(seconds: 1)),
+      throwsA(
+        isA<DebridFailure>().having(
+          (error) => error.kind,
+          'kind',
+          DebridErrorKind.timeout,
+        ),
+      ),
+    );
+  });
 }
 
 ProviderConfig _config({

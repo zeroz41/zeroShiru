@@ -81,7 +81,7 @@ class TorrentQuery {
   final int? episode;
   final int? episodeCount;
 
-  /// '2160' | '1080' | '720' | '540' | '480' | ''
+  /// '2160' | '1440' | '1080' | '720' | '540' | '480' | ''
   final String resolution;
   final List<String> exclusions;
   final int? anidbAid;

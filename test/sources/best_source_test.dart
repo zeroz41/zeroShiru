@@ -76,4 +76,52 @@ void main() {
 
     expect(ranked.first, same(healthy));
   });
+
+  test('new quality tiers are recognized and exact preference wins', () {
+    const exact = TorrentResult(
+      title: 'Show 01 1440p',
+      link: 'exact',
+      seeders: 2,
+    );
+    const popular = TorrentResult(
+      title: 'Show 01 2160p',
+      link: 'popular',
+      seeders: 200,
+    );
+
+    final ranked = rankBestSources(
+      [popular, exact],
+      preferences: const Settings(rssQuality: '1440'),
+      availability: (_) => Availability.unknown,
+    );
+
+    expect(sourceQuality('Show 01 480p'), 480);
+    expect(sourceQuality('Show 01 1440p'), 1440);
+    expect(ranked.first, same(exact));
+  });
+
+  test('peer ratio and recency break otherwise equal release ties', () {
+    final congested = TorrentResult(
+      title: 'Show 01 1080p',
+      link: 'congested',
+      seeders: 10,
+      leechers: 100,
+      date: DateTime(2026),
+    );
+    final healthy = TorrentResult(
+      title: 'Show 01 1080p',
+      link: 'healthy',
+      seeders: 10,
+      leechers: 2,
+      date: DateTime(2025),
+    );
+
+    final ranked = rankBestSources(
+      [congested, healthy],
+      preferences: const Settings(),
+      availability: (_) => Availability.unknown,
+    );
+
+    expect(ranked.first, same(healthy));
+  });
 }

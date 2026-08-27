@@ -13,6 +13,7 @@ import '../../app/theme/tokens.dart';
 import '../../app/widgets/hover_region.dart';
 import '../../application/learning/providers.dart';
 import '../../application/learning/subtitle_providers.dart';
+import '../../application/logging/providers.dart';
 import '../../application/playback/backend.dart';
 import '../../application/playback/probe.dart';
 import '../../application/playback/preferences.dart';
@@ -31,6 +32,7 @@ const _idleSnapshot = PlaybackSnapshot(
   generation: 0,
   phase: PlaybackPhase.idle,
 );
+const _playbackResolveTimeout = Duration(seconds: 65);
 
 class PlayerPage extends ConsumerStatefulWidget {
   const PlayerPage({super.key, this.initialSource, this.initialLaunch});
@@ -125,6 +127,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   Future<void> _resolveLaunch(PlaybackLaunch launch) async {
     final generation = ++_resolveGeneration;
+    final started = Stopwatch()..start();
     _learningSubtitleRequest = null;
     _learningPreparationRequest = null;
     _learningPreparationIdentity = null;
@@ -141,6 +144,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _resolveStatus = 'Connecting to ${_serviceTitle(launch.service)}…';
       _source = null;
     });
+    ref
+        .read(appLogProvider)
+        .log(
+          'info',
+          'playback-resolve',
+          '${launch.service.name} resolve started for media ${launch.media.id} '
+              'episode ${launch.episode}',
+        );
     try {
       final settings = await ref.read(settingsControllerProvider.future);
       final key = settings.debridApiKeys[launch.service];
@@ -164,11 +175,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         });
       }
       requestPlayback(episode: launch.episode, mediaId: launch.media.id);
-      final resolved = await client.resolve(
-        key,
-        launch.magnet,
-        episode: launch.releaseEpisode ?? launch.episode,
-      );
+      final resolved = await client
+          .resolve(
+            key,
+            launch.magnet,
+            episode: launch.releaseEpisode ?? launch.episode,
+          )
+          .timeout(
+            _playbackResolveTimeout,
+            onTimeout: () => throw DebridException(
+              DebridErrorKind.timeout,
+              '${_serviceTitle(launch.service)} did not prepare the release '
+              'within ${_playbackResolveTimeout.inSeconds}s.',
+            ),
+          );
       final source = _pickResolvedTarget(resolved, launch.episode);
       final probeTransport = ref.read(playbackProbeTransportProvider);
       if (probeTransport != null) {
@@ -196,6 +216,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         _resolveStatus =
             'Opening secure ${_serviceTitle(launch.service)} stream…';
       });
+      ref
+          .read(appLogProvider)
+          .log(
+            'info',
+            'playback-resolve',
+            '${launch.service.name} prepared ${resolved.files.length} file(s) in '
+                '${started.elapsedMilliseconds}ms',
+          );
       await _open(source);
     } on DebridException catch (error) {
       if (!mounted || generation != _resolveGeneration) return;
@@ -204,7 +232,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         _resolveStatus = null;
         _resolveError = error;
       });
-    } catch (_) {
+      ref
+          .read(appLogProvider)
+          .log(
+            'warn',
+            'playback-resolve',
+            '${launch.service.name} failed after ${started.elapsedMilliseconds}ms: '
+                '${error.kind.name}: ${error.message}',
+          );
+    } catch (error) {
       if (!mounted || generation != _resolveGeneration) return;
       setState(() {
         _resolving = false;
@@ -214,6 +250,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           'The release could not be prepared for playback.',
         );
       });
+      ref
+          .read(appLogProvider)
+          .log(
+            'error',
+            'playback-resolve',
+            '${launch.service.name} failed after ${started.elapsedMilliseconds}ms: '
+                '$error',
+          );
     }
   }
 

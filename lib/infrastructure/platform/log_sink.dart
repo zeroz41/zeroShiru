@@ -15,7 +15,9 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-class FileLogSink {
+import '../../domain/ports/app_log.dart';
+
+class FileLogSink implements AppLog {
   FileLogSink(
     String directory, {
     this.maxFileBytes = 8 * 1024 * 1024,
@@ -49,6 +51,7 @@ class FileLogSink {
 
   /// Formats and writes one entry. Redaction is applied here — nothing
   /// reaches disk without it.
+  @override
   void log(String level, String scope, String message) {
     final timestamp = DateTime.now().toIso8601String();
     write('[$timestamp] [$level] $scope: $message');

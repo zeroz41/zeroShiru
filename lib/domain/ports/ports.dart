@@ -9,6 +9,7 @@ import '../models/tracking_account.dart';
 import '../models/torrent.dart';
 
 export 'catalog_repository.dart';
+export 'app_log.dart';
 export 'debrid_client.dart';
 export 'episode_repository.dart';
 export 'language_learning.dart';

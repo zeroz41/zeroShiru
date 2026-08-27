@@ -94,9 +94,11 @@ class ManagedDebridProvider {
             Error.throwWithStackTrace(error, stack);
           case _Deadline(:final elapsedMs):
             operation.cancel();
-            // Consume the abandoned provider result so it cannot surface as an
-            // unhandled asynchronous error after the caller receives timeout.
-            await work;
+            // Observe the abandoned provider result without awaiting it. A
+            // transport or provider bug may ignore cancellation completely;
+            // waiting here would turn the deadline itself into an infinite
+            // spinner, which is precisely what this boundary must prevent.
+            unawaited(work.then<void>((_) {}));
             throw DebridFailure.timeout(
               '${provider.config.title} did not answer with a playable link '
               'within ${(elapsedMs / 1000).ceil()}s',

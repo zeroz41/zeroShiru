@@ -66,10 +66,21 @@ List<TorrentResult> rankBestSources(
     if (order != 0) return order;
 
     // Seeder health remains the most useful general torrent tie-breaker even
-    // when somebody chose a different primary sort.
+    // when somebody chose a different primary sort. When seeder counts tie,
+    // prefer the swarm with fewer blocked downloaders rather than treating a
+    // 5:2 swarm and a 5:500 swarm as equally healthy.
     order = (b.seeders ?? 0).compareTo(a.seeders ?? 0);
     if (order != 0) return order;
+    order = _swarmRatio(b).compareTo(_swarmRatio(a));
+    if (order != 0) return order;
     order = (b.downloads ?? 0).compareTo(a.downloads ?? 0);
+    if (order != 0) return order;
+
+    // A current repack is generally a better fallback than an otherwise
+    // indistinguishable stale upload. Missing dates remain neutral.
+    order = (b.date?.millisecondsSinceEpoch ?? 0).compareTo(
+      a.date?.millisecondsSinceEpoch ?? 0,
+    );
     if (order != 0) return order;
 
     // Equal-resolution releases with equal swarm health start transferring
@@ -83,6 +94,13 @@ List<TorrentResult> rankBestSources(
     return left.$1.compareTo(right.$1);
   });
   return [for (final item in indexed) item.$2];
+}
+
+int _swarmRatio(TorrentResult result) {
+  final seeders = result.seeders ?? 0;
+  final leechers = result.leechers ?? 0;
+  final peers = seeders + leechers;
+  return peers <= 0 ? 0 : (seeders * 1000 ~/ peers);
 }
 
 int sourceQuality(String title) =>
