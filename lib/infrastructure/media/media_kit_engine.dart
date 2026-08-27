@@ -75,6 +75,9 @@ class MediaKitEngine implements MediaEngine {
   var _disposed = false;
   var _pollingMetrics = false;
   DateTime? _recoverableBackendErrorsThrough;
+  int? _trackPreferenceGeneration;
+  PlaybackPreferences? _pendingTrackPreferences;
+  Future<void>? _trackPreferenceApplication;
 
   @override
   Stream<PlaybackSnapshot> get state => _states.stream;
@@ -97,6 +100,7 @@ class MediaKitEngine implements MediaEngine {
     _ensureAlive();
     _seekRequest++;
     _recoverableBackendErrorsThrough = null;
+    _discardPendingTrackPreferences();
     if (!isAllowedPlaybackSource(source.url)) {
       final failure = PlaybackFailure(
         PlaybackFailureKind.unsafeSource,
@@ -129,7 +133,14 @@ class MediaKitEngine implements MediaEngine {
         play: false,
       );
       if (_disposed || generation != _generation) return;
-      await _applyTrackPreferences(preferences ?? _defaultPreferences());
+      _trackPreferenceGeneration = generation;
+      _pendingTrackPreferences = preferences ?? _defaultPreferences();
+      // Player.open only queues MPV's load command. On native platforms the
+      // future commonly completes before the new file's track-list event, so
+      // applying preferences here alone races against an empty Tracks value.
+      // Apply immediately when metadata is already available and otherwise
+      // leave the request staged for _onTracks.
+      await _applyPendingTrackPreferences(generation);
       await _applySubtitleState();
       if (_disposed || generation != _generation) return;
       _phase = PlaybackPhase.ready;
@@ -226,6 +237,7 @@ class MediaKitEngine implements MediaEngine {
   @override
   Future<void> selectAudio(String? trackId) async {
     _ensureAlive();
+    _discardPendingTrackPreferences();
     _allowTransientTrackErrors();
     if (trackId == null) {
       await _command(
@@ -250,6 +262,7 @@ class MediaKitEngine implements MediaEngine {
   @override
   Future<void> selectSubtitle(String? trackId, {bool secondary = false}) async {
     _ensureAlive();
+    _discardPendingTrackPreferences();
     _seekRequest++;
     _allowTransientTrackErrors();
     if (secondary) {
@@ -516,6 +529,38 @@ class MediaKitEngine implements MediaEngine {
     } catch (_) {}
   }
 
+  Future<void> _applyPendingTrackPreferences(int generation) {
+    if (_disposed ||
+        generation != _generation ||
+        _trackPreferenceGeneration != generation) {
+      return Future.value();
+    }
+    final active = _trackPreferenceApplication;
+    if (active != null) return active;
+    final preferences = _pendingTrackPreferences;
+    if (preferences == null || !kitTracksAreLoaded(_player.state.tracks)) {
+      return Future.value();
+    }
+    _pendingTrackPreferences = null;
+    final application = () async {
+      _allowTransientTrackErrors();
+      await _applyTrackPreferences(preferences);
+      if (!_disposed && generation == _generation) {
+        // A late native track selection can change MPV's subtitle visibility.
+        // Reassert the active Styled/Learning/Hidden presentation after it.
+        await _applySubtitleVisibility();
+      }
+    }();
+    _trackPreferenceApplication = application;
+    return application;
+  }
+
+  void _discardPendingTrackPreferences() {
+    _trackPreferenceGeneration = null;
+    _pendingTrackPreferences = null;
+    _trackPreferenceApplication = null;
+  }
+
   void _onPlaying(bool playing) {
     if (playing) {
       _phase = PlaybackPhase.playing;
@@ -536,6 +581,9 @@ class MediaKitEngine implements MediaEngine {
       _selectedSecondary = null;
       _blockedSecondarySubtitleText = _subtitleTextAt(1);
       _clearCue(secondary: true);
+    }
+    if (kitTracksAreLoaded(tracks)) {
+      unawaited(_applyPendingTrackPreferences(_generation));
     }
     _emit();
   }
@@ -918,6 +966,7 @@ class MediaKitEngine implements MediaEngine {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _discardPendingTrackPreferences();
     _generation++;
     _seekRequest++;
     _metricTimer?.cancel();
@@ -1062,6 +1111,15 @@ PlaybackSnapshot mapMediaKitState(
     error: error,
   );
 }
+
+/// Whether MPV has published at least one real track for the current file.
+/// media_kit seeds each category with synthetic `auto` and `no` entries, so
+/// list non-emptiness alone cannot distinguish loaded metadata from startup.
+bool kitTracksAreLoaded(kit.Tracks tracks) => [
+  ...tracks.video,
+  ...tracks.audio,
+  ...tracks.subtitle,
+].any((track) => !_automaticTrackIds.contains(track.id));
 
 MediaTrack mapAudioTrack(kit.AudioTrack track) => MediaTrack(
   id: track.id,

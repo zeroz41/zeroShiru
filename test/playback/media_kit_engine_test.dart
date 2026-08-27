@@ -104,6 +104,22 @@ void main() {
   });
 
   group('player boundary rules', () {
+    test('synthetic auto tracks are not treated as loaded media metadata', () {
+      expect(kitTracksAreLoaded(const kit.Tracks()), isFalse);
+      expect(
+        kitTracksAreLoaded(
+          const kit.Tracks(
+            audio: [
+              kit.AudioTrack('auto', null, null),
+              kit.AudioTrack('no', null, null),
+              kit.AudioTrack('2', 'English dub', 'eng'),
+            ],
+          ),
+        ),
+        isTrue,
+      );
+    });
+
     test('a seek is not settled while the playhead is still at its origin', () {
       expect(
         seekTargetReached(

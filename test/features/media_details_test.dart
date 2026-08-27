@@ -537,6 +537,114 @@ void main() {
       expect(find.textContaining('1 playable'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'series context renders and episode metadata can extend the count',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      const media = Media(
+        id: 11,
+        title: MediaTitle(userPreferred: 'Actually Informative Show'),
+        format: MediaFormat.tv,
+        status: MediaStatus.releasing,
+        season: MediaSeason.summer,
+        seasonYear: 2026,
+        duration: 24,
+        averageScore: 84,
+        genres: ['Drama', 'Fantasy'],
+        description: 'A richer series description.',
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            settingsRepositoryProvider.overrideWithValue(
+              _SettingsRepository(const Settings()),
+            ),
+            credentialStoreProvider.overrideWithValue(const _Credentials('')),
+            episodeRepositoryProvider.overrideWithValue(
+              _Episodes([
+                for (var episode = 1; episode <= 4; episode++)
+                  EpisodeInfo(
+                    number: episode,
+                    title: 'Chapter $episode',
+                    summary: 'What happens in chapter $episode.',
+                  ),
+              ]),
+            ),
+          ],
+          child: MaterialApp(
+            theme: buildZeroTheme(),
+            home: const MediaDetails(media: media),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('About the series'), findsOneWidget);
+      expect(find.text('A richer series description.'), findsOneWidget);
+      expect(find.text('84% score'), findsOneWidget);
+      expect(find.text('Currently airing'), findsOneWidget);
+      expect(find.text('Summer 2026'), findsOneWidget);
+      expect(find.text('Drama'), findsOneWidget);
+      expect(find.text('Fantasy'), findsOneWidget);
+      expect(find.text('1 of 4'), findsOneWidget);
+      expect(find.byKey(const ValueKey('episode-4')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('episode metadata failures explain the fallback and can retry', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final episodes = _FlakyEpisodes();
+    const media = Media(
+      id: 12,
+      title: MediaTitle(userPreferred: 'Retry Show'),
+      episodes: 2,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(
+            _SettingsRepository(const Settings()),
+          ),
+          credentialStoreProvider.overrideWithValue(const _Credentials('')),
+          episodeRepositoryProvider.overrideWithValue(episodes),
+        ],
+        child: MaterialApp(
+          theme: buildZeroTheme(),
+          home: const MediaDetails(media: media),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Episode guide unavailable. Showing playback basics.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Episode notes could not be loaded. Playback is still available.',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('retry-episode-metadata')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Recovered episode title'), findsOneWidget);
+    expect(find.text('Episode metadata recovered.'), findsWidgets);
+    expect(
+      find.text('Episode guide unavailable. Showing playback basics.'),
+      findsNothing,
+    );
+  });
 }
 
 class _Sources implements SourceResolver {
@@ -645,6 +753,24 @@ class _Episodes implements EpisodeRepository {
 
   @override
   Future<List<EpisodeInfo>> episodes(Media media) async => items;
+}
+
+class _FlakyEpisodes implements EpisodeRepository {
+  var calls = 0;
+
+  @override
+  Future<List<EpisodeInfo>> episodes(Media media) async {
+    calls++;
+    if (calls == 1) throw StateError('temporary metadata failure');
+    return const [
+      EpisodeInfo(
+        number: 1,
+        title: 'Recovered episode title',
+        summary: 'Episode metadata recovered.',
+      ),
+      EpisodeInfo(number: 2),
+    ];
+  }
 }
 
 class _Debrid implements DebridClient {

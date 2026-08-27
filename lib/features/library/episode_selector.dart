@@ -157,6 +157,7 @@ class _EpisodeSelectorState extends State<EpisodeSelector> {
             imageUrl: item?.imageUrl ?? widget.fallbackArtwork,
             durationMinutes: item?.durationMinutes ?? widget.durationMinutes,
             airDate: item?.airDate,
+            rating: item?.rating,
             selected: episode == widget.selectedEpisode,
             watched: episode <= widget.watchedThrough,
             next: episode == widget.watchedThrough + 1,
@@ -391,6 +392,7 @@ class _EpisodeRow extends StatelessWidget {
     required this.imageUrl,
     required this.durationMinutes,
     required this.airDate,
+    required this.rating,
     required this.selected,
     required this.watched,
     required this.next,
@@ -405,6 +407,7 @@ class _EpisodeRow extends StatelessWidget {
   final String? imageUrl;
   final int? durationMinutes;
   final DateTime? airDate;
+  final double? rating;
   final bool selected;
   final bool watched;
   final bool next;
@@ -573,6 +576,18 @@ class _EpisodeRow extends StatelessWidget {
                                       ),
                                 ),
                               ),
+                              if (rating != null) ...[
+                                Icon(
+                                  Icons.star_rounded,
+                                  size: 14,
+                                  color: context.zeroPalette.warning,
+                                ),
+                                const SizedBox(width: ZeroTokens.space1),
+                                Text(
+                                  rating!.toStringAsFixed(1),
+                                  style: Theme.of(context).textTheme.labelSmall,
+                                ),
+                              ],
                             ],
                           ),
                         ],

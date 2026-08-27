@@ -43,6 +43,7 @@ class EpisodeInfo {
     this.imageUrl,
     this.durationMinutes,
     this.airDate,
+    this.rating,
   });
 
   final int number;
@@ -51,6 +52,9 @@ class EpisodeInfo {
   final String? imageUrl;
   final int? durationMinutes;
   final DateTime? airDate;
+
+  /// Provider score on a ten-point scale, when episode-level ratings exist.
+  final double? rating;
 }
 
 class ListEntry {

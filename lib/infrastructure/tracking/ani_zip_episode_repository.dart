@@ -59,27 +59,48 @@ class AniZipEpisodeRepository implements EpisodeRepository {
 }
 
 EpisodeInfo _episodeInfo(int number, Map? row, Media media) {
-  final title = row?['title'];
+  final title = _episodeTitle(row?['title'], media);
   return EpisodeInfo(
     number: number,
-    title: _title(title),
-    summary: _text(row?['summary']) ?? _text(row?['overview']),
+    title: title,
+    summary: _text(row?['overview']) ?? _text(row?['summary']),
     imageUrl:
         _text(row?['image']) ??
         _text(row?['thumbnail']) ??
         media.bannerImage ??
         media.coverImage,
-    durationMinutes: _integer(row?['length']) ?? media.duration,
-    airDate: _date(row?['airdate']),
+    durationMinutes:
+        _integer(row?['runtime']) ?? _integer(row?['length']) ?? media.duration,
+    airDate: _date(row?['airDate']) ?? _date(row?['airdate']),
+    rating: _decimal(row?['rating']),
   );
+}
+
+String? _episodeTitle(Object? value, Media media) {
+  final title = _title(value);
+  if (title == null) return null;
+  final normalized = _normalizedTitle(title);
+  final seriesTitles = [
+    media.title.userPreferred,
+    media.title.english,
+    media.title.romaji,
+    media.title.native,
+  ].whereType<String>().map(_normalizedTitle);
+  return seriesTitles.contains(normalized) ? null : title;
 }
 
 String? _title(Object? value) {
   if (value is Map) {
-    return _text(value['en']) ?? _text(value['jp']) ?? _text(value['x-jat']);
+    return _text(value['en']) ??
+        _text(value['ja']) ??
+        _text(value['jp']) ??
+        _text(value['x-jat']);
   }
   return _text(value);
 }
+
+String _normalizedTitle(String value) =>
+    value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), ' ').trim();
 
 String? _text(Object? value) {
   if (value is! String) return null;
@@ -90,6 +111,11 @@ String? _text(Object? value) {
 int? _integer(Object? value) {
   if (value is num) return value.round();
   return value is String ? num.tryParse(value)?.round() : null;
+}
+
+double? _decimal(Object? value) {
+  if (value is num) return value.toDouble();
+  return value is String ? double.tryParse(value) : null;
 }
 
 int? _episodeKey(String key) {

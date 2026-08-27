@@ -178,6 +178,10 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
     setState(() => _releaseOpen = false);
   }
 
+  void _retryEpisodeMetadata() {
+    ref.invalidate(episodeMetadataProvider(media));
+  }
+
   void _launch(Settings? settings, [_ReleaseChoice? selected]) {
     final service = settings?.debridService;
     final key = service == null ? null : settings?.debridApiKeys[service];
@@ -212,9 +216,9 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
     final compact = size.width < 900;
     final settings = ref.watch(settingsControllerProvider);
     final currentSettings = settings.value;
-    final episodes =
-        ref.watch(episodeMetadataProvider(media)).value ??
-        fallbackEpisodeMetadata(media);
+    final episodeMetadata = ref.watch(episodeMetadataProvider(media));
+    final episodes = episodeMetadata.value ?? fallbackEpisodeMetadata(media);
+    final episodeCount = _episodeCount(media, episodes);
     final selectedEpisode = _episodeInfo(episodes, _episode, media);
     if (currentSettings != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -251,12 +255,16 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
                       episode: _episode,
                       episodeInfo: selectedEpisode,
                       episodes: episodes,
+                      episodeCount: episodeCount,
+                      episodeMetadataLoading: episodeMetadata.isLoading,
+                      episodeMetadataError: episodeMetadata.error,
                       findingBestSource: _findingBestSource,
                       playbackError: _playbackError,
                       onWatch: _watchNow,
                       onChooseSource: _openReleases,
                       onSelectEpisode: _selectEpisode,
                       onPlayEpisode: _playEpisode,
+                      onRetryEpisodeMetadata: _retryEpisodeMetadata,
                     )
                   else
                     _DesktopDetails(
@@ -264,12 +272,16 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
                       episode: _episode,
                       episodeInfo: selectedEpisode,
                       episodes: episodes,
+                      episodeCount: episodeCount,
+                      episodeMetadataLoading: episodeMetadata.isLoading,
+                      episodeMetadataError: episodeMetadata.error,
                       findingBestSource: _findingBestSource,
                       playbackError: _playbackError,
                       onWatch: _watchNow,
                       onChooseSource: _openReleases,
                       onSelectEpisode: _selectEpisode,
                       onPlayEpisode: _playEpisode,
+                      onRetryEpisodeMetadata: _retryEpisodeMetadata,
                     ),
                   Positioned(
                     top: ZeroTokens.space3,
@@ -378,24 +390,32 @@ class _DesktopDetails extends StatelessWidget {
     required this.episode,
     required this.episodeInfo,
     required this.episodes,
+    required this.episodeCount,
+    required this.episodeMetadataLoading,
+    required this.episodeMetadataError,
     required this.findingBestSource,
     required this.playbackError,
     required this.onWatch,
     required this.onChooseSource,
     required this.onSelectEpisode,
     required this.onPlayEpisode,
+    required this.onRetryEpisodeMetadata,
   });
 
   final Media media;
   final int episode;
   final EpisodeInfo episodeInfo;
   final List<EpisodeInfo> episodes;
+  final int episodeCount;
+  final bool episodeMetadataLoading;
+  final Object? episodeMetadataError;
   final bool findingBestSource;
   final String? playbackError;
   final VoidCallback onWatch;
   final VoidCallback onChooseSource;
   final ValueChanged<int> onSelectEpisode;
   final ValueChanged<int> onPlayEpisode;
+  final VoidCallback onRetryEpisodeMetadata;
 
   @override
   Widget build(BuildContext context) {
@@ -408,10 +428,14 @@ class _DesktopDetails extends StatelessWidget {
             media: media,
             episode: episode,
             episodeInfo: episodeInfo,
+            episodeCount: episodeCount,
+            episodeMetadataLoading: episodeMetadataLoading,
+            episodeMetadataError: episodeMetadataError,
             findingBestSource: findingBestSource,
             playbackError: playbackError,
             onWatch: onWatch,
             onChooseSource: onChooseSource,
+            onRetryEpisodeMetadata: onRetryEpisodeMetadata,
           ),
         ),
         const VerticalDivider(width: 1),
@@ -426,9 +450,16 @@ class _DesktopDetails extends StatelessWidget {
             ),
             child: Column(
               children: [
+                _EpisodeMetadataNotice(
+                  loading: episodeMetadataLoading,
+                  error: episodeMetadataError,
+                  onRetry: onRetryEpisodeMetadata,
+                ),
+                if (episodeMetadataLoading || episodeMetadataError != null)
+                  const SizedBox(height: ZeroTokens.space2),
                 Expanded(
                   child: EpisodeSelector(
-                    episodeCount: media.maxEpisode ?? 1,
+                    episodeCount: episodeCount,
                     watchedThrough: media.listEntry?.progress ?? 0,
                     selectedEpisode: episode,
                     fallbackArtwork: media.bannerImage ?? media.coverImage,
@@ -455,24 +486,32 @@ class _CompactDetails extends StatelessWidget {
     required this.episode,
     required this.episodeInfo,
     required this.episodes,
+    required this.episodeCount,
+    required this.episodeMetadataLoading,
+    required this.episodeMetadataError,
     required this.findingBestSource,
     required this.playbackError,
     required this.onWatch,
     required this.onChooseSource,
     required this.onSelectEpisode,
     required this.onPlayEpisode,
+    required this.onRetryEpisodeMetadata,
   });
 
   final Media media;
   final int episode;
   final EpisodeInfo episodeInfo;
   final List<EpisodeInfo> episodes;
+  final int episodeCount;
+  final bool episodeMetadataLoading;
+  final Object? episodeMetadataError;
   final bool findingBestSource;
   final String? playbackError;
   final VoidCallback onWatch;
   final VoidCallback onChooseSource;
   final ValueChanged<int> onSelectEpisode;
   final ValueChanged<int> onPlayEpisode;
+  final VoidCallback onRetryEpisodeMetadata;
 
   @override
   Widget build(BuildContext context) {
@@ -495,11 +534,25 @@ class _CompactDetails extends StatelessWidget {
           onChooseSource: onChooseSource,
         ),
         const SizedBox(height: ZeroTokens.space5),
-        _AboutEpisode(episode: episodeInfo),
-        if ((media.maxEpisode ?? 0) > 0) ...[
+        _AboutEpisode(
+          episode: episodeInfo,
+          loading: episodeMetadataLoading,
+          error: episodeMetadataError,
+          onRetry: onRetryEpisodeMetadata,
+        ),
+        const SizedBox(height: ZeroTokens.space5),
+        _AboutSeries(media: media, episodeCount: episodeCount),
+        if (episodeCount > 0) ...[
           const SizedBox(height: ZeroTokens.space5),
+          _EpisodeMetadataNotice(
+            loading: episodeMetadataLoading,
+            error: episodeMetadataError,
+            onRetry: onRetryEpisodeMetadata,
+          ),
+          if (episodeMetadataLoading || episodeMetadataError != null)
+            const SizedBox(height: ZeroTokens.space2),
           EpisodeSelector(
-            episodeCount: media.maxEpisode!,
+            episodeCount: episodeCount,
             watchedThrough: media.listEntry?.progress ?? 0,
             selectedEpisode: episode,
             fallbackArtwork: media.bannerImage ?? media.coverImage,
@@ -521,19 +574,27 @@ class _OverviewScroll extends StatelessWidget {
     required this.media,
     required this.episode,
     required this.episodeInfo,
+    required this.episodeCount,
+    required this.episodeMetadataLoading,
+    required this.episodeMetadataError,
     required this.findingBestSource,
     required this.playbackError,
     required this.onWatch,
     required this.onChooseSource,
+    required this.onRetryEpisodeMetadata,
   });
 
   final Media media;
   final int episode;
   final EpisodeInfo episodeInfo;
+  final int episodeCount;
+  final bool episodeMetadataLoading;
+  final Object? episodeMetadataError;
   final bool findingBestSource;
   final String? playbackError;
   final VoidCallback onWatch;
   final VoidCallback onChooseSource;
+  final VoidCallback onRetryEpisodeMetadata;
 
   @override
   Widget build(BuildContext context) {
@@ -557,7 +618,14 @@ class _OverviewScroll extends StatelessWidget {
             onChooseSource: onChooseSource,
           ),
           const SizedBox(height: ZeroTokens.space6),
-          _AboutEpisode(episode: episodeInfo),
+          _AboutEpisode(
+            episode: episodeInfo,
+            loading: episodeMetadataLoading,
+            error: episodeMetadataError,
+            onRetry: onRetryEpisodeMetadata,
+          ),
+          const SizedBox(height: ZeroTokens.space6),
+          _AboutSeries(media: media, episodeCount: episodeCount),
         ],
       ),
     );
@@ -682,6 +750,11 @@ class _TitleBlock extends StatelessWidget {
                 icon: Icons.calendar_month_rounded,
                 label: _episodeDate(episodeInfo.airDate!),
               ),
+            if (episodeInfo.rating != null)
+              _MetaItem(
+                icon: Icons.star_rounded,
+                label: '${episodeInfo.rating!.toStringAsFixed(1)}/10',
+              ),
             _MetaItem(
               icon: episode <= (media.listEntry?.progress ?? 0)
                   ? Icons.check_circle_rounded
@@ -730,9 +803,17 @@ class _TitleBlock extends StatelessWidget {
 }
 
 class _AboutEpisode extends StatelessWidget {
-  const _AboutEpisode({required this.episode});
+  const _AboutEpisode({
+    required this.episode,
+    required this.loading,
+    required this.error,
+    required this.onRetry,
+  });
 
   final EpisodeInfo episode;
+  final bool loading;
+  final Object? error;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -743,10 +824,132 @@ class _AboutEpisode extends StatelessWidget {
         const SizedBox(height: ZeroTokens.space4),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 900),
+          child: episode.summary?.trim().isNotEmpty == true
+              ? Text(
+                  episode.summary!,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    height: 1.6,
+                    color: context.zeroPalette.textSecondary,
+                  ),
+                )
+              : _MissingEpisodeSummary(
+                  loading: loading,
+                  error: error,
+                  onRetry: onRetry,
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MissingEpisodeSummary extends StatelessWidget {
+  const _MissingEpisodeSummary({
+    required this.loading,
+    required this.error,
+    required this.onRetry,
+  });
+
+  final bool loading;
+  final Object? error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.bodyLarge
+        ?.copyWith(height: 1.6, color: context.zeroPalette.textSecondary);
+    if (loading) {
+      return Row(
+        children: [
+          const SizedBox.square(
+            dimension: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: ZeroTokens.space3),
+          Text('Loading this episode’s synopsis…', style: style),
+        ],
+      );
+    }
+    if (error != null) {
+      return Wrap(
+        spacing: ZeroTokens.space3,
+        runSpacing: ZeroTokens.space2,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text(
+            'Episode notes could not be loaded. Playback is still available.',
+            style: style,
+          ),
+          TextButton.icon(
+            key: const ValueKey('retry-episode-metadata'),
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Retry'),
+          ),
+        ],
+      );
+    }
+    return Text('No episode synopsis has been published yet.', style: style);
+  }
+}
+
+class _AboutSeries extends StatelessWidget {
+  const _AboutSeries({required this.media, required this.episodeCount});
+
+  final Media media;
+  final int episodeCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final description = _plainText(media.description);
+    final facts = <({IconData icon, String label})>[
+      if (media.averageScore case final score?)
+        (icon: Icons.star_rounded, label: '$score% score'),
+      if (media.format case final format?)
+        (icon: Icons.live_tv_rounded, label: _mediaFormat(format)),
+      (icon: Icons.video_library_outlined, label: '$episodeCount episodes'),
+      if (media.duration case final duration?)
+        (icon: Icons.schedule_rounded, label: '$duration min each'),
+      if (media.status case final status?)
+        (icon: Icons.sensors_rounded, label: _mediaStatus(status)),
+      if (media.season != null || media.seasonYear != null)
+        (
+          icon: Icons.calendar_month_rounded,
+          label: [
+            if (media.season case final season?) _capitalize(season.name),
+            if (media.seasonYear case final year?) '$year',
+          ].join(' '),
+        ),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle(label: 'About the series'),
+        const SizedBox(height: ZeroTokens.space4),
+        if (facts.isNotEmpty)
+          Wrap(
+            spacing: ZeroTokens.space2,
+            runSpacing: ZeroTokens.space2,
+            children: [
+              for (final fact in facts)
+                _SeriesFact(icon: fact.icon, label: fact.label),
+            ],
+          ),
+        if (media.genres.isNotEmpty) ...[
+          const SizedBox(height: ZeroTokens.space3),
+          Wrap(
+            spacing: ZeroTokens.space2,
+            runSpacing: ZeroTokens.space2,
+            children: [
+              for (final genre in media.genres) Chip(label: Text(genre)),
+            ],
+          ),
+        ],
+        const SizedBox(height: ZeroTokens.space4),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900),
           child: Text(
-            episode.summary?.trim().isNotEmpty == true
-                ? episode.summary!
-                : 'No episode synopsis is available yet.',
+            description ?? 'No series synopsis has been published yet.',
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
               height: 1.6,
               color: context.zeroPalette.textSecondary,
@@ -754,6 +957,92 @@ class _AboutEpisode extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _SeriesFact extends StatelessWidget {
+  const _SeriesFact({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: context.zeroPalette.panel,
+        border: Border.all(color: context.zeroPalette.border),
+        borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: ZeroTokens.space3,
+          vertical: ZeroTokens.space2,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 17, color: context.zeroPalette.accentSoft),
+            const SizedBox(width: ZeroTokens.space2),
+            Text(label, style: Theme.of(context).textTheme.labelMedium),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EpisodeMetadataNotice extends StatelessWidget {
+  const _EpisodeMetadataNotice({
+    required this.loading,
+    required this.error,
+    required this.onRetry,
+  });
+
+  final bool loading;
+  final Object? error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!loading && error == null) return const SizedBox.shrink();
+    final colors = context.zeroPalette;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.panel,
+        border: Border.all(
+          color: error == null
+              ? colors.border
+              : colors.warning.withValues(alpha: 0.42),
+        ),
+        borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(ZeroTokens.space3),
+        child: Row(
+          children: [
+            if (loading)
+              const SizedBox.square(
+                dimension: 17,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              Icon(Icons.info_outline_rounded, size: 18, color: colors.warning),
+            const SizedBox(width: ZeroTokens.space2),
+            Expanded(
+              child: Text(
+                loading
+                    ? 'Loading episode titles, artwork, and summaries…'
+                    : 'Episode guide unavailable. Showing playback basics.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+            if (!loading)
+              TextButton(onPressed: onRetry, child: const Text('Retry')),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2201,14 +2490,25 @@ class _CloseButton extends StatelessWidget {
 }
 
 int _initialEpisode(Media media) {
-  final count = media.maxEpisode ?? 1;
   final next = (media.listEntry?.progress ?? 0) + 1;
+  final count = (media.maxEpisode ?? 1) < next ? next : (media.maxEpisode ?? 1);
   return next.clamp(1, count);
 }
 
 int _requestedEpisode(Media media, int? requested) {
-  final count = media.maxEpisode ?? 1;
+  final known = media.maxEpisode ?? 1;
+  final count = requested != null && requested > known ? requested : known;
   return (requested ?? _initialEpisode(media)).clamp(1, count);
+}
+
+int _episodeCount(Media media, List<EpisodeInfo> episodes) {
+  var count = media.maxEpisode ?? 0;
+  final progress = media.listEntry?.progress ?? 0;
+  if (progress > count) count = progress;
+  for (final episode in episodes) {
+    if (episode.number > count) count = episode.number;
+  }
+  return count < 1 ? 1 : count;
 }
 
 EpisodeInfo _episodeInfo(List<EpisodeInfo> episodes, int number, Media media) {
@@ -2222,6 +2522,7 @@ EpisodeInfo _episodeInfo(List<EpisodeInfo> episodes, int number, Media media) {
     imageUrl: found?.imageUrl ?? media.bannerImage ?? media.coverImage,
     durationMinutes: found?.durationMinutes ?? media.duration,
     airDate: found?.airDate,
+    rating: found?.rating,
   );
 }
 
@@ -2242,6 +2543,39 @@ String _episodeDate(DateTime date) {
   ];
   return '${months[date.month - 1]} ${date.day}, ${date.year}';
 }
+
+String? _plainText(String? value) {
+  if (value == null) return null;
+  final text = value
+      .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+      .replaceAll(RegExp('<[^>]+>'), '')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .trim();
+  return text.isEmpty ? null : text;
+}
+
+String _mediaFormat(MediaFormat format) => switch (format) {
+  MediaFormat.tv => 'TV series',
+  MediaFormat.tvShort => 'TV short',
+  MediaFormat.movie => 'Movie',
+  MediaFormat.special => 'Special',
+  MediaFormat.ova => 'OVA',
+  MediaFormat.ona => 'ONA',
+  MediaFormat.music => 'Music',
+  MediaFormat.unknown => 'Unknown format',
+};
+
+String _mediaStatus(MediaStatus status) => switch (status) {
+  MediaStatus.finished => 'Finished airing',
+  MediaStatus.releasing => 'Currently airing',
+  MediaStatus.notYetReleased => 'Not yet released',
+  MediaStatus.cancelled => 'Cancelled',
+  MediaStatus.hiatus => 'On hiatus',
+};
 
 String _serviceTitle(DebridService service) => switch (service) {
   DebridService.alldebrid => 'AllDebrid',

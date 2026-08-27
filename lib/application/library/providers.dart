@@ -33,12 +33,8 @@ final episodeMetadataProvider = FutureProvider.family<List<EpisodeInfo>, Media>(
   (ref, media) async {
     final repository = ref.watch(episodeRepositoryProvider);
     if (repository != null) {
-      try {
-        final episodes = await repository.episodes(media);
-        if (episodes.isNotEmpty) return episodes;
-      } catch (_) {
-        // Titles and thumbnails are enhancement data, never a playback gate.
-      }
+      final episodes = await repository.episodes(media);
+      if (episodes.isNotEmpty) return episodes;
     }
     return fallbackEpisodeMetadata(media);
   },

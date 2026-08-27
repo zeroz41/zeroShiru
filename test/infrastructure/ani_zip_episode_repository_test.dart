@@ -17,13 +17,20 @@ void main() {
               "episodeNumber": 1,
               "title": {"en": "The First Step", "jp": "Hajimari"},
               "summary": "A clean episode summary.",
+              "overview": "A cleaner episode overview.",
               "image": "https://images.example/episode-1.jpg",
               "length": 24,
-              "airdate": "2025-01-02"
+              "runtime": 23,
+              "airDate": "2025-01-02",
+              "rating": "8.25"
             },
             "2": {
               "episodeNumber": 2,
               "title": {"en": "A Second Step"}
+            },
+            "3": {
+              "episodeNumber": 3,
+              "title": {"en": "Test Show"}
             }
           }
         }
@@ -44,11 +51,17 @@ void main() {
       expect(transport.asked.single.url.queryParameters['anilist_id'], '42');
       expect(episodes, hasLength(3));
       expect(episodes.first.title, 'The First Step');
-      expect(episodes.first.summary, 'A clean episode summary.');
-      expect(episodes.first.durationMinutes, 24);
+      expect(episodes.first.summary, 'A cleaner episode overview.');
+      expect(episodes.first.durationMinutes, 23);
       expect(episodes.first.airDate, DateTime(2025, 1, 2));
+      expect(episodes.first.rating, 8.25);
       expect(episodes[1].title, 'A Second Step');
       expect(episodes[1].imageUrl, media.bannerImage);
+      expect(
+        episodes[2].title,
+        isNull,
+        reason: 'series titles are not episode titles',
+      );
       expect(episodes[2].durationMinutes, 25);
     },
   );
