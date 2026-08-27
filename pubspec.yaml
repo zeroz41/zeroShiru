@@ -10,13 +10,14 @@ dependencies:
   archive: ^4.0.7
   cached_network_image: ^3.4.1
   crypto: ^3.0.7
+  # Flutter's adaptive Cupertino widgets reference this runtime font asset.
+  cupertino_icons: ^1.0.9
   flutter:
     sdk: flutter
   flutter_riverpod: ^3.4.2
   flutter_secure_storage: ^11.0.0
   go_router: ^17.5.0
   http: ^1.6.0
-  intl: ^0.20.3
   koni_archive: ^0.9.0
   # Local 1.2.6 patch: native teardown joins libmpv before releasing its Dart
   # callback, so shutdown is immediate and cannot leave a renderer behind.
@@ -30,7 +31,6 @@ dependencies:
   path: ^1.9.1
   path_provider: ^2.1.6
   sqlite3: ^3.5.2
-  sqlite3_flutter_libs: ^0.6.0+eol
   tiny_segmenter_dart: ^1.0.1
   window_manager: ^0.5.2
 
@@ -43,6 +43,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - THIRD_PARTY_NOTICES.md
     - assets/images/zero-mark.png
     - assets/images/zero-app-icon.png
 

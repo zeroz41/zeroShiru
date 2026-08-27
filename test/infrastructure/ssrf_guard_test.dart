@@ -169,12 +169,23 @@ void main() {
 
   group('GuardedHttpTransport (the net.rs redirect policy)', () {
     HttpRequest get(String url) => HttpRequest(HttpMethod.get, Uri.parse(url));
+    Future<List<InternetAddress>> resolvePublicHost(String _) async => [
+      InternetAddress('1.1.1.1'),
+    ];
+    GuardedHttpTransport guard(
+      HttpTransport inner, {
+      int maxBodyBytes = 8 * 1024 * 1024,
+    }) => GuardedHttpTransport(
+      inner,
+      maxBodyBytes: maxBodyBytes,
+      resolveHost: resolvePublicHost,
+    );
 
     test(
       'a blocked destination is refused before any request is made',
       () async {
         final inner = ScriptTransport([answer(200, 'never')]);
-        final guarded = GuardedHttpTransport(inner);
+        final guarded = guard(inner);
         await expectLater(
           guarded.send(get('http://127.0.0.1:9000/')),
           throwsA(
@@ -197,7 +208,7 @@ void main() {
           answer(302, '', headers: {'location': target}),
           answer(200, 'the metadata service'),
         ]);
-        final guarded = GuardedHttpTransport(inner);
+        final guarded = guard(inner);
         await expectLater(
           guarded.send(get('https://example.com/')),
           throwsA(
@@ -215,7 +226,7 @@ void main() {
         answer(302, '', headers: {'location': 'file:///etc/passwd'}),
       ]);
       await expectLater(
-        GuardedHttpTransport(inner).send(get('https://example.com/')),
+        guard(inner).send(get('https://example.com/')),
         throwsA(
           isA<UrlBlockedException>().having(
             (e) => e.reason,
@@ -231,8 +242,7 @@ void main() {
         answer(302, '', headers: {'location': 'https://cdn.example.net/file'}),
         answer(200, 'the file'),
       ]);
-      final response = await GuardedHttpTransport(inner)
-          .send(get('https://example.com/'));
+      final response = await guard(inner).send(get('https://example.com/'));
       expect(response.status, 200);
       expect(inner.asked.length, 2);
       expect(inner.asked[1].url.toString(), 'https://cdn.example.net/file');
@@ -243,7 +253,7 @@ void main() {
         answer(302, '', headers: {'location': 'https://files.example.net/x'}),
         answer(200, 'file'),
       ]);
-      await GuardedHttpTransport(inner).send(
+      await guard(inner).send(
         HttpRequest(
           HttpMethod.get,
           Uri.parse('https://api.example.com/start'),
@@ -265,7 +275,7 @@ void main() {
         answer(302, '', headers: {'location': '/moved/here'}),
         answer(200, 'ok'),
       ]);
-      await GuardedHttpTransport(inner).send(get('https://example.com/old'));
+      await guard(inner).send(get('https://example.com/old'));
       expect(inner.asked[1].url.toString(), 'https://example.com/moved/here');
     });
 
@@ -275,7 +285,7 @@ void main() {
           answer(302, '', headers: {'location': 'https://example.com/loop'}),
       ]);
       await expectLater(
-        GuardedHttpTransport(inner).send(get('https://example.com/')),
+        guard(inner).send(get('https://example.com/')),
         throwsA(isA<NetworkException>()),
       );
       expect(inner.asked.length, lessThanOrEqualTo(9), reason: 'max 8 hops');
@@ -285,7 +295,7 @@ void main() {
       'headers the transport owns are dropped, the caller\'s kept',
       () async {
         final inner = ScriptTransport([answer(200, 'ok')]);
-        await GuardedHttpTransport(inner).send(
+        await guard(inner).send(
           HttpRequest(
             HttpMethod.get,
             Uri.parse('https://example.com/'),
@@ -338,7 +348,7 @@ void main() {
         answer(303, '', headers: {'location': 'https://example.com/result'}),
         answer(200, 'ok'),
       ]);
-      await GuardedHttpTransport(inner).send(
+      await guard(inner).send(
         HttpRequest(
           HttpMethod.post,
           Uri.parse('https://example.com/submit'),
@@ -360,26 +370,58 @@ void main() {
           ),
         ]);
         await expectLater(
-          GuardedHttpTransport(declared).send(get('https://example.com/')),
+          guard(declared).send(get('https://example.com/')),
           throwsA(isA<NetworkException>()),
         );
 
         final actual = ScriptTransport([answer(200, 'x' * 200)]);
         await expectLater(
-          GuardedHttpTransport(
-            actual,
-            maxBodyBytes: 100,
-          ).send(get('https://example.com/')),
+          guard(actual, maxBodyBytes: 100).send(get('https://example.com/')),
           throwsA(isA<NetworkException>()),
         );
 
         final fine = ScriptTransport([answer(200, 'x' * 50)]);
-        final response = await GuardedHttpTransport(
+        final response = await guard(
           fine,
           maxBodyBytes: 100,
         ).send(get('https://example.com/'));
         expect(response.status, 200);
       },
     );
+
+    test('a public-looking name resolving privately is refused', () async {
+      final inner = ScriptTransport([answer(200, 'never')]);
+      final transport = GuardedHttpTransport(
+        inner,
+        resolveHost: (_) async => [InternetAddress('192.168.1.10')],
+      );
+
+      await expectLater(
+        transport.send(get('https://example.com/')),
+        throwsA(
+          isA<UrlBlockedException>()
+              .having((error) => error.reason, 'reason', Blocked.private)
+              .having((error) => error.redirected, 'redirected', isFalse),
+        ),
+      );
+      expect(inner.asked, isEmpty);
+    });
+
+    test('mixed public and private DNS answers are refused', () async {
+      final inner = ScriptTransport([answer(200, 'never')]);
+      final transport = GuardedHttpTransport(
+        inner,
+        resolveHost: (_) async => [
+          InternetAddress('1.1.1.1'),
+          InternetAddress('127.0.0.1'),
+        ],
+      );
+
+      await expectLater(
+        transport.send(get('https://example.com/')),
+        throwsA(isA<UrlBlockedException>()),
+      );
+      expect(inner.asked, isEmpty);
+    });
   });
 }

@@ -16,7 +16,7 @@ body:
         - macOS (Apple Silicon)
         - Android (arm64-v8a)
         - Android (armeabi-v7a)
-        - Android (x86)
+        - Android (x86_64)
         - Android (universal)
     validations:
       required: true
@@ -24,8 +24,8 @@ body:
   - type: input
     attributes:
       label: App Version
-      description: The version you're currently using (e.g., v6.0.0). Find this at the bottom of the settings menu, or on Android under Settings > App tab. Please provide the full version number, not "latest".
-      placeholder: v6.0.0
+      description: The version you're currently using (for example, 0.1.0). Please provide the full version number, not "latest".
+      placeholder: 0.1.0
     validations:
       required: true
 
@@ -63,9 +63,9 @@ body:
       description: Detailed steps to reproduce this bug. Be as specific as possible.
       placeholder: |
         1. Open the app
-        2. Navigate to Settings > Interface
-        3. Toggle the 'Prefer Dubs' option
-        4. Return to home screen
+        2. Open an anime and choose an episode
+        3. Select a subtitle track
+        4. Start playback
         5. Bug occurs: App crashes/freezes/shows error
     validations:
       required: true

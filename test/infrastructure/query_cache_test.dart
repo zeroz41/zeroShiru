@@ -261,6 +261,29 @@ void main() {
       expect(calls, 2);
     });
 
+    test('background refresh retains the caller-supplied TTL', () async {
+      await cache.write(swrStore, 'k', {
+        'a': 1,
+      }, maxAge: const Duration(minutes: 1));
+      clock.advance(const Duration(minutes: 2));
+
+      expect(
+        await cache.swrRead(
+          swrStore,
+          'k',
+          () async => {'a': 2},
+          maxAge: const Duration(minutes: 5),
+        ),
+        {'a': 1},
+      );
+      await pumpEventQueue();
+
+      clock.advance(const Duration(minutes: 4));
+      expect((await cache.read(swrStore, 'k'))!.value, {'a': 2});
+      clock.advance(const Duration(minutes: 2));
+      expect(await cache.read(swrStore, 'k'), isNull);
+    });
+
     test('a failed revalidation leaves the stale copy standing', () async {
       await cache.write(swrStore, 'k', {'a': 1});
       clock.advance(const Duration(hours: 2));

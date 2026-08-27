@@ -53,6 +53,8 @@ abstract final class CacheStores {
     'query_recommendations',
     maxAge: Duration(days: 30),
     maxEntries: 500,
+    swr: true,
+    shared: true,
   );
   static const mediaCache = CacheStoreSpec(
     'media_cache',
@@ -136,8 +138,9 @@ abstract interface class QueryCache {
   Future<Map<String, dynamic>?> swrRead(
     CacheStoreSpec store,
     String key,
-    Future<Map<String, dynamic>?> Function() revalidate,
-  );
+    Future<Map<String, dynamic>?> Function() revalidate, {
+    Duration? maxAge,
+  });
 
   /// Increments whenever a background revalidation lands a changed value —
   /// screens listen to repaint.

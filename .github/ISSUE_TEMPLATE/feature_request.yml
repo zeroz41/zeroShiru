@@ -31,7 +31,7 @@ body:
     attributes:
       label: Describe The Feature
       description: A clear description of the feature you'd like to see added. Is it related to a problem you're experiencing?
-      placeholder: I'd like the ability to customize notification sounds for different categories. Currently, all notifications use the same sound, making it hard to distinguish between important updates and general activity...
+      placeholder: I'd like the player diagnostics panel to expose dropped-frame and decoder information so playback problems are easier to report...
     validations:
       required: true
 
@@ -39,7 +39,7 @@ body:
     attributes:
       label: Proposed Solution
       description: How would you like this feature to work? Be as specific as possible.
-      placeholder: Add a new section in Settings > Interface where users can select different notification sounds for each category (Dubs, Subs, Announcements, etc.)...
+      placeholder: Add an optional diagnostics sheet in the player with copyable, credential-safe playback metrics...
     validations:
       required: true
 
@@ -47,7 +47,7 @@ body:
     attributes:
       label: Alternatives Considered
       description: Have you considered any alternative solutions or workarounds?
-      placeholder: I tried using my phone's system notification settings, but it only allows one sound for the entire app...
+      placeholder: I currently collect the same information from mpv logs, but that is difficult on Android...
     validations:
       required: false
 

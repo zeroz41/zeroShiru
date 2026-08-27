@@ -1,6 +1,3 @@
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
-
 import '../../application/playback/backend.dart';
 import '../../application/playback/preferences.dart';
 import '../../domain/ports/ports.dart';
@@ -17,6 +14,7 @@ import '../network/ssrf_guard.dart';
 import '../platform/credential_store_impl.dart';
 import '../platform/log_sink.dart';
 import '../sources/native_source_resolver.dart';
+import '../storage/app_storage.dart';
 import '../tracking/anilist_catalog_repository.dart';
 import '../tracking/anilist_client.dart';
 import '../tracking/ani_zip_episode_repository.dart';
@@ -65,26 +63,33 @@ class AppServices {
   Future<void>? _closeFuture;
 
   static Future<AppServices> open() async {
-    final support = await getApplicationSupportDirectory();
-    final databases = openAppDatabases(supportDirectory: support.path);
+    final storage = await AppStoragePaths.resolve();
+    final storageWarnings = await storage.migrateLegacyCaches();
+    final databases = openAppDatabases(
+      supportDirectory: storage.supportDirectory,
+      cacheDirectory: storage.cacheDirectory,
+    );
     final queryCache = SqliteQueryCache(
       profile: databases.profile,
       shared: databases.shared,
     );
     final transport = PackageHttpTransport();
-    final log = FileLogSink(support.path);
+    final log = FileLogSink(storage.supportDirectory);
+    for (final warning in storageWarnings) {
+      log.log('warning', 'storage', warning);
+    }
     final playbackProbe = IoStreamingTransport();
     final credentials = SecureCredentialStore();
     final settings = SqliteSettingsRepository(databases.profile);
     final learning = LocalJapaneseLearningTools(
-      databasePath: DatabasePaths.learning(support.path),
+      databasePath: storage.learningDatabase,
       transport: GuardedHttpTransport(
         transport,
         maxBodyBytes: 64 * 1024 * 1024,
       ),
     );
     final learningSubtitles = JimakuLearningSubtitleRepository(
-      cacheDirectory: p.join(support.path, 'cache', 'learning-subtitles'),
+      cacheDirectory: storage.learningSubtitleCacheDirectory,
       transport: GuardedHttpTransport(
         transport,
         maxBodyBytes: 16 * 1024 * 1024,

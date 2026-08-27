@@ -2,6 +2,7 @@
 /// shape (customLists asArray, POINT_10 score).
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -267,40 +268,74 @@ void main() {
       expect(ttl, const Duration(minutes: 14));
     });
 
-    test(
-      'an expired cache entry is refetched, but served when offline',
-      () async {
-        var offline = false;
-        var calls = 0;
-        final offlineClient = AnilistClient(
-          transport: transport,
-          cache: cache,
-          offline: () => offline,
-          random: math.Random(7),
-        );
-        transport.on('graphql.anilist.co', (_) {
-          calls++;
-          return {
-            'data': {
-              'Page': {
-                'pageInfo': {'hasNextPage': false},
-                'media': [],
-              },
+    test('expired metadata is served immediately while it refreshes', () async {
+      var offline = false;
+      var calls = 0;
+      final offlineClient = AnilistClient(
+        transport: transport,
+        cache: cache,
+        offline: () => offline,
+        random: math.Random(7),
+      );
+      transport.on('graphql.anilist.co', (_) {
+        calls++;
+        return {
+          'data': {
+            'Page': {
+              'pageInfo': {'hasNextPage': false},
+              'media': [],
             },
-          };
-        });
+          },
+        };
+      });
 
-        await offlineClient.search(const AnilistSearchFilter(search: 'x'));
-        cache.clock.advance(const Duration(hours: 2)); // past every search TTL
-        await offlineClient.search(const AnilistSearchFilter(search: 'x'));
-        expect(calls, 2, reason: 'expired online -> refetch');
+      await offlineClient.search(const AnilistSearchFilter(search: 'x'));
+      cache.clock.advance(const Duration(hours: 2)); // past every search TTL
+      await offlineClient.search(const AnilistSearchFilter(search: 'x'));
+      expect(calls, 2, reason: 'expired online -> background refresh');
 
-        cache.clock.advance(const Duration(hours: 2));
-        offline = true;
-        await offlineClient.search(const AnilistSearchFilter(search: 'x'));
-        expect(calls, 2, reason: 'offline ignores expiry');
-      },
-    );
+      cache.clock.advance(const Duration(hours: 2));
+      offline = true;
+      await offlineClient.search(const AnilistSearchFilter(search: 'x'));
+      expect(calls, 2, reason: 'offline ignores expiry');
+    });
+
+    test('stale metadata does not wait for a slow refresh', () async {
+      var calls = 0;
+      final refresh = Completer<Object>();
+      Map<String, dynamic> page(int id) => {
+        'data': {
+          'Page': {
+            'pageInfo': {'hasNextPage': false},
+            'media': [sampleMediaJson(id: id)],
+          },
+        },
+      };
+      transport.on('graphql.anilist.co', (_) {
+        calls++;
+        return calls == 1 ? page(21) : refresh.future;
+      });
+
+      final first = await client.search(
+        const AnilistSearchFilter(search: 'persistent'),
+      );
+      expect(first.media.single.id, 21);
+      cache.clock.advance(const Duration(hours: 2));
+
+      final stale = await client.search(
+        const AnilistSearchFilter(search: 'persistent'),
+      );
+      expect(stale.media.single.id, 21);
+      expect(calls, 2);
+
+      refresh.complete(page(22));
+      await pumpEventQueue();
+      final updated = await client.search(
+        const AnilistSearchFilter(search: 'persistent'),
+      );
+      expect(updated.media.single.id, 22);
+      expect(calls, 2, reason: 'the background response refreshed SQLite');
+    });
 
     test('mediaById and searchIds use the query_search_ids store with their '
         'own TTL bands', () async {

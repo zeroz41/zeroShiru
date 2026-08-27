@@ -77,6 +77,7 @@ class InMemoryQueryCache implements QueryCache {
 
   final FakeClock clock;
   final Map<String, _StoredEntry> _entries = {};
+  final Map<String, Future<void>> _revalidating = {};
   final List<(String store, String key, Duration? maxAge)> writes = [];
   final StreamController<void> _revalidated = StreamController.broadcast();
 
@@ -119,12 +120,31 @@ class InMemoryQueryCache implements QueryCache {
   Future<Map<String, dynamic>?> swrRead(
     CacheStoreSpec store,
     String key,
-    Future<Map<String, dynamic>?> Function() revalidate,
-  ) async {
-    final hit = await read(store, key, ignoreExpiry: true);
-    if (hit != null) return hit.value;
+    Future<Map<String, dynamic>?> Function() revalidate, {
+    Duration? maxAge,
+  }) async {
+    final freshHit = await read(store, key);
+    if (freshHit != null) return freshHit.value;
+
+    final stale = store.swr ? await read(store, key, ignoreExpiry: true) : null;
+    if (stale != null) {
+      final cacheKey = _key(store, key);
+      if (!_revalidating.containsKey(cacheKey)) {
+        late final Future<void> refresh;
+        refresh = () async {
+          final fresh = await revalidate();
+          if (fresh != null) {
+            await write(store, key, fresh, maxAge: maxAge);
+          }
+        }().whenComplete(() => _revalidating.remove(cacheKey));
+        _revalidating[cacheKey] = refresh;
+        unawaited(refresh);
+      }
+      return stale.value;
+    }
+
     final fresh = await revalidate();
-    if (fresh != null) await write(store, key, fresh);
+    if (fresh != null) await write(store, key, fresh, maxAge: maxAge);
     return fresh;
   }
 

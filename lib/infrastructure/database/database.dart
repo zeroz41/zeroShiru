@@ -2,10 +2,10 @@
 ///
 /// Application data mirrors the redo branch's IndexedDB split: a per-profile
 /// database (user-owned stores, settings kv) and a shared database (query
-/// caches every profile benefits from). A third rebuildable file holds the
-/// optional language dictionary. Paths are passed in by the caller — production
-/// hands in the path_provider application-support directory, tests hand in
-/// nothing and use [AppDatabase.inMemory].
+/// caches every profile benefits from). A third durable file holds the optional
+/// user-installed language dictionary. Paths are passed in by the caller;
+/// production uses path_provider's support and cache roots, while unit tests
+/// generally use [AppDatabase.inMemory].
 library;
 
 import 'dart:io';
@@ -106,29 +106,30 @@ class AppDatabase {
   }
 }
 
-/// The standard file layout under the application-support directory.
+/// The standard database file layout under a caller-selected storage root.
 abstract final class DatabasePaths {
   static String profile(String supportDirectory, String profileId) =>
       p.join(supportDirectory, 'db', 'profile-$profileId.db');
 
-  static String shared(String supportDirectory) =>
-      p.join(supportDirectory, 'db', 'shared.db');
+  static String shared(String cacheDirectory) =>
+      p.join(cacheDirectory, 'db', 'shared.db');
 
-  /// Rebuildable, profile-independent language dictionary cache.
+  /// User-installed, profile-independent offline language dictionary.
   static String learning(String supportDirectory) =>
       p.join(supportDirectory, 'db', 'learning.db');
 }
 
-/// Opens the per-profile and shared databases under [supportDirectory]
-/// (production passes the path_provider application-support directory).
+/// Opens the durable per-profile database under [supportDirectory] and the
+/// rebuildable shared query cache under [cacheDirectory].
 ({AppDatabase profile, AppDatabase shared}) openAppDatabases({
   required String supportDirectory,
+  required String cacheDirectory,
   String profileId = 'default',
 }) {
   return (
     profile: AppDatabase.open(
       DatabasePaths.profile(supportDirectory, profileId),
     ),
-    shared: AppDatabase.open(DatabasePaths.shared(supportDirectory)),
+    shared: AppDatabase.open(DatabasePaths.shared(cacheDirectory)),
   );
 }

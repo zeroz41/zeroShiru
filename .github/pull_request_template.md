@@ -30,15 +30,15 @@
 <!-- Describe how you tested your changes and the environments used.
 Example:
 - [x] Verified on Windows 11
-- [x] Tested Android build via Capacitor
-- [x] Confirmed tray icon now persists after wake
+- [x] Ran the Flutter analyzer and test suite
+- [x] Built the affected release target
 -->
 
 
 ### Test Configuration:
 - **OS:** <!-- e.g., Windows 11, macOS Sonoma, Android 14 -->
 - **Architecture:** <!-- e.g., x64, arm64, arm64-v8a -->
-- **App Version:** <!-- e.g., v6.0.0 -->
+- **App Version:** <!-- e.g., 0.1.0 -->
 
 
 ### Steps to Test:

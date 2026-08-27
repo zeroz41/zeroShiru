@@ -90,20 +90,28 @@ class SqliteQueryCache implements QueryCache {
   Future<Map<String, dynamic>?> swrRead(
     CacheStoreSpec store,
     String key,
-    Future<Map<String, dynamic>?> Function() revalidate,
-  ) async {
+    Future<Map<String, dynamic>?> Function() revalidate, {
+    Duration? maxAge,
+  }) async {
     final fresh = await read(store, key);
     if (fresh != null) return fresh.value;
 
     // Only swr stores may serve stale — an expired row in a user-owned store
     // is a miss, and the caller waits like any first fetch.
     final stale = store.swr ? await read(store, key, ignoreExpiry: true) : null;
-    if (stale == null) return _revalidate(store, key, revalidate);
+    if (stale == null) {
+      return _revalidate(store, key, revalidate, maxAge: maxAge);
+    }
 
     // Serve the stale copy immediately; the fresh one lands behind it. A
     // failed revalidation is swallowed: the stale copy stands.
     unawaited(
-      _revalidate(store, key, revalidate).catchError((Object _) => null),
+      _revalidate(
+        store,
+        key,
+        revalidate,
+        maxAge: maxAge,
+      ).catchError((Object _) => null),
     );
     return stale.value;
   }
@@ -114,15 +122,18 @@ class SqliteQueryCache implements QueryCache {
   Future<Map<String, dynamic>?> _revalidate(
     CacheStoreSpec store,
     String key,
-    Future<Map<String, dynamic>?> Function() revalidate,
-  ) {
+    Future<Map<String, dynamic>?> Function() revalidate, {
+    Duration? maxAge,
+  }) {
     final slot = '${store.name}:$key';
     final inFlight = _revalidating[slot];
     if (inFlight != null) return inFlight;
 
-    final landing = _land(store, key, revalidate).whenComplete(() {
-      _revalidating.remove(slot);
-    });
+    final landing = _land(store, key, revalidate, maxAge: maxAge).whenComplete(
+      () {
+        _revalidating.remove(slot);
+      },
+    );
     _revalidating[slot] = landing;
     return landing;
   }
@@ -130,12 +141,13 @@ class SqliteQueryCache implements QueryCache {
   Future<Map<String, dynamic>?> _land(
     CacheStoreSpec store,
     String key,
-    Future<Map<String, dynamic>?> Function() revalidate,
-  ) async {
+    Future<Map<String, dynamic>?> Function() revalidate, {
+    Duration? maxAge,
+  }) async {
     final served = (await read(store, key, ignoreExpiry: true))?.value;
     final landed = await revalidate();
     if (landed == null) return null;
-    await write(store, key, landed);
+    await write(store, key, landed, maxAge: maxAge);
     if (served != null && !jsonDeepEquals(served, landed)) {
       _revalidated.add(null);
     }

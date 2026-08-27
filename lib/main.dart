@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -35,18 +36,15 @@ Future<void> main() async {
     return true;
   };
 
-  await windowManager.ensureInitialized();
-  await windowManager.setPreventClose(true);
-  const windowOptions = WindowOptions(
-    size: Size(1280, 800),
-    minimumSize: Size(320, 390),
-    title: 'Zero',
-    backgroundColor: Colors.transparent,
-  );
+  if (_supportsDesktopWindows) {
+    await windowManager.ensureInitialized();
+    await windowManager.setPreventClose(true);
+  }
 
   runApp(
     _ServiceHost(
       services: services,
+      managesDesktopWindow: _supportsDesktopWindows,
       child: ProviderScope(
         overrides: [
           catalogRepositoryProvider.overrideWithValue(services.catalog),
@@ -71,47 +69,70 @@ Future<void> main() async {
     ),
   );
 
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(
-      windowManager.waitUntilReadyToShow(windowOptions, () async {
-        await windowManager.show();
-        await windowManager.focus();
-      }),
+  if (_supportsDesktopWindows) {
+    const windowOptions = WindowOptions(
+      size: Size(1280, 800),
+      minimumSize: Size(320, 390),
+      title: 'Zero',
+      backgroundColor: Colors.transparent,
     );
-  });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(
+        windowManager.waitUntilReadyToShow(windowOptions, () async {
+          await windowManager.show();
+          await windowManager.focus();
+        }),
+      );
+    });
+  }
 }
 
+bool get _supportsDesktopWindows =>
+    Platform.isLinux || Platform.isMacOS || Platform.isWindows;
+
 class _ServiceHost extends StatefulWidget {
-  const _ServiceHost({required this.services, required this.child});
+  const _ServiceHost({
+    required this.services,
+    required this.managesDesktopWindow,
+    required this.child,
+  });
 
   final AppServices services;
+  final bool managesDesktopWindow;
   final Widget child;
 
   @override
   State<_ServiceHost> createState() => _ServiceHostState();
 }
 
-class _ServiceHostState extends State<_ServiceHost> with WindowListener {
+class _ServiceHostState extends State<_ServiceHost>
+    with WindowListener, WidgetsBindingObserver {
   bool _closing = false;
+  bool _shutdownStarted = false;
 
   @override
   void initState() {
     super.initState();
-    windowManager.addListener(this);
+    WidgetsBinding.instance.addObserver(this);
+    if (widget.managesDesktopWindow) windowManager.addListener(this);
   }
 
   @override
   void onWindowClose() {
-    unawaited(_closeWindow());
+    if (widget.managesDesktopWindow) unawaited(_closeWindow());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached) unawaited(_closeServices());
   }
 
   Future<void> _closeWindow() async {
     if (_closing) return;
     _closing = true;
     try {
-      widget.services.log.log('info', 'app', 'Zero stopping');
       await windowManager.hide();
-      await widget.services.close();
+      await _closeServices();
     } catch (error, stack) {
       debugPrint('Zero shutdown failed: $error\n$stack');
     } finally {
@@ -119,10 +140,19 @@ class _ServiceHostState extends State<_ServiceHost> with WindowListener {
     }
   }
 
+  Future<void> _closeServices() async {
+    if (!_shutdownStarted) {
+      _shutdownStarted = true;
+      widget.services.log.log('info', 'app', 'Zero stopping');
+    }
+    await widget.services.close();
+  }
+
   @override
   void dispose() {
-    windowManager.removeListener(this);
-    unawaited(widget.services.close());
+    WidgetsBinding.instance.removeObserver(this);
+    if (widget.managesDesktopWindow) windowManager.removeListener(this);
+    unawaited(_closeServices());
     super.dispose();
   }
 

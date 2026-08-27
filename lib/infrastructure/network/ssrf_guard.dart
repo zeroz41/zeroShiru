@@ -9,6 +9,7 @@
 /// policy in hosts/tauri/src/net.rs (redo branch).
 library;
 
+import 'dart:async' as async;
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -46,10 +47,16 @@ const List<String> localSuffixes = [
   '.onion',
 ];
 
+/// Injectable DNS seam so public-name checks stay hermetic in tests.
+typedef HostResolver = Future<List<InternetAddress>> Function(String host);
+
+Future<List<InternetAddress>> _resolveHost(String host) =>
+    InternetAddress.lookup(host);
+
 /// Checks a URL's scheme and host. Returns null when the URL may be fetched.
 /// A host given as an IP literal is checked directly; a name is checked for
-/// shape only — what it resolves to is the resolver's business, which asks
-/// [isPublicAddress] about what came back.
+/// shape only. [GuardedHttpTransport] also resolves names and checks every
+/// returned address with [isPublicAddress] before sending the request.
 Blocked? checkUrl(String url) {
   final schemeEnd = url.indexOf('://');
   if (schemeEnd < 0) return Blocked.scheme;
@@ -205,11 +212,13 @@ class GuardedHttpTransport implements HttpTransport {
     this._inner, {
     this.maxRedirects = 8,
     this.maxBodyBytes = 8 * 1024 * 1024,
+    this.resolveHost = _resolveHost,
   });
 
   final HttpTransport _inner;
   final int maxRedirects;
   final int maxBodyBytes;
+  final HostResolver resolveHost;
 
   /// Headers the transport owns; a caller's copies are dropped.
   static const strippedHeaders = {
@@ -242,6 +251,11 @@ class GuardedHttpTransport implements HttpTransport {
           redirected: hops > 0,
         );
       }
+      await _checkResolvedDestination(
+        url,
+        redirected: hops > 0,
+        timeout: request.timeout,
+      );
 
       final response = await _inner.send(
         HttpRequest(
@@ -298,6 +312,34 @@ class GuardedHttpTransport implements HttpTransport {
       a.scheme.toLowerCase() == b.scheme.toLowerCase() &&
       a.host.toLowerCase() == b.host.toLowerCase() &&
       a.port == b.port;
+
+  Future<void> _checkResolvedDestination(
+    Uri url, {
+    required bool redirected,
+    required Duration timeout,
+  }) async {
+    // Literals were fully classified by checkUrl; only names need DNS.
+    if (InternetAddress.tryParse(url.host) != null) return;
+
+    late final List<InternetAddress> addresses;
+    try {
+      addresses = await resolveHost(url.host).timeout(timeout);
+    } on SocketException catch (error) {
+      throw NetworkException('could not resolve ${url.host}: ${error.message}');
+    } on async.TimeoutException {
+      throw NetworkException('timed out resolving ${url.host}');
+    }
+    if (addresses.isEmpty) {
+      throw NetworkException('could not resolve ${url.host}');
+    }
+    if (addresses.any((address) => !isPublicAddress(address))) {
+      throw UrlBlockedException(
+        Blocked.private,
+        url.toString(),
+        redirected: redirected,
+      );
+    }
+  }
 
   void _checkBodySize(HttpResponse response) {
     final declared = int.tryParse(response.header('content-length') ?? '');

@@ -305,7 +305,7 @@ Performance gates (release builds only): p99 UI frames inside 16.7 ms on the bas
 
 ## Dependency budget
 
-Fewer than 15 direct general-purpose Dart dependencies before platform packages: Riverpod, one router (or Router API), one HTTP stack, sqlite3, secure storage, path/window/tray as needed, pinned media_kit set, `flutter_localizations`/`intl`. Every addition needs an ADR-style justification; exact pins for anything native.
+Keep the direct general-purpose Dart dependency set small: Riverpod, one router (or Router API), one HTTP stack, sqlite3, secure storage, path/window/tray as needed, and the pinned media_kit set. Add `flutter_localizations` and `intl` together when application localization is implemented; carrying only the unused formatter package creates no capability. Every addition needs an ADR-style justification; exact pins for anything native.
 
 # Decisions to record as ADRs
 

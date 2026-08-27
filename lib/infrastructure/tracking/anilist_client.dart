@@ -287,16 +287,30 @@ class AnilistClient {
     return json ?? const {};
   }
 
-  /// Cached read helper: serve a live cache hit (stale only when offline),
-  /// otherwise fetch and write with [ttl].
+  /// Cached read helper. Shared metadata stores serve stale immediately and
+  /// refresh in the background; user-owned stores wait for fresh account data.
+  /// Offline reads may use any previously stored entry regardless of age.
   Future<Map<String, dynamic>> _cachedRequest(
     CacheStoreSpec store,
     String key,
     Duration ttl,
     Future<Map<String, dynamic>> Function() fetch,
   ) async {
-    final hit = await _cache.read(store, key, ignoreExpiry: _isOffline);
-    if (hit != null && (!hit.stale || _isOffline)) return hit.value;
+    if (_isOffline) {
+      final offlineHit = await _cache.read(store, key, ignoreExpiry: true);
+      if (offlineHit != null) return offlineHit.value;
+    }
+
+    if (store.swr) {
+      final cached = await _cache.swrRead(store, key, fetch, maxAge: ttl);
+      if (cached != null) return cached;
+    } else {
+      final hit = await _cache.read(store, key);
+      if (hit != null) return hit.value;
+    }
+
+    // A revalidator for this client always returns a map, but retain a safe
+    // fallback for alternate QueryCache implementations that return null.
     final fresh = await fetch();
     await _cache.write(store, key, fresh, maxAge: ttl);
     return fresh;
