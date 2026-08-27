@@ -28,6 +28,8 @@ class EpisodeSelector extends StatefulWidget {
     this.fallbackArtwork,
     this.durationMinutes,
     this.items = const [],
+    this.onPlay,
+    this.playingEpisode,
   });
 
   final int episodeCount;
@@ -40,6 +42,8 @@ class EpisodeSelector extends StatefulWidget {
   final int? durationMinutes;
   final List<EpisodeInfo> items;
   final ValueChanged<int> onSelected;
+  final ValueChanged<int>? onPlay;
+  final int? playingEpisode;
 
   @override
   State<EpisodeSelector> createState() => _EpisodeSelectorState();
@@ -157,6 +161,10 @@ class _EpisodeSelectorState extends State<EpisodeSelector> {
             watched: episode <= widget.watchedThrough,
             next: episode == widget.watchedThrough + 1,
             onTap: () => widget.onSelected(episode),
+            onPlay: widget.onPlay == null
+                ? null
+                : () => widget.onPlay!(episode),
+            playing: widget.playingEpisode == episode,
           );
         },
       ),
@@ -387,6 +395,8 @@ class _EpisodeRow extends StatelessWidget {
     required this.watched,
     required this.next,
     required this.onTap,
+    required this.onPlay,
+    required this.playing,
   });
 
   final int episode;
@@ -399,6 +409,8 @@ class _EpisodeRow extends StatelessWidget {
   final bool watched;
   final bool next;
   final VoidCallback onTap;
+  final VoidCallback? onPlay;
+  final bool playing;
 
   @override
   Widget build(BuildContext context) {
@@ -507,6 +519,14 @@ class _EpisodeRow extends StatelessWidget {
                                   style: Theme.of(context).textTheme.labelSmall,
                                 ),
                               ],
+                              if (onPlay != null) ...[
+                                const SizedBox(width: ZeroTokens.space2),
+                                _EpisodePlayButton(
+                                  episode: episode,
+                                  loading: playing,
+                                  onPressed: playing ? null : onPlay,
+                                ),
+                              ],
                             ],
                           ),
                           if (summary?.trim().isNotEmpty == true) ...[
@@ -563,6 +583,48 @@ class _EpisodeRow extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EpisodePlayButton extends StatelessWidget {
+  const _EpisodePlayButton({
+    required this.episode,
+    required this.loading,
+    required this.onPressed,
+  });
+
+  final int episode;
+  final bool loading;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: loading ? 'Finding best source' : 'Play episode $episode',
+      child: Semantics(
+        button: true,
+        label: loading
+            ? 'Finding the best source for episode $episode'
+            : 'Play episode $episode using the best source',
+        child: IconButton.filled(
+          key: ValueKey('episode-play-$episode'),
+          onPressed: onPressed,
+          visualDensity: VisualDensity.compact,
+          style: IconButton.styleFrom(
+            minimumSize: const Size.square(36),
+            backgroundColor: context.zeroPalette.accent,
+            foregroundColor: context.zeroPalette.onAccent,
+            disabledBackgroundColor: context.zeroPalette.accentDim,
+          ),
+          icon: loading
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.play_arrow_rounded, size: 21),
         ),
       ),
     );

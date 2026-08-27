@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zero/app/theme/theme.dart';
 import 'package:zero/application/library/providers.dart';
+import 'package:zero/application/playback/request.dart';
 import 'package:zero/application/settings/providers.dart';
 import 'package:zero/application/sources/providers.dart';
 import 'package:zero/domain/models/availability.dart';
@@ -16,7 +17,7 @@ import 'package:zero/domain/ports/ports.dart';
 import 'package:zero/features/library/media_details.dart';
 
 void main() {
-  testWidgets('details uses a full split layout and opens TorBox in place', (
+  testWidgets('episode details stay primary and sources open on request', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1400, 900);
@@ -47,6 +48,23 @@ void main() {
             const _Credentials('torbox-key'),
           ),
           sourceResolverProvider.overrideWithValue(const _Sources()),
+          episodeRepositoryProvider.overrideWithValue(
+            _Episodes([
+              const EpisodeInfo(
+                number: 2,
+                title: 'A Different Chapter',
+                summary: 'The second episode has its own story.',
+                durationMinutes: 25,
+              ),
+              EpisodeInfo(
+                number: 4,
+                title: 'The Fourth Episode',
+                summary: 'Episode four metadata belongs in the left panel.',
+                durationMinutes: 26,
+                airDate: DateTime(2026, 7, 4),
+              ),
+            ]),
+          ),
           debridClientsProvider.overrideWithValue({
             DebridService.torbox: const _Debrid(),
           }),
@@ -61,14 +79,30 @@ void main() {
     await tester.pump();
 
     expect(find.text('Modern Details Show'), findsOneWidget);
-    expect(find.text('Synopsis'), findsOneWidget);
+    expect(find.text('The Fourth Episode'), findsOneWidget);
+    expect(
+      find.text('Episode four metadata belongs in the left panel.'),
+      findsWidgets,
+    );
+    expect(find.text('About this episode'), findsOneWidget);
     expect(find.text('4 of 12'), findsOneWidget);
-    expect(find.text('TorBox · Episode 4'), findsOneWidget);
+    expect(find.byKey(const ValueKey('source-results')), findsNothing);
     expect(find.byKey(const ValueKey('release-magnet')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('episode-2')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('A Different Chapter'), findsOneWidget);
+    expect(find.text('The second episode has its own story.'), findsWidgets);
+    expect(find.text('2 of 12'), findsOneWidget);
+    expect(find.byKey(const ValueKey('source-results')), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('episode-4')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('choose-source')));
+    await tester.pumpAndSettle();
 
+    expect(find.text('Choose a source'), findsOneWidget);
     expect(find.text('Test cached release 04 1080p'), findsOneWidget);
     expect(find.text('Cached'), findsOneWidget);
     expect(find.byKey(const ValueKey('source-results')), findsOneWidget);
@@ -86,7 +120,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('release-magnet')), findsOneWidget);
-    expect(find.text('1 playable releases'), findsOneWidget);
+    expect(find.textContaining('1 playable'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('close-source-results')));
     await tester.pumpAndSettle();
@@ -157,7 +191,7 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('episode-1')));
+    await tester.tap(find.byKey(const ValueKey('choose-source')));
     await tester.pumpAndSettle();
 
     expect(
@@ -228,15 +262,120 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('episode-1')));
+    await tester.tap(find.byKey(const ValueKey('choose-source')));
     await tester.pumpAndSettle();
 
-    expect(find.text('3 playable releases'), findsOneWidget);
+    expect(find.textContaining('3 playable'), findsOneWidget);
     expect(find.text(higherTitle), findsOneWidget);
     expect(
       tester.getTopLeft(find.text(preferredTitle)).dy,
       lessThan(tester.getTopLeft(find.text(higherTitle)).dy),
     );
+  });
+
+  testWidgets('row and hero play resolve the same best-ranked source', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const preferredHash = '2222222222222222222222222222222222222222';
+    const otherHash = '1111111111111111111111111111111111111111';
+    const media = Media(
+      id: 12,
+      title: MediaTitle(userPreferred: 'One Best Source'),
+      episodes: 2,
+      duration: 24,
+    );
+    final launches = <PlaybackLaunch>[];
+    final queries = <TorrentQuery>[];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(
+            _SettingsRepository(
+              const Settings(
+                debridService: DebridService.torbox,
+                rssQuality: '1080',
+                audioLanguage: 'jpn',
+                subtitleLanguage: 'eng',
+              ),
+            ),
+          ),
+          credentialStoreProvider.overrideWithValue(
+            const _Credentials('torbox-key'),
+          ),
+          sourceResolverProvider.overrideWithValue(
+            _Sources.recordingResults(queries, const [
+              TorrentResult(
+                title: 'One Best Source 01-02 720p JA EN',
+                link: 'magnet:?xt=urn:btih:$otherHash',
+                hash: otherHash,
+                seeders: 100,
+                type: 'batch',
+                audioLanguages: ['jpn'],
+                subtitleLanguages: ['eng'],
+              ),
+              TorrentResult(
+                title: 'One Best Source 01-02 1080p JA EN',
+                link: 'magnet:?xt=urn:btih:$preferredHash',
+                hash: preferredHash,
+                seeders: 5,
+                type: 'batch',
+                audioLanguages: ['jpn'],
+                subtitleLanguages: ['eng'],
+              ),
+            ]),
+          ),
+          debridClientsProvider.overrideWithValue({
+            DebridService.torbox: const _Debrid({
+              otherHash: [
+                DebridCachedFile(path: 'Show - 01.mkv', size: 1000),
+                DebridCachedFile(path: 'Show - 02.mkv', size: 1000),
+              ],
+              preferredHash: [
+                DebridCachedFile(path: 'Show - 01.mkv', size: 1000),
+                DebridCachedFile(path: 'Show - 02.mkv', size: 1000),
+              ],
+            }),
+          }),
+        ],
+        child: MaterialApp(
+          theme: buildZeroTheme(),
+          home: _DetailsLauncher(media: media, onLaunch: launches.add),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('open-test-details')));
+    await tester.pumpAndSettle();
+    expect(queries.map((query) => query.episode), [1]);
+
+    await tester.tap(find.byKey(const ValueKey('episode-2')));
+    await tester.pumpAndSettle();
+    expect(queries.map((query) => query.episode), [1, 2]);
+
+    final searchesBeforePlay = queries.length;
+    await tester.tap(find.byKey(const ValueKey('episode-play-2')));
+    await tester.pumpAndSettle();
+
+    expect(queries, hasLength(searchesBeforePlay));
+    expect(launches, hasLength(1));
+    expect(launches.single.episode, 2);
+    expect(launches.single.magnet, contains(preferredHash));
+    expect(find.byKey(const ValueKey('source-results')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('open-test-details')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('watch-now')));
+    await tester.pumpAndSettle();
+
+    expect(launches, hasLength(2));
+    expect(launches.last.episode, 1);
+    expect(launches.last.magnet, contains(preferredHash));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('changing preferred quality is used by the next search', (
@@ -285,9 +424,11 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('episode-1')));
+    await tester.tap(find.byKey(const ValueKey('choose-source')));
     await tester.pumpAndSettle();
-    expect(queries, isNotEmpty);
+    // Opening the picker consumes the selection-time prefetch instead of
+    // issuing a duplicate source request.
+    expect(queries, hasLength(1));
     expect(queries.last.resolution, '1080');
     expect(
       tester.getTopLeft(find.text('Quality Refresh Show 01 1080p')).dy,
@@ -305,10 +446,6 @@ void main() {
     await tester.pump();
 
     expect(container.read(settingsControllerProvider).value?.rssQuality, '720');
-    await tester.tap(find.byKey(const ValueKey('close-source-results')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('episode-1')));
-    await tester.pumpAndSettle();
     expect(queries, hasLength(2));
     expect(queries.last.resolution, '720');
     expect(
@@ -390,14 +527,14 @@ void main() {
       );
       await tester.pump();
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('episode-4')));
+      await tester.tap(find.byKey(const ValueKey('choose-source')));
       await tester.pumpAndSettle();
 
       expect(find.text('Correct complete batch'), findsOneWidget);
       expect(find.text('Missing hash release 04'), findsNothing);
       expect(find.text('Contradictory hash release 04'), findsNothing);
       expect(find.text('Wrong cached batch 01-12'), findsNothing);
-      expect(find.text('1 playable releases'), findsOneWidget);
+      expect(find.textContaining('1 playable'), findsOneWidget);
     },
   );
 }
@@ -432,6 +569,8 @@ class _Sources implements SourceResolver {
           size: 700000000,
         ),
       ];
+
+  const _Sources.recordingResults(this.queries, this.results);
 
   final List<TorrentResult> results;
   final List<TorrentQuery>? queries;
@@ -472,6 +611,40 @@ class _Sources implements SourceResolver {
 
   @override
   Future<bool> validate(String id) async => true;
+}
+
+class _DetailsLauncher extends StatelessWidget {
+  const _DetailsLauncher({required this.media, required this.onLaunch});
+
+  final Media media;
+  final ValueChanged<PlaybackLaunch> onLaunch;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: FilledButton(
+          key: const ValueKey('open-test-details'),
+          onPressed: () async {
+            final launch = await Navigator.of(context).push<PlaybackLaunch>(
+              MaterialPageRoute(builder: (_) => MediaDetails(media: media)),
+            );
+            if (launch != null) onLaunch(launch);
+          },
+          child: const Text('Open details'),
+        ),
+      ),
+    );
+  }
+}
+
+class _Episodes implements EpisodeRepository {
+  const _Episodes(this.items);
+
+  final List<EpisodeInfo> items;
+
+  @override
+  Future<List<EpisodeInfo>> episodes(Media media) async => items;
 }
 
 class _Debrid implements DebridClient {

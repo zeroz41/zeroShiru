@@ -10,6 +10,7 @@ import '../../app/theme/tokens.dart';
 import '../../application/library/providers.dart';
 import '../../application/playback/request.dart';
 import '../../application/settings/providers.dart';
+import '../../application/sources/best_source.dart';
 import '../../application/sources/providers.dart';
 import '../../application/sources/release_language.dart';
 import '../../application/playback/coverage.dart';
@@ -93,7 +94,10 @@ class MediaDetails extends ConsumerStatefulWidget {
 class _MediaDetailsState extends ConsumerState<MediaDetails> {
   late int _episode;
   late final TextEditingController _magnet;
+  final _sourcePickerKey = GlobalKey<_ReleaseHandoffState>();
   bool _releaseOpen = false;
+  bool _findingBestSource = false;
+  String? _playbackError;
   String? _releaseError;
 
   Media get media => widget.media;
@@ -112,6 +116,8 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
         oldWidget.initialEpisode != widget.initialEpisode) {
       _episode = _requestedEpisode(media, widget.initialEpisode);
       _releaseOpen = false;
+      _findingBestSource = false;
+      _playbackError = null;
       _releaseError = null;
       _magnet.clear();
     }
@@ -126,19 +132,44 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
   void _selectEpisode(int episode) {
     setState(() {
       _episode = episode;
-      _releaseOpen = widget.onEpisodeSelected == null;
+      _playbackError = null;
       _releaseError = null;
     });
     widget.onEpisodeSelected?.call(media, episode);
   }
 
-  void _watchNow() {
+  void _playEpisode(int episode) {
+    final selectionChanged = episode != _episode;
+    if (selectionChanged) {
+      setState(() {
+        _episode = episode;
+        _playbackError = null;
+        _releaseError = null;
+      });
+    }
     if (widget.onEpisodeSelected case final callback?) {
-      callback(media, _episode);
+      callback(media, episode);
       return;
     }
+    if (!selectionChanged) {
+      _sourcePickerKey.currentState?.playBest();
+      return;
+    }
+    // Let the source engine receive the selected episode in didUpdateWidget
+    // before asking it to resolve the best release.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _episode == episode) {
+        _sourcePickerKey.currentState?.playBest();
+      }
+    });
+  }
+
+  void _watchNow() => _playEpisode(_episode);
+
+  void _openReleases() {
     setState(() {
       _releaseOpen = true;
+      _playbackError = null;
       _releaseError = null;
     });
   }
@@ -152,7 +183,8 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
     final key = service == null ? null : settings?.debridApiKeys[service];
     if (service == null || key == null || key.isEmpty) {
       setState(() {
-        _releaseError = 'Connect TorBox in Settings before starting playback.';
+        _releaseError =
+            'Connect a debrid service in Settings before starting playback.';
       });
       return;
     }
@@ -183,6 +215,12 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
     final episodes =
         ref.watch(episodeMetadataProvider(media)).value ??
         fallbackEpisodeMetadata(media);
+    final selectedEpisode = _episodeInfo(episodes, _episode, media);
+    if (currentSettings != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _sourcePickerKey.currentState?.prefetchBest();
+      });
+    }
 
     return SafeArea(
       minimum: EdgeInsets.all(compact ? 0 : ZeroTokens.space3),
@@ -206,40 +244,64 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  _DetailsBackdrop(media: media),
+                  _DetailsBackdrop(media: media, episode: selectedEpisode),
                   if (compact)
                     _CompactDetails(
                       media: media,
                       episode: _episode,
-                      releaseOpen: _releaseOpen,
-                      releaseError: _releaseError,
-                      magnet: _magnet,
-                      settings: currentSettings,
+                      episodeInfo: selectedEpisode,
                       episodes: episodes,
+                      findingBestSource: _findingBestSource,
+                      playbackError: _playbackError,
                       onWatch: _watchNow,
-                      onCloseReleases: _closeReleases,
+                      onChooseSource: _openReleases,
                       onSelectEpisode: _selectEpisode,
-                      onLaunch: (source) => _launch(currentSettings, source),
+                      onPlayEpisode: _playEpisode,
                     )
                   else
                     _DesktopDetails(
                       media: media,
                       episode: _episode,
-                      releaseOpen: _releaseOpen,
-                      releaseError: _releaseError,
-                      magnet: _magnet,
-                      settings: currentSettings,
+                      episodeInfo: selectedEpisode,
                       episodes: episodes,
+                      findingBestSource: _findingBestSource,
+                      playbackError: _playbackError,
                       onWatch: _watchNow,
-                      onCloseReleases: _closeReleases,
+                      onChooseSource: _openReleases,
                       onSelectEpisode: _selectEpisode,
-                      onLaunch: (source) => _launch(currentSettings, source),
+                      onPlayEpisode: _playEpisode,
                     ),
                   Positioned(
                     top: ZeroTokens.space3,
                     right: ZeroTokens.space3,
                     child: _CloseButton(
                       onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ),
+                  Positioned.fill(
+                    child: _SourcePickerOverlay(
+                      visible: _releaseOpen,
+                      compact: compact,
+                      onDismiss: _closeReleases,
+                      child: _ReleaseHandoff(
+                        key: _sourcePickerKey,
+                        media: media,
+                        episode: _episode,
+                        open: _releaseOpen,
+                        error: _releaseError,
+                        controller: _magnet,
+                        settings: currentSettings,
+                        onClose: _closeReleases,
+                        onResolvingBest: (loading) {
+                          if (!mounted || _findingBestSource == loading) return;
+                          setState(() => _findingBestSource = loading);
+                        },
+                        onBestError: (error) {
+                          if (!mounted || _playbackError == error) return;
+                          setState(() => _playbackError = error);
+                        },
+                        onLaunch: (source) => _launch(currentSettings, source),
+                      ),
                     ),
                   ),
                 ],
@@ -253,13 +315,14 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
 }
 
 class _DetailsBackdrop extends StatelessWidget {
-  const _DetailsBackdrop({required this.media});
+  const _DetailsBackdrop({required this.media, required this.episode});
 
   final Media media;
+  final EpisodeInfo episode;
 
   @override
   Widget build(BuildContext context) {
-    final image = media.bannerImage ?? media.coverImage;
+    final image = episode.imageUrl ?? media.bannerImage ?? media.coverImage;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -313,28 +376,26 @@ class _DesktopDetails extends StatelessWidget {
   const _DesktopDetails({
     required this.media,
     required this.episode,
-    required this.releaseOpen,
-    required this.releaseError,
-    required this.magnet,
-    required this.settings,
+    required this.episodeInfo,
     required this.episodes,
+    required this.findingBestSource,
+    required this.playbackError,
     required this.onWatch,
-    required this.onCloseReleases,
+    required this.onChooseSource,
     required this.onSelectEpisode,
-    required this.onLaunch,
+    required this.onPlayEpisode,
   });
 
   final Media media;
   final int episode;
-  final bool releaseOpen;
-  final String? releaseError;
-  final TextEditingController magnet;
-  final Settings? settings;
+  final EpisodeInfo episodeInfo;
   final List<EpisodeInfo> episodes;
+  final bool findingBestSource;
+  final String? playbackError;
   final VoidCallback onWatch;
-  final VoidCallback onCloseReleases;
+  final VoidCallback onChooseSource;
   final ValueChanged<int> onSelectEpisode;
-  final ValueChanged<_ReleaseChoice> onLaunch;
+  final ValueChanged<int> onPlayEpisode;
 
   @override
   Widget build(BuildContext context) {
@@ -346,7 +407,11 @@ class _DesktopDetails extends StatelessWidget {
           child: _OverviewScroll(
             media: media,
             episode: episode,
+            episodeInfo: episodeInfo,
+            findingBestSource: findingBestSource,
+            playbackError: playbackError,
             onWatch: onWatch,
+            onChooseSource: onChooseSource,
           ),
         ),
         const VerticalDivider(width: 1),
@@ -361,34 +426,7 @@ class _DesktopDetails extends StatelessWidget {
             ),
             child: Column(
               children: [
-                if (releaseOpen)
-                  Expanded(
-                    flex: 5,
-                    child: _ReleaseHandoff(
-                      media: media,
-                      episode: episode,
-                      open: releaseOpen,
-                      error: releaseError,
-                      controller: magnet,
-                      settings: settings,
-                      onClose: onCloseReleases,
-                      onLaunch: onLaunch,
-                    ),
-                  )
-                else
-                  _ReleaseHandoff(
-                    media: media,
-                    episode: episode,
-                    open: releaseOpen,
-                    error: releaseError,
-                    controller: magnet,
-                    settings: settings,
-                    onClose: onCloseReleases,
-                    onLaunch: onLaunch,
-                  ),
-                const SizedBox(height: ZeroTokens.space3),
                 Expanded(
-                  flex: releaseOpen ? 6 : 10,
                   child: EpisodeSelector(
                     episodeCount: media.maxEpisode ?? 1,
                     watchedThrough: media.listEntry?.progress ?? 0,
@@ -398,6 +436,8 @@ class _DesktopDetails extends StatelessWidget {
                     items: episodes,
                     expanded: true,
                     onSelected: onSelectEpisode,
+                    onPlay: onPlayEpisode,
+                    playingEpisode: findingBestSource ? episode : null,
                   ),
                 ),
               ],
@@ -413,28 +453,26 @@ class _CompactDetails extends StatelessWidget {
   const _CompactDetails({
     required this.media,
     required this.episode,
-    required this.releaseOpen,
-    required this.releaseError,
-    required this.magnet,
-    required this.settings,
+    required this.episodeInfo,
     required this.episodes,
+    required this.findingBestSource,
+    required this.playbackError,
     required this.onWatch,
-    required this.onCloseReleases,
+    required this.onChooseSource,
     required this.onSelectEpisode,
-    required this.onLaunch,
+    required this.onPlayEpisode,
   });
 
   final Media media;
   final int episode;
-  final bool releaseOpen;
-  final String? releaseError;
-  final TextEditingController magnet;
-  final Settings? settings;
+  final EpisodeInfo episodeInfo;
   final List<EpisodeInfo> episodes;
+  final bool findingBestSource;
+  final String? playbackError;
   final VoidCallback onWatch;
-  final VoidCallback onCloseReleases;
+  final VoidCallback onChooseSource;
   final ValueChanged<int> onSelectEpisode;
-  final ValueChanged<_ReleaseChoice> onLaunch;
+  final ValueChanged<int> onPlayEpisode;
 
   @override
   Widget build(BuildContext context) {
@@ -449,27 +487,17 @@ class _CompactDetails extends StatelessWidget {
         _OverviewHeader(
           media: media,
           episode: episode,
+          episodeInfo: episodeInfo,
           compact: true,
+          findingBestSource: findingBestSource,
+          playbackError: playbackError,
           onWatch: onWatch,
+          onChooseSource: onChooseSource,
         ),
         const SizedBox(height: ZeroTokens.space5),
-        _AboutMedia(media: media),
+        _AboutEpisode(episode: episodeInfo),
         if ((media.maxEpisode ?? 0) > 0) ...[
           const SizedBox(height: ZeroTokens.space5),
-          SizedBox(
-            height: releaseOpen ? 400 : null,
-            child: _ReleaseHandoff(
-              media: media,
-              episode: episode,
-              open: releaseOpen,
-              error: releaseError,
-              controller: magnet,
-              settings: settings,
-              onClose: onCloseReleases,
-              onLaunch: onLaunch,
-            ),
-          ),
-          const SizedBox(height: ZeroTokens.space3),
           EpisodeSelector(
             episodeCount: media.maxEpisode!,
             watchedThrough: media.listEntry?.progress ?? 0,
@@ -479,6 +507,8 @@ class _CompactDetails extends StatelessWidget {
             items: episodes,
             maxHeight: 610,
             onSelected: onSelectEpisode,
+            onPlay: onPlayEpisode,
+            playingEpisode: findingBestSource ? episode : null,
           ),
         ],
       ],
@@ -490,12 +520,20 @@ class _OverviewScroll extends StatelessWidget {
   const _OverviewScroll({
     required this.media,
     required this.episode,
+    required this.episodeInfo,
+    required this.findingBestSource,
+    required this.playbackError,
     required this.onWatch,
+    required this.onChooseSource,
   });
 
   final Media media;
   final int episode;
+  final EpisodeInfo episodeInfo;
+  final bool findingBestSource;
+  final String? playbackError;
   final VoidCallback onWatch;
+  final VoidCallback onChooseSource;
 
   @override
   Widget build(BuildContext context) {
@@ -511,11 +549,15 @@ class _OverviewScroll extends StatelessWidget {
           _OverviewHeader(
             media: media,
             episode: episode,
+            episodeInfo: episodeInfo,
             compact: false,
+            findingBestSource: findingBestSource,
+            playbackError: playbackError,
             onWatch: onWatch,
+            onChooseSource: onChooseSource,
           ),
           const SizedBox(height: ZeroTokens.space6),
-          _AboutMedia(media: media),
+          _AboutEpisode(episode: episodeInfo),
         ],
       ),
     );
@@ -526,22 +568,38 @@ class _OverviewHeader extends StatelessWidget {
   const _OverviewHeader({
     required this.media,
     required this.episode,
+    required this.episodeInfo,
     required this.compact,
+    required this.findingBestSource,
+    required this.playbackError,
     required this.onWatch,
+    required this.onChooseSource,
   });
 
   final Media media;
   final int episode;
+  final EpisodeInfo episodeInfo;
   final bool compact;
+  final bool findingBestSource;
+  final String? playbackError;
   final VoidCallback onWatch;
+  final VoidCallback onChooseSource;
 
   @override
   Widget build(BuildContext context) {
-    final info = _TitleBlock(media: media, episode: episode, onWatch: onWatch);
+    final info = _TitleBlock(
+      media: media,
+      episode: episode,
+      episodeInfo: episodeInfo,
+      findingBestSource: findingBestSource,
+      playbackError: playbackError,
+      onWatch: onWatch,
+      onChooseSource: onChooseSource,
+    );
     if (compact) {
       return Column(
         children: [
-          _Cover(media: media, width: 176),
+          _EpisodeStill(media: media, episode: episodeInfo),
           const SizedBox(height: ZeroTokens.space4),
           info,
         ],
@@ -550,7 +608,10 @@ class _OverviewHeader extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        _Cover(media: media, width: 218),
+        SizedBox(
+          width: 330,
+          child: _EpisodeStill(media: media, episode: episodeInfo),
+        ),
         const SizedBox(width: ZeroTokens.space5),
         Expanded(child: info),
       ],
@@ -562,12 +623,20 @@ class _TitleBlock extends StatelessWidget {
   const _TitleBlock({
     required this.media,
     required this.episode,
+    required this.episodeInfo,
+    required this.findingBestSource,
+    required this.playbackError,
     required this.onWatch,
+    required this.onChooseSource,
   });
 
   final Media media;
   final int episode;
+  final EpisodeInfo episodeInfo;
+  final bool findingBestSource;
+  final String? playbackError;
   final VoidCallback onWatch;
+  final VoidCallback onChooseSource;
 
   @override
   Widget build(BuildContext context) {
@@ -576,43 +645,54 @@ class _TitleBlock extends StatelessWidget {
       children: [
         Text(
           media.title.display,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: context.zeroPalette.accentSoft,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: ZeroTokens.space2),
+        Text(
+          episodeInfo.title?.trim().isNotEmpty == true
+              ? episodeInfo.title!
+              : 'Episode $episode',
+          key: const ValueKey('selected-episode-title'),
           style: Theme.of(context).textTheme.displayMedium?.copyWith(
             shadows: const [Shadow(color: Colors.black, blurRadius: 18)],
           ),
         ),
-        const SizedBox(height: ZeroTokens.space4),
+        const SizedBox(height: ZeroTokens.space3),
         Wrap(
           spacing: ZeroTokens.space4,
           runSpacing: ZeroTokens.space2,
           children: [
-            if (media.averageScore != null)
-              _MetaItem(
-                icon: Icons.trending_up_rounded,
-                label: '${media.averageScore}% score',
-              ),
-            if (media.format != null)
-              _MetaItem(icon: Icons.tv_rounded, label: _format(media.format!)),
-            if (media.episodes != null)
-              _MetaItem(
-                icon: Icons.movie_filter_outlined,
-                label: '${media.episodes} episodes',
-              ),
-            if (media.duration != null)
+            _MetaItem(
+              icon: Icons.movie_filter_outlined,
+              label: 'Episode $episode',
+            ),
+            if (episodeInfo.durationMinutes != null)
               _MetaItem(
                 icon: Icons.schedule_rounded,
-                label: '${media.duration} min',
+                label: '${episodeInfo.durationMinutes} min',
               ),
-            if (media.season != null || media.seasonYear != null)
+            if (episodeInfo.airDate != null)
               _MetaItem(
                 icon: Icons.calendar_month_rounded,
-                label: [
-                  if (media.season != null) _capitalize(media.season!.name),
-                  if (media.seasonYear != null) '${media.seasonYear}',
-                ].join(' '),
+                label: _episodeDate(episodeInfo.airDate!),
               ),
+            _MetaItem(
+              icon: episode <= (media.listEntry?.progress ?? 0)
+                  ? Icons.check_circle_rounded
+                  : Icons.play_circle_outline_rounded,
+              label: episode <= (media.listEntry?.progress ?? 0)
+                  ? 'Watched'
+                  : 'Unwatched',
+            ),
           ],
         ),
-        const SizedBox(height: ZeroTokens.space5),
+        const SizedBox(height: ZeroTokens.space4),
         Wrap(
           spacing: ZeroTokens.space2,
           runSpacing: ZeroTokens.space2,
@@ -620,53 +700,53 @@ class _TitleBlock extends StatelessWidget {
           children: [
             FilledButton.icon(
               key: const ValueKey('watch-now'),
-              onPressed: onWatch,
-              icon: const Icon(Icons.play_arrow_rounded),
-              label: Text('Watch episode $episode'),
+              onPressed: findingBestSource ? null : onWatch,
+              icon: findingBestSource
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.play_arrow_rounded),
+              label: Text(
+                findingBestSource ? 'Finding best source…' : 'Play episode',
+              ),
               style: FilledButton.styleFrom(minimumSize: const Size(214, 44)),
+            ),
+            OutlinedButton.icon(
+              key: const ValueKey('choose-source'),
+              onPressed: findingBestSource ? null : onChooseSource,
+              icon: const Icon(Icons.tune_rounded, size: 18),
+              label: const Text('Choose source'),
+              style: OutlinedButton.styleFrom(minimumSize: const Size(154, 44)),
             ),
             if (media.listEntry case final entry?) _StatusPill(entry: entry),
           ],
         ),
+        const SizedBox(height: ZeroTokens.space2),
+        _AutoSourceHint(error: playbackError),
       ],
     );
   }
 }
 
-class _AboutMedia extends StatelessWidget {
-  const _AboutMedia({required this.media});
+class _AboutEpisode extends StatelessWidget {
+  const _AboutEpisode({required this.episode});
 
-  final Media media;
+  final EpisodeInfo episode;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (media.genres.isNotEmpty) ...[
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                for (final genre in media.genres)
-                  Padding(
-                    padding: const EdgeInsets.only(right: ZeroTokens.space2),
-                    child: Chip(
-                      avatar: const Icon(Icons.tag_rounded, size: 15),
-                      label: Text(genre),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: ZeroTokens.space6),
-        ],
-        const _SectionTitle(label: 'Synopsis'),
+        const _SectionTitle(label: 'About this episode'),
         const SizedBox(height: ZeroTokens.space4),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 900),
           child: Text(
-            _plainDescription(media.description),
+            episode.summary?.trim().isNotEmpty == true
+                ? episode.summary!
+                : 'No episode synopsis is available yet.',
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
               height: 1.6,
               color: context.zeroPalette.textSecondary,
@@ -678,6 +758,133 @@ class _AboutMedia extends StatelessWidget {
   }
 }
 
+class _AutoSourceHint extends StatelessWidget {
+  const _AutoSourceHint({this.error});
+
+  final String? error;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasError = error?.isNotEmpty == true;
+    return AnimatedSwitcher(
+      duration: ZeroTokens.motion,
+      child: Row(
+        key: ValueKey(hasError ? error : 'automatic-source-hint'),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            hasError ? Icons.error_outline_rounded : Icons.auto_awesome_rounded,
+            size: 15,
+            color: hasError
+                ? context.zeroPalette.warning
+                : context.zeroPalette.textMuted,
+          ),
+          const SizedBox(width: ZeroTokens.space1),
+          Flexible(
+            child: Text(
+              hasError ? error! : 'Best source is preloaded using cache, language, resolution, and swarm health.',
+              key: hasError ? const ValueKey('best-source-error') : null,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: hasError
+                    ? context.zeroPalette.warning
+                    : context.zeroPalette.textMuted,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Keeps source choice out of the browsing layout while preserving the source
+/// engine's state for instant play. On wide screens it reads as a side sheet;
+/// on compact screens it becomes a nearly full-height modal sheet.
+class _SourcePickerOverlay extends StatelessWidget {
+  const _SourcePickerOverlay({
+    required this.visible,
+    required this.compact,
+    required this.onDismiss,
+    required this.child,
+  });
+
+  final bool visible;
+  final bool compact;
+  final VoidCallback onDismiss;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final alignment = compact ? Alignment.bottomCenter : Alignment.centerRight;
+    final padding = compact
+        ? const EdgeInsets.fromLTRB(
+            ZeroTokens.space2,
+            72,
+            ZeroTokens.space2,
+            ZeroTokens.space2,
+          )
+        : const EdgeInsets.fromLTRB(
+            80,
+            54,
+            ZeroTokens.space4,
+            ZeroTokens.space4,
+          );
+    return Visibility(
+      visible: visible,
+      maintainState: true,
+      maintainAnimation: true,
+      child: ExcludeSemantics(
+        excluding: !visible,
+        child: IgnorePointer(
+          ignoring: !visible,
+          child: AnimatedOpacity(
+            opacity: visible ? 1 : 0,
+            duration: ZeroTokens.motionPanel,
+            curve: ZeroTokens.easeSettle,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Semantics(
+                  button: true,
+                  label: 'Close source picker',
+                  child: GestureDetector(
+                    key: const ValueKey('source-picker-scrim'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onDismiss,
+                    child: ColoredBox(
+                      color: Colors.black.withValues(alpha: 0.66),
+                    ),
+                  ),
+                ),
+                Align(
+                  alignment: alignment,
+                  child: Padding(
+                    padding: padding,
+                    child: AnimatedSlide(
+                      offset: visible
+                          ? Offset.zero
+                          : Offset(compact ? 0 : 0.06, compact ? 0.06 : 0),
+                      duration: ZeroTokens.motionPanel,
+                      curve: ZeroTokens.easeSettle,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: compact ? 680 : 590,
+                          maxHeight: compact ? 760 : 860,
+                        ),
+                        child: SizedBox(width: double.infinity, child: child),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ReleaseChoice {
   const _ReleaseChoice(this.magnet, {this.releaseEpisode});
 
@@ -685,8 +892,70 @@ class _ReleaseChoice {
   final int? releaseEpisode;
 }
 
+class _SourceRequestKey {
+  const _SourceRequestKey({
+    required this.mediaId,
+    required this.episode,
+    required this.resolution,
+    required this.service,
+    required this.credentialFingerprint,
+    required this.resolverIdentity,
+  });
+
+  final int mediaId;
+  final int episode;
+  final String resolution;
+  final DebridService? service;
+  final int credentialFingerprint;
+  final int resolverIdentity;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _SourceRequestKey &&
+      other.mediaId == mediaId &&
+      other.episode == episode &&
+      other.resolution == resolution &&
+      other.service == service &&
+      other.credentialFingerprint == credentialFingerprint &&
+      other.resolverIdentity == resolverIdentity;
+
+  @override
+  int get hashCode => Object.hash(
+    mediaId,
+    episode,
+    resolution,
+    service,
+    credentialFingerprint,
+    resolverIdentity,
+  );
+}
+
+class _SourceSnapshot {
+  _SourceSnapshot({
+    required this.createdAt,
+    required this.results,
+    required this.availability,
+    required this.availabilityDetails,
+    required this.releaseEpisodes,
+    required this.rejectedHashes,
+    required this.sourceErrors,
+  });
+
+  final DateTime createdAt;
+  final List<TorrentResult> results;
+  final Map<String, Availability> availability;
+  final Map<String, DebridAvailabilityDetail> availabilityDetails;
+  final Map<String, int> releaseEpisodes;
+  final Set<String> rejectedHashes;
+  final List<String> sourceErrors;
+
+  bool get isFresh =>
+      DateTime.now().difference(createdAt) < const Duration(minutes: 5);
+}
+
 class _ReleaseHandoff extends ConsumerStatefulWidget {
   const _ReleaseHandoff({
+    super.key,
     required this.media,
     required this.episode,
     required this.open,
@@ -694,6 +963,8 @@ class _ReleaseHandoff extends ConsumerStatefulWidget {
     required this.controller,
     required this.settings,
     required this.onClose,
+    required this.onResolvingBest,
+    required this.onBestError,
     required this.onLaunch,
   });
 
@@ -704,6 +975,8 @@ class _ReleaseHandoff extends ConsumerStatefulWidget {
   final TextEditingController controller;
   final Settings? settings;
   final VoidCallback onClose;
+  final ValueChanged<bool> onResolvingBest;
+  final ValueChanged<String?> onBestError;
   final ValueChanged<_ReleaseChoice> onLaunch;
 
   @override
@@ -713,6 +986,9 @@ class _ReleaseHandoff extends ConsumerStatefulWidget {
 enum _ReleaseSort { best, seeders, quality, size }
 
 class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
+  static const _snapshotLimit = 8;
+  static final _snapshots = <_SourceRequestKey, _SourceSnapshot>{};
+
   StreamSubscription<SourceSearchBatch>? _subscription;
   Timer? _availabilityTimer;
   final _results = <TorrentResult>[];
@@ -725,23 +1001,26 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
   bool _loading = false;
   bool _manual = false;
   bool _cachedOnly = false;
+  bool _quickPlayPending = false;
+  bool _searchCompleted = false;
+  _SourceRequestKey? _activeRequest;
   _ReleaseSort _sort = _ReleaseSort.best;
   int _generation = 0;
 
   @override
   void initState() {
     super.initState();
-    if (widget.open) unawaited(_search());
+    if (widget.open) prefetchBest();
   }
 
   @override
   void didUpdateWidget(_ReleaseHandoff oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.open &&
-        (!oldWidget.open ||
-            oldWidget.episode != widget.episode ||
-            oldWidget.media.id != widget.media.id)) {
-      unawaited(_search());
+    if (oldWidget.episode != widget.episode ||
+        oldWidget.media.id != widget.media.id) {
+      prefetchBest();
+    } else if (widget.open && !oldWidget.open) {
+      prefetchBest();
     }
   }
 
@@ -752,13 +1031,87 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
     super.dispose();
   }
 
-  Future<void> _search() async {
+  void playBest() {
+    final settings =
+        ref.read(settingsControllerProvider).value ?? widget.settings;
+    final service = settings?.debridService;
+    if (service == null || settings?.activeDebridKey?.isNotEmpty != true) {
+      widget.onBestError(
+        'Connect a debrid service in Settings before starting playback.',
+      );
+      widget.onResolvingBest(false);
+      return;
+    }
+    if (ref.read(sourceResolverProvider) == null) {
+      widget.onBestError(
+        'Install and enable a source extension in Settings first.',
+      );
+      widget.onResolvingBest(false);
+      return;
+    }
+    _quickPlayPending = true;
+    widget.onBestError(null);
+    widget.onResolvingBest(true);
+    final request = _requestKey();
+    if (_activeRequest == request && _searchCompleted) {
+      _launchBest();
+      return;
+    }
+    if (_restoreSnapshot(request)) {
+      _launchBest();
+      return;
+    }
+    if (_activeRequest == request && _loading) return;
+    unawaited(_search());
+  }
+
+  /// Warms the exact same result set consumed by [playBest] without changing
+  /// the visible UI. Repeated calls for the same episode are free.
+  void prefetchBest() {
+    if (ref.read(sourceResolverProvider) == null) return;
+    final request = _requestKey();
+    if (_activeRequest == request && (_loading || _searchCompleted)) return;
+    if (_restoreSnapshot(request)) return;
+    unawaited(_search());
+  }
+
+  _SourceRequestKey _requestKey() {
+    final settings =
+        ref.read(settingsControllerProvider).value ??
+        widget.settings ??
+        const Settings();
+    final resolver = ref.read(sourceResolverProvider);
+    final credential = settings.activeDebridKey;
+    return _SourceRequestKey(
+      mediaId: widget.media.id,
+      episode: widget.episode,
+      resolution: settings.rssQuality,
+      service: settings.debridService,
+      credentialFingerprint: credential == null
+          ? 0
+          : Object.hash(credential.length, credential.hashCode),
+      resolverIdentity: identityHashCode(resolver),
+    );
+  }
+
+  Future<void> _search({bool force = false}) async {
     final resolver = ref.read(sourceResolverProvider);
     final searchSettings =
         ref.read(settingsControllerProvider).value ?? widget.settings;
+    final request = _requestKey();
+    if (!force) {
+      if (_activeRequest == request && (_loading || _searchCompleted)) return;
+      if (_restoreSnapshot(request)) return;
+    }
+    final generation = ++_generation;
+    // Claim the request before cancellation yields so selection, picker-open,
+    // and play callbacks in the same frame all join this one search.
+    _activeRequest = request;
+    _searchCompleted = false;
+    _loading = resolver != null;
     await _subscription?.cancel();
     _availabilityTimer?.cancel();
-    final generation = ++_generation;
+    if (!mounted || generation != _generation) return;
     setState(() {
       _results.clear();
       _availability.clear();
@@ -767,10 +1120,14 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
       _rejectedHashes.clear();
       _checked.clear();
       _sourceErrors.clear();
-      _loading = resolver != null;
       _manual = false;
     });
-    if (resolver == null) return;
+    if (resolver == null) {
+      _finishQuickPlayWithError(
+        'Install and enable a source extension in Settings first.',
+      );
+      return;
+    }
     final titles = {
       widget.media.title.userPreferred,
       widget.media.title.romaji,
@@ -806,21 +1163,125 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
             _sourceErrors.add('${batch.source.name}: ${batch.error}');
           }
         });
-        _scheduleAvailability(generation);
       },
-      onDone: () {
+      onDone: () async {
         if (!mounted || generation != _generation) return;
+        _subscription = null;
         setState(() => _loading = false);
-        _scheduleAvailability(generation, immediate: true);
+        _availabilityTimer?.cancel();
+        await _checkAvailability(generation);
+        if (!mounted || generation != _generation) return;
+        setState(() => _searchCompleted = true);
+        _saveSnapshot(request);
+        if (_quickPlayPending) {
+          _launchBest();
+        }
       },
       onError: (Object error) {
         if (!mounted || generation != _generation) return;
+        _subscription = null;
         setState(() {
           _loading = false;
+          _searchCompleted = true;
           _sourceErrors.add('$error');
         });
+        _saveSnapshot(request);
+        _finishQuickPlayWithError('Sources could not be searched. Try again.');
       },
     );
+  }
+
+  bool _restoreSnapshot(_SourceRequestKey request) {
+    final snapshot = _snapshots[request];
+    if (snapshot == null) return false;
+    if (!snapshot.isFresh) {
+      _snapshots.remove(request);
+      return false;
+    }
+    setState(() {
+      _activeRequest = request;
+      _searchCompleted = true;
+      _loading = false;
+      _manual = false;
+      _results
+        ..clear()
+        ..addAll(snapshot.results);
+      _availability
+        ..clear()
+        ..addAll(snapshot.availability);
+      _availabilityDetails
+        ..clear()
+        ..addAll(snapshot.availabilityDetails);
+      _releaseEpisodes
+        ..clear()
+        ..addAll(snapshot.releaseEpisodes);
+      _rejectedHashes
+        ..clear()
+        ..addAll(snapshot.rejectedHashes);
+      _checked
+        ..clear()
+        ..addAll(snapshot.availability.keys);
+      _sourceErrors
+        ..clear()
+        ..addAll(snapshot.sourceErrors);
+    });
+    return true;
+  }
+
+  void _saveSnapshot(_SourceRequestKey request) {
+    _snapshots.remove(request);
+    _snapshots[request] = _SourceSnapshot(
+      createdAt: DateTime.now(),
+      results: List.unmodifiable(_results),
+      availability: Map.unmodifiable(_availability),
+      availabilityDetails: Map.unmodifiable(_availabilityDetails),
+      releaseEpisodes: Map.unmodifiable(_releaseEpisodes),
+      rejectedHashes: Set.unmodifiable(_rejectedHashes),
+      sourceErrors: List.unmodifiable(_sourceErrors),
+    );
+    while (_snapshots.length > _snapshotLimit) {
+      _snapshots.remove(_snapshots.keys.first);
+    }
+  }
+
+  void _launchBest() {
+    final results = _rankedFor(_ReleaseSort.best);
+    if (results.isEmpty) {
+      _finishQuickPlayWithError(
+        _sourceErrors.isEmpty
+            ? 'No playable source was found. You can choose one manually.'
+            : 'No playable source was found this time. Try choosing a source.',
+      );
+      return;
+    }
+    final result = results.first;
+    final hash = _hashOf(result);
+    final magnet = validatedTorrentMagnet(
+      declaredHash: result.hash,
+      link: result.link,
+    );
+    if (magnet == null) {
+      _finishQuickPlayWithError('The best source did not have a valid magnet.');
+      return;
+    }
+    _quickPlayPending = false;
+    widget.onResolvingBest(false);
+    widget.onBestError(null);
+    widget.onLaunch(
+      _ReleaseChoice(
+        magnet,
+        releaseEpisode: hash == null
+            ? _titleEpisode(result)
+            : _releaseEpisodes[hash] ?? _titleEpisode(result),
+      ),
+    );
+  }
+
+  void _finishQuickPlayWithError(String message) {
+    if (!_quickPlayPending) return;
+    _quickPlayPending = false;
+    widget.onResolvingBest(false);
+    widget.onBestError(message);
   }
 
   bool _holdsEpisode(TorrentResult result) => releaseHoldsEpisode(
@@ -929,7 +1390,9 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
     return null;
   }
 
-  List<TorrentResult> get _ranked {
+  List<TorrentResult> get _ranked => _rankedFor(_sort);
+
+  List<TorrentResult> _rankedFor(_ReleaseSort sort) {
     final values = _results.where((item) {
       if (!_canShow(item)) return false;
       if (!_cachedOnly && widget.settings?.debridCachedOnly != true) {
@@ -939,53 +1402,28 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
       final state = availabilityOf(_availability, hash);
       return state == Availability.cached || !_availability.containsKey(hash);
     }).toList();
-    values.sort((a, b) {
-      final aHash = _hashOf(a);
-      final bHash = _hashOf(b);
-      var order = availabilityOf(
-        _availability,
-        aHash,
-      ).order.compareTo(availabilityOf(_availability, bHash).order);
-      if (order != 0) return order;
-      final preferences =
-          ref.read(settingsControllerProvider).value ??
-          widget.settings ??
-          const Settings();
-      order =
-          releaseLanguagePreferenceScore(
-            b,
-            audioLanguage: preferences.audioLanguage,
-            subtitleLanguage: preferences.releaseSubtitleLanguage,
-          ).compareTo(
-            releaseLanguagePreferenceScore(
-              a,
-              audioLanguage: preferences.audioLanguage,
-              subtitleLanguage: preferences.releaseSubtitleLanguage,
-            ),
-          );
-      if (order != 0) return order;
-      if (_sort == _ReleaseSort.best) {
-        order = _preferredQualityTier(
-          a.title,
-          preferences.rssQuality,
-        ).compareTo(_preferredQualityTier(b.title, preferences.rssQuality));
-        if (order != 0) return order;
-      }
-      order = switch (_sort) {
+    final preferences =
+        ref.read(settingsControllerProvider).value ??
+        widget.settings ??
+        const Settings();
+    if (sort == _ReleaseSort.best) {
+      return rankBestSources(
+        values,
+        preferences: preferences,
+        availability: (result) =>
+            availabilityOf(_availability, _hashOf(result)),
+      );
+    }
+    values.sort(
+      (a, b) => switch (sort) {
         _ReleaseSort.seeders => (b.seeders ?? 0).compareTo(a.seeders ?? 0),
-        _ReleaseSort.quality => _quality(b.title).compareTo(_quality(a.title)),
+        _ReleaseSort.quality => sourceQuality(
+          b.title,
+        ).compareTo(sourceQuality(a.title)),
         _ReleaseSort.size => (b.size ?? 0).compareTo(a.size ?? 0),
-        _ReleaseSort.best => _typeRank(a).compareTo(_typeRank(b)),
-      };
-      if (order != 0) return order;
-      return switch (_sort == _ReleaseSort.best
-          ? preferences.torrentSort
-          : null) {
-        'size' => (b.size ?? 0).compareTo(a.size ?? 0),
-        'quality' => _quality(b.title).compareTo(_quality(a.title)),
-        _ => (b.seeders ?? 0).compareTo(a.seeders ?? 0),
-      };
-    });
+        _ReleaseSort.best => 0,
+      },
+    );
     return values;
   }
 
@@ -1046,17 +1484,17 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '$provider · Episode ${widget.episode}',
+                      'Choose a source',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     Text(
                       connected
                           ? widget.open
                                 ? _loading
-                                      ? 'Searching enabled sources…'
-                                      : '${results.length} playable releases'
-                                : 'Native source search and direct debrid stream'
-                          : 'Connect TorBox in Settings to play',
+                                      ? '$provider · Episode ${widget.episode} · Searching…'
+                                      : '$provider · Episode ${widget.episode} · ${results.length} playable'
+                                : 'Automatic source engine ready'
+                          : 'Connect a debrid service in Settings to play',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: connected
                             ? context.zeroPalette.success
@@ -1069,7 +1507,7 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
               if (widget.open)
                 IconButton(
                   tooltip: 'Refresh sources',
-                  onPressed: _loading ? null : _search,
+                  onPressed: _loading ? null : () => _search(force: true),
                   icon: const Icon(Icons.refresh_rounded),
                 ),
               if (widget.open)
@@ -1538,31 +1976,6 @@ class _ManualRelease extends StatelessWidget {
   }
 }
 
-int _typeRank(TorrentResult result) => switch (result.type) {
-  'best' => 0,
-  null => 1,
-  'batch' => 2,
-  _ => 3,
-};
-
-int _quality(String title) =>
-    int.tryParse(
-      RegExp(
-            r'(2160|1080|720|540|480)p?',
-            caseSensitive: false,
-          ).firstMatch(title)?.group(1) ??
-          '',
-    ) ??
-    0;
-
-int _preferredQualityTier(String title, String preferred) {
-  final quality = _quality(title);
-  final expected = int.tryParse(preferred);
-  if (expected == null || expected <= 0) return 0;
-  if (quality == expected) return 0;
-  return quality > 0 ? 1 : 2;
-}
-
 String _fileSize(int bytes) {
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
   var value = bytes.toDouble();
@@ -1605,17 +2018,17 @@ class _ConnectionDot extends StatelessWidget {
   }
 }
 
-class _Cover extends StatelessWidget {
-  const _Cover({required this.media, required this.width});
+class _EpisodeStill extends StatelessWidget {
+  const _EpisodeStill({required this.media, required this.episode});
 
   final Media media;
-  final double width;
+  final EpisodeInfo episode;
 
   @override
   Widget build(BuildContext context) {
     final colors = context.zeroPalette;
+    final image = episode.imageUrl ?? media.bannerImage ?? media.coverImage;
     return Container(
-      width: width,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(ZeroTokens.radiusCard),
         border: Border.all(color: colors.border),
@@ -1630,15 +2043,61 @@ class _Cover extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(ZeroTokens.radiusCard - 1),
         child: AspectRatio(
-          aspectRatio: ZeroTokens.cardArtAspect,
-          child: media.coverImage == null
-              ? ColoredBox(color: colors.surfaceRaised)
-              : Image(
-                  image: CachedNetworkImageProvider(media.coverImage!),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) =>
-                      ColoredBox(color: colors.surfaceRaised),
+          aspectRatio: 16 / 9,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              AnimatedSwitcher(
+                duration: ZeroTokens.motionPanel,
+                child: image == null
+                    ? ColoredBox(
+                        key: const ValueKey('episode-still-fallback'),
+                        color: colors.surfaceRaised,
+                      )
+                    : Image(
+                        key: ValueKey(image),
+                        image: CachedNetworkImageProvider(image),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) =>
+                            ColoredBox(color: colors.surfaceRaised),
+                      ),
+              ),
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.transparent, Color(0x99000000)],
+                  ),
                 ),
+              ),
+              Positioned(
+                left: ZeroTokens.space3,
+                bottom: ZeroTokens.space3,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colors.surface.withValues(alpha: 0.88),
+                    border: Border.all(color: colors.border),
+                    borderRadius: BorderRadius.circular(ZeroTokens.radiusPill),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: ZeroTokens.space3,
+                      vertical: ZeroTokens.space1,
+                    ),
+                    child: Text(
+                      'EPISODE ${episode.number}',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: colors.text,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1752,16 +2211,37 @@ int _requestedEpisode(Media media, int? requested) {
   return (requested ?? _initialEpisode(media)).clamp(1, count);
 }
 
-String _format(MediaFormat format) => switch (format) {
-  MediaFormat.tv => 'TV series',
-  MediaFormat.tvShort => 'TV short',
-  MediaFormat.movie => 'Movie',
-  MediaFormat.special => 'Special',
-  MediaFormat.ova => 'OVA',
-  MediaFormat.ona => 'ONA',
-  MediaFormat.music => 'Music',
-  MediaFormat.unknown => 'Anime',
-};
+EpisodeInfo _episodeInfo(List<EpisodeInfo> episodes, int number, Media media) {
+  final found = episodes
+      .where((episode) => episode.number == number)
+      .firstOrNull;
+  return EpisodeInfo(
+    number: number,
+    title: found?.title,
+    summary: found?.summary,
+    imageUrl: found?.imageUrl ?? media.bannerImage ?? media.coverImage,
+    durationMinutes: found?.durationMinutes ?? media.duration,
+    airDate: found?.airDate,
+  );
+}
+
+String _episodeDate(DateTime date) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${months[date.month - 1]} ${date.day}, ${date.year}';
+}
 
 String _serviceTitle(DebridService service) => switch (service) {
   DebridService.alldebrid => 'AllDebrid',
@@ -1773,13 +2253,3 @@ String _serviceTitle(DebridService service) => switch (service) {
 String _capitalize(String value) => value.isEmpty
     ? value
     : '${value.substring(0, 1).toUpperCase()}${value.substring(1)}';
-
-String _plainDescription(String? description) {
-  if (description == null || description.trim().isEmpty) {
-    return 'No synopsis is available yet.';
-  }
-  return description
-      .replaceAll(RegExp('<br\\s*/?>', caseSensitive: false), '\n')
-      .replaceAll(RegExp('<[^>]+>'), '')
-      .trim();
-}

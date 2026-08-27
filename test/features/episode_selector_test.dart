@@ -12,6 +12,7 @@ void main() {
       addTearDown(tester.view.reset);
 
       int? selected;
+      int? played;
       await tester.pumpWidget(
         MaterialApp(
           theme: buildZeroTheme(),
@@ -23,6 +24,7 @@ void main() {
                 watchedThrough: 5,
                 selectedEpisode: 6,
                 onSelected: (episode) => selected = episode,
+                onPlay: (episode) => played = episode,
               ),
             ),
           ),
@@ -55,6 +57,9 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('episode-42')));
       expect(selected, 42);
+
+      await tester.tap(find.byKey(const ValueKey('episode-play-42')));
+      expect(played, 42);
     },
   );
 }
