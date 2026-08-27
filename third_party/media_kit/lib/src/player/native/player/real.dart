@@ -64,6 +64,18 @@ void nativeEnsureInitialized({String? libmpv}) {
   });
 }
 
+/// Joins the mpv core behind [args] (libmpv path, mpv_handle address) in the
+/// calling isolate. Runs through [compute] so the synchronous thread join
+/// happens off the main isolate.
+bool _terminateNativePlayer((String, int) args) {
+  final (path, address) = args;
+  final mpv = generated.MPV(DynamicLibrary.open(path));
+  mpv.mpv_terminate_destroy(
+    Pointer<generated.mpv_handle>.fromAddress(address),
+  );
+  return true;
+}
+
 /// {@template native_player}
 ///
 /// NativePlayer
@@ -91,15 +103,19 @@ class NativePlayer extends PlatformPlayer {
       if (disposed) {
         throw AssertionError('[Player] has been disposed');
       }
-      await waitForPlayerInitialization;
-      await waitForVideoControllerInitializationIfAttached;
+      // Application window teardown awaits this future, so every stage must
+      // stay bounded: initialization completers can be left pending by a
+      // wedged attach, and mpv commands can go unanswered behind a stalled
+      // network stream.
+      await _boundedTeardownStage(waitForPlayerInitialization);
+      await _boundedTeardownStage(waitForVideoControllerInitializationIfAttached);
 
-      await NativeReferenceHolder.instance.remove(ctx);
-      await stop(notify: false, synchronized: false);
+      await _boundedTeardownStage(NativeReferenceHolder.instance.remove(ctx));
+      await _boundedTeardownStage(stop(notify: false, synchronized: false));
 
       disposed = true;
 
-      await super.dispose();
+      await _boundedTeardownStage(super.dispose());
 
       final nativeCallable = Initializer(mpv).dispose(ctx);
       if (nativeCallable == null) {
@@ -107,11 +123,26 @@ class NativePlayer extends PlatformPlayer {
           mpv.mpv_terminate_destroy(ctx);
         });
       } else {
+        // mpv_terminate_destroy blocks until every mpv thread has exited. A
+        // demuxer parked in a dead network read would freeze this isolate —
+        // and with it the window teardown — so the core is joined in a helper
+        // isolate instead. The wakeup callback is already cleared, so the
+        // core cannot call back into Dart while (or after) it terminates.
+        var terminated = false;
         try {
-          mpv.mpv_terminate_destroy(ctx);
-        } finally {
+          terminated = await compute(
+            _terminateNativePlayer,
+            (NativeLibrary.path, ctx.address),
+          ).timeout(const Duration(seconds: 10), onTimeout: () => false);
+        } catch (_) {
+          // Termination state unknown; treated as not terminated.
+        }
+        if (terminated) {
           nativeCallable.close();
         }
+        // When the join times out the callable and handle are deliberately
+        // leaked: the process is exiting, and any further wait would block
+        // that exit on an unresponsive peer.
       }
     }
 
@@ -119,6 +150,20 @@ class NativePlayer extends PlatformPlayer {
       return lock.synchronized(function);
     } else {
       return function();
+    }
+  }
+
+  /// Awaits one teardown stage of [dispose], abandoning it after [limit] so a
+  /// wedged stage cannot block application shutdown. A late completion of the
+  /// abandoned future — value or error — is discarded by [Future.timeout].
+  static Future<void> _boundedTeardownStage(
+    Future<void> future, {
+    Duration limit = const Duration(seconds: 5),
+  }) async {
+    try {
+      await future.timeout(limit);
+    } on TimeoutException {
+      // Proceed with the remaining stages.
     }
   }
 

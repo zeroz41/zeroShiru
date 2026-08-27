@@ -1,12 +1,12 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
+import '../../app/widgets/network_image.dart';
 import '../../application/library/providers.dart';
 import '../../application/logging/providers.dart';
 import '../../application/playback/request.dart';
@@ -349,7 +349,11 @@ class _DetailsBackdrop extends StatelessWidget {
             child: image == null
                 ? ColoredBox(color: context.zeroPalette.backgroundTop)
                 : Image(
-                    image: CachedNetworkImageProvider(image),
+                    image: sizedNetworkImage(
+                      context,
+                      image,
+                      logicalWidth: MediaQuery.sizeOf(context).width,
+                    ),
                     fit: BoxFit.cover,
                     errorBuilder: (_, _, _) =>
                         ColoredBox(color: context.zeroPalette.backgroundTop),
@@ -1322,6 +1326,7 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.episode != widget.episode ||
         oldWidget.media.id != widget.media.id) {
+      _titleEpisodeCache.clear();
       prefetchBest();
     } else if (widget.open && !oldWidget.open) {
       prefetchBest();
@@ -1723,11 +1728,20 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
   String? _hashOf(TorrentResult result) =>
       validatedTorrentHash(declaredHash: result.hash, link: result.link);
 
-  int? _titleEpisode(TorrentResult result) => releaseEpisodeFor(
-    parseFilename(result.title),
-    episode: widget.episode,
-    absoluteEpisode: result.mappedEpisode,
-  )?.round();
+  // Parsing a release title is not cheap, and _canShow needs this for every
+  // visible result on every rebuild while search results and availability
+  // batches stream in. The parse only depends on the title, the mapped
+  // episode, and the selected episode (cache cleared when that changes).
+  final _titleEpisodeCache = <String, int?>{};
+
+  int? _titleEpisode(TorrentResult result) => _titleEpisodeCache.putIfAbsent(
+    '${result.title} ${result.mappedEpisode}',
+    () => releaseEpisodeFor(
+      parseFilename(result.title),
+      episode: widget.episode,
+      absoluteEpisode: result.mappedEpisode,
+    )?.round(),
+  );
 
   int _episodeIdentityConfidence(TorrentResult result) {
     var score = _titleEpisode(result) == null ? 0 : 2;
@@ -2546,7 +2560,11 @@ class _EpisodeStill extends StatelessWidget {
                       )
                     : Image(
                         key: ValueKey(image),
-                        image: CachedNetworkImageProvider(image),
+                        image: sizedNetworkImage(
+                          context,
+                          image,
+                          logicalWidth: 800,
+                        ),
                         fit: BoxFit.cover,
                         errorBuilder: (_, _, _) =>
                             ColoredBox(color: colors.surfaceRaised),
@@ -2745,11 +2763,14 @@ String _episodeDate(DateTime date) {
   return '${months[date.month - 1]} ${date.day}, ${date.year}';
 }
 
+final _lineBreakTagPattern = RegExp(r'<br\s*/?>', caseSensitive: false);
+final _markupTagPattern = RegExp('<[^>]+>');
+
 String? _plainText(String? value) {
   if (value == null) return null;
   final text = value
-      .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
-      .replaceAll(RegExp('<[^>]+>'), '')
+      .replaceAll(_lineBreakTagPattern, '\n')
+      .replaceAll(_markupTagPattern, '')
       .replaceAll('&amp;', '&')
       .replaceAll('&quot;', '"')
       .replaceAll('&#39;', "'")

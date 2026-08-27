@@ -1,12 +1,14 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/widgets/accent_pill.dart';
+import '../../app/widgets/network_image.dart';
 import '../../domain/models/media.dart';
+
+final _markupTagPattern = RegExp('<[^>]+>');
 
 class HomeHero extends StatefulWidget {
   const HomeHero({super.key, required this.media, required this.onDetails});
@@ -210,7 +212,11 @@ class _HeroSlide extends StatelessWidget {
         children: [
           if (image != null)
             Image(
-              image: CachedNetworkImageProvider(image),
+              image: sizedNetworkImage(
+                context,
+                image,
+                logicalWidth: MediaQuery.sizeOf(context).width,
+              ),
               fit: BoxFit.cover,
               alignment: Alignment.centerRight,
               errorBuilder: (_, _, _) =>
@@ -297,7 +303,7 @@ class _HeroSlide extends StatelessWidget {
                           const SizedBox(height: ZeroTokens.space2),
                           Text(
                             media.description!.replaceAll(
-                              RegExp('<[^>]+>'),
+                              _markupTagPattern,
                               '',
                             ),
                             maxLines: 3,

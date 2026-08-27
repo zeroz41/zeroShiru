@@ -97,18 +97,16 @@ class FileLogSink implements AppLog {
 
   /// Strips what must never be on disk: query strings (signed URLs put their
   /// tokens there) and bearer tokens.
+  static final _urlPattern = RegExp(r'''https?://[^\s"'<>]+''');
+  static final _bearerPattern = RegExp(r'[Bb]earer\s+[A-Za-z0-9._~+/=-]+');
+
   static String redact(String message) {
-    var out = message.replaceAllMapped(RegExp(r'''https?://[^\s"'<>]+'''), (
-      match,
-    ) {
+    var out = message.replaceAllMapped(_urlPattern, (match) {
       final url = match[0]!;
       final query = url.indexOf('?');
       return query < 0 ? url : url.substring(0, query);
     });
-    out = out.replaceAll(
-      RegExp(r'[Bb]earer\s+[A-Za-z0-9._~+/=-]+'),
-      'Bearer [redacted]',
-    );
+    out = out.replaceAll(_bearerPattern, 'Bearer [redacted]');
     return out;
   }
 

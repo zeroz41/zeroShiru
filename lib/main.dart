@@ -132,7 +132,16 @@ class _ServiceHostState extends State<_ServiceHost>
     _closing = true;
     try {
       await windowManager.hide();
-      await _closeServices();
+      // Service teardown is internally bounded, but the window must be
+      // destroyed even if a stage wedges — a hidden window with a live
+      // process is otherwise unrecoverable without a kill.
+      await _closeServices().timeout(const Duration(seconds: 15));
+    } on TimeoutException {
+      widget.services.log.log(
+        'error',
+        'app',
+        'Shutdown timed out; destroying window with teardown incomplete',
+      );
     } catch (error, stack) {
       debugPrint('Zero shutdown failed: $error\n$stack');
     } finally {

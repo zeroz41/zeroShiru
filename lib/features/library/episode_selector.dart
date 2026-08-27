@@ -1,8 +1,8 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
+import '../../app/widgets/network_image.dart';
 import '../../domain/models/media.dart';
 
 enum EpisodeFilter { all, unwatched, watched }
@@ -665,7 +665,8 @@ class _EpisodeArtwork extends StatelessWidget {
       );
     }
     return Image(
-      image: CachedNetworkImageProvider(url!),
+      // A 16:9 thumbnail in a list row; decode capped well above that size.
+      image: sizedNetworkImage(context, url!, logicalWidth: 280),
       fit: BoxFit.cover,
       errorBuilder: (_, _, _) => ColoredBox(
         color: context.zeroPalette.surfaceRaised,

@@ -34,6 +34,13 @@ class SqliteQueryCache implements QueryCache {
   final _revalidating = <String, Future<Map<String, dynamic>?>>{};
   final _revalidated = StreamController<void>.broadcast();
 
+  /// Per-store row counts, seeded from one `COUNT(*)` per store and adjusted
+  /// on every write/delete/prune. This class is the table's only writer, and
+  /// the caches run on the UI isolate over synchronous SQLite: counting a
+  /// 10k-entry store on every landing is a perceptible per-write scan, while
+  /// an indexed point lookup is not.
+  final _entryCounts = <String, int>{};
+
   @override
   Stream<void> get revalidated => _revalidated.stream;
 
@@ -69,22 +76,38 @@ class SqliteQueryCache implements QueryCache {
     final db = _db(store);
     final now = _clock.now().millisecondsSinceEpoch;
     final expires = now + (maxAge ?? store.maxAge).inMilliseconds;
+    final count = _entryCount(db, store);
+    final existed = db.select(
+      'SELECT 1 FROM cache WHERE store = ? AND key = ? LIMIT 1',
+      [store.name, key],
+    ).isNotEmpty;
     db.execute(
       'INSERT INTO cache (store, key, value, stored_at, expires_at) VALUES (?, ?, ?, ?, ?) '
       'ON CONFLICT (store, key) DO UPDATE SET '
       'value = excluded.value, stored_at = excluded.stored_at, expires_at = excluded.expires_at',
       [store.name, key, jsonEncode(value), now, expires],
     );
+    if (!existed) _entryCounts[store.name] = count + 1;
     _prune(store);
   }
 
   @override
   Future<void> delete(CacheStoreSpec store, String key) async {
-    _db(store).execute('DELETE FROM cache WHERE store = ? AND key = ?', [
+    final db = _db(store);
+    db.execute('DELETE FROM cache WHERE store = ? AND key = ?', [
       store.name,
       key,
     ]);
+    final cached = _entryCounts[store.name];
+    if (cached != null) _entryCounts[store.name] = cached - db.updatedRows;
   }
+
+  int _entryCount(Database db, CacheStoreSpec store) =>
+      _entryCounts[store.name] ??=
+          db.select('SELECT COUNT(*) AS n FROM cache WHERE store = ?', [
+                store.name,
+              ]).first['n']
+              as int;
 
   @override
   Future<Map<String, dynamic>?> swrRead(
@@ -157,18 +180,14 @@ class SqliteQueryCache implements QueryCache {
   /// Oldest-first eviction past the store's cap.
   void _prune(CacheStoreSpec store) {
     final db = _db(store);
-    final count =
-        db.select('SELECT COUNT(*) AS n FROM cache WHERE store = ?', [
-              store.name,
-            ]).first['n']
-            as int;
-    final overflow = count - store.maxEntries;
+    final overflow = _entryCount(db, store) - store.maxEntries;
     if (overflow <= 0) return;
     db.execute(
       'DELETE FROM cache WHERE rowid IN ('
       'SELECT rowid FROM cache WHERE store = ? ORDER BY stored_at ASC LIMIT ?)',
       [store.name, overflow],
     );
+    _entryCounts[store.name] = store.maxEntries;
   }
 
   Database _db(CacheStoreSpec store) => (store.shared ? _shared : _profile).db;

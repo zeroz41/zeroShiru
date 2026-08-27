@@ -202,8 +202,22 @@ class _ScheduleResultsState extends State<_ScheduleResults> {
     super.initState();
     _now = DateTime.now();
     _ticker = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (mounted) setState(() => _now = DateTime.now());
+      // The shell keeps this tab alive while another one is visible;
+      // countdowns only need to be current when the grid can be seen.
+      if (mounted && _visible) {
+        setState(() => _now = DateTime.now());
+      }
     });
+  }
+
+  bool _visible = true;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _visible = TickerMode.valuesOf(context).enabled;
+    // Catch up after the tab was hidden through one or more skipped ticks.
+    _now = DateTime.now();
   }
 
   @override

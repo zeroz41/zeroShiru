@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +10,7 @@ import '../../app/theme/palette.dart';
 import '../../app/theme/theme.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/widgets/hover_region.dart';
+import '../../app/widgets/network_image.dart';
 import '../../application/learning/providers.dart';
 import '../../application/learning/subtitle_providers.dart';
 import '../../application/logging/providers.dart';
@@ -49,6 +49,7 @@ class PlayerPage extends ConsumerStatefulWidget {
 class _PlayerPageState extends ConsumerState<PlayerPage> {
   late final PlaybackBackend _backend;
   late final Widget _surface;
+  Widget? _coverSurface;
   late final StreamSubscription<SubtitleCue> _primaryCueSubscription;
   late final StreamSubscription<SubtitleCue> _secondaryCueSubscription;
   PlaybackSnapshot _latest = _idleSnapshot;
@@ -1124,9 +1125,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                   resolveError: _resolveError,
                   surface: _fit == BoxFit.contain
                       ? _surface
-                      : _backend.buildSurface(
+                      : _coverSurface ??= _backend.buildSurface(
                           key: const ValueKey('playback-surface'),
-                          fit: _fit,
+                          fit: BoxFit.cover,
                         ),
                   fit: _fit,
                   primaryCue: _primaryCue,
@@ -1626,7 +1627,11 @@ class _PlayerLoading extends StatelessWidget {
       children: [
         if (background != null)
           Image(
-            image: CachedNetworkImageProvider(background),
+            image: sizedNetworkImage(
+              context,
+              background,
+              logicalWidth: MediaQuery.sizeOf(context).width,
+            ),
             fit: BoxFit.cover,
             errorBuilder: (_, _, _) =>
                 ColoredBox(color: context.zeroPalette.surfaceModal),
@@ -1719,7 +1724,8 @@ class _LoadingCover extends StatelessWidget {
           child: url == null
               ? ColoredBox(color: colors.surfaceRaised)
               : Image(
-                  image: CachedNetworkImageProvider(url!),
+                  // Shown at 190-210 logical px in the loading layouts.
+                  image: sizedNetworkImage(context, url!, logicalWidth: 210),
                   fit: BoxFit.cover,
                   errorBuilder: (_, _, _) =>
                       ColoredBox(color: colors.surfaceRaised),
@@ -3967,12 +3973,23 @@ String? _settingLanguageForTrack(
   return supported.contains(language) ? language : null;
 }
 
+final _trackTitleWordPattern = RegExp(r'[a-z]{2,}');
+final _fullSubtitleTitlePattern = RegExp(
+  r'\b(full|dialogue|dialog|complete)\b',
+);
+final _signsSubtitleTitlePattern = RegExp(r'\b(signs?|songs?|forced)\b');
+final _learningSubtitleTitlePattern = RegExp(r'\b(jimaku|learning)\b');
+final _mainAudioTitlePattern = RegExp(r'\b(main|original)\b');
+final _commentaryAudioTitlePattern = RegExp(
+  r'\b(commentary|descriptive|description)\b',
+);
+
 String? _trackLanguageBase(MediaTrack track) {
   final tagged = _languageBase(track.language);
   if (tagged != null) return tagged;
   final title = track.title?.toLowerCase();
   if (title == null || title.trim().isEmpty) return null;
-  final words = RegExp(r'[a-z]{2,}')
+  final words = _trackTitleWordPattern
       .allMatches(title)
       .map((match) => match.group(0)!)
       .toSet();
@@ -4063,17 +4080,16 @@ MediaTrack? _preferredLearningTrack(
     if (selected.contains(track.id)) score += 15;
     if (preferred.contains(track.id)) score += 1000;
     if (subtitle) {
-      if (RegExp(r'\b(full|dialogue|dialog|complete)\b').hasMatch(title)) {
+      if (_fullSubtitleTitlePattern.hasMatch(title)) {
         score += 80;
       }
-      if (track.isForced ||
-          RegExp(r'\b(signs?|songs?|forced)\b').hasMatch(title)) {
+      if (track.isForced || _signsSubtitleTitlePattern.hasMatch(title)) {
         score -= 140;
       }
-      if (RegExp(r'\b(jimaku|learning)\b').hasMatch(title)) score += 40;
+      if (_learningSubtitleTitlePattern.hasMatch(title)) score += 40;
     } else {
-      if (RegExp(r'\b(main|original)\b').hasMatch(title)) score += 30;
-      if (RegExp(r'\b(commentary|descriptive|description)\b').hasMatch(title)) {
+      if (_mainAudioTitlePattern.hasMatch(title)) score += 30;
+      if (_commentaryAudioTitlePattern.hasMatch(title)) {
         score -= 140;
       }
     }

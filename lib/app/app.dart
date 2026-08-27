@@ -6,6 +6,10 @@ import '../domain/models/settings.dart';
 import 'router.dart';
 import 'theme/theme.dart';
 
+// buildTheme constructs a full ThemeData, and ZeroApp rebuilds on every
+// settings write (including player-side persists), so cache per preset.
+final _themeByPreset = <AppThemePreset, ThemeData>{};
+
 class ZeroApp extends ConsumerWidget {
   const ZeroApp({super.key});
 
@@ -17,7 +21,10 @@ class ZeroApp extends ConsumerWidget {
     return MaterialApp.router(
       title: 'Zero',
       debugShowCheckedModeBanner: false,
-      theme: ZeroThemeCatalog.fromId(preset).buildTheme(),
+      theme: _themeByPreset.putIfAbsent(
+        preset,
+        () => ZeroThemeCatalog.fromId(preset).buildTheme(),
+      ),
       themeAnimationDuration: const Duration(milliseconds: 240),
       themeAnimationCurve: Curves.easeOutCubic,
       routerConfig: ref.watch(routerProvider),

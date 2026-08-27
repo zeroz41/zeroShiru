@@ -20,7 +20,9 @@
 library;
 
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import '../../domain/models/media.dart';
 import '../../domain/ports/query_cache.dart';
@@ -270,8 +272,7 @@ class AnilistClient {
 
     Map<String, dynamic>? json;
     try {
-      json =
-          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      json = await _decodeJsonObject(response.bodyBytes);
     } on FormatException {
       json = null;
     }
@@ -285,6 +286,20 @@ class AnilistClient {
       throw AnilistException(response.status, message);
     }
     return json ?? const {};
+  }
+
+  /// A full user list response runs to multiple megabytes; decoding it on the
+  /// UI isolate blocks first paint. `Isolate.run` returns through
+  /// `Isolate.exit`, so the decoded tree is transferred back without a copy.
+  static Future<Map<String, dynamic>> _decodeJsonObject(
+    Uint8List bytes,
+  ) async {
+    if (bytes.length < 64 * 1024) {
+      return jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    }
+    return Isolate.run(
+      () => jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>,
+    );
   }
 
   /// Cached read helper. Shared metadata stores serve stale immediately and

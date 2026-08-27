@@ -51,13 +51,21 @@ String? explicitReleaseLanguageLabel(TorrentResult result) {
   ].join(' · ');
 }
 
+final _dualAudioPattern = RegExp(r'\b(dual|multi)[ ._-]*audio\b');
+final _englishAudioPattern = RegExp(r'\b(eng(?:lish)?[ ._-]*audio|dub(?:bed)?)\b');
+final _japaneseAudioPattern = RegExp(r'\b(jpn|japanese|ja)[ ._-]*(audio|dub)\b');
+final _multiSubsPattern = RegExp(r'\bmulti[ ._-]*(sub|subtitle)s?\b');
+final _rawSubsPattern = RegExp(r'\b(raw|no[ ._-]*subs?)\b');
+final _englishSubsPattern =
+    RegExp(r'\b(eng(?:lish)?[ ._-]*(sub|subtitle)s?|subbed)\b');
+final _japaneseSubsPattern =
+    RegExp(r'\b(jpn|japanese|ja)[ ._-]*(sub|subtitle)s?\b');
+
 int _audioTitleScore(String title, String preferred) {
   final lower = title.toLowerCase();
-  final dual = RegExp(r'\b(dual|multi)[ ._-]*audio\b').hasMatch(lower);
-  final english = RegExp(r'\b(eng(?:lish)?[ ._-]*audio|dub(?:bed)?)\b')
-      .hasMatch(lower);
-  final japanese = RegExp(r'\b(jpn|japanese|ja)[ ._-]*(audio|dub)\b')
-      .hasMatch(lower);
+  final dual = _dualAudioPattern.hasMatch(lower);
+  final english = _englishAudioPattern.hasMatch(lower);
+  final japanese = _japaneseAudioPattern.hasMatch(lower);
   return switch (preferred) {
     'en' => dual || english ? 42 : -8,
     'ja' =>
@@ -72,12 +80,10 @@ int _audioTitleScore(String title, String preferred) {
 
 int _subtitleTitleScore(String title, String preferred) {
   final lower = title.toLowerCase();
-  final multi = RegExp(r'\bmulti[ ._-]*(sub|subtitle)s?\b').hasMatch(lower);
-  final raw = RegExp(r'\b(raw|no[ ._-]*subs?)\b').hasMatch(lower);
-  final english = RegExp(r'\b(eng(?:lish)?[ ._-]*(sub|subtitle)s?|subbed)\b')
-      .hasMatch(lower);
-  final japanese = RegExp(r'\b(jpn|japanese|ja)[ ._-]*(sub|subtitle)s?\b')
-      .hasMatch(lower);
+  final multi = _multiSubsPattern.hasMatch(lower);
+  final raw = _rawSubsPattern.hasMatch(lower);
+  final english = _englishSubsPattern.hasMatch(lower);
+  final japanese = _japaneseSubsPattern.hasMatch(lower);
   return switch (preferred) {
     'en' =>
       multi || english

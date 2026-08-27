@@ -35,12 +35,16 @@ class MediaKitEngine implements MediaEngine {
     _subscriptions.addAll([
       stream.playing.listen(_onPlaying),
       stream.completed.listen(_onCompleted),
-      stream.position.listen((_) => _emit()),
+      // Position and buffer tick at video frame rate; a snapshot per tick
+      // rebuilds every state listener at that rate. Coalescing keeps the UI
+      // feed at a few Hz while other events still emit immediately (and any
+      // immediate emit carries the freshest position anyway).
+      stream.position.listen((_) => _emitCoalesced()),
       stream.duration.listen((_) => _emit()),
       stream.volume.listen((_) => _emit()),
       stream.rate.listen((_) => _emit()),
       stream.buffering.listen((_) => _emit()),
-      stream.buffer.listen((_) => _emit()),
+      stream.buffer.listen((_) => _emitCoalesced()),
       stream.tracks.listen(_onTracks),
       stream.track.listen((_) => _emit()),
       stream.width.listen((_) => _emit()),
@@ -66,6 +70,7 @@ class MediaKitEngine implements MediaEngine {
   Duration _secondarySubtitleDelay = Duration.zero;
   double _subtitleScale = 1;
   Timer? _metricTimer;
+  Timer? _emitCoalesce;
   var _generation = 0;
   var _seekRequest = 0;
   var _primaryCueRequest = 0;
@@ -859,7 +864,17 @@ class MediaKitEngine implements MediaEngine {
     }
   }
 
+  void _emitCoalesced() {
+    if (_disposed || _emitCoalesce != null) return;
+    _emitCoalesce = Timer(const Duration(milliseconds: 200), () {
+      _emitCoalesce = null;
+      _emit();
+    });
+  }
+
   void _emit() {
+    _emitCoalesce?.cancel();
+    _emitCoalesce = null;
     if (_disposed || _states.isClosed) return;
     _states.add(
       mapMediaKitState(
@@ -970,6 +985,8 @@ class MediaKitEngine implements MediaEngine {
     _generation++;
     _seekRequest++;
     _metricTimer?.cancel();
+    _emitCoalesce?.cancel();
+    _emitCoalesce = null;
     PlaybackFailure? failure;
     try {
       await Future.wait([
@@ -1312,10 +1329,12 @@ T? preferredKitTrack<T>(
 bool hasExplicitTrackLanguagePreference(String? language) =>
     normalizeTrackLanguage(language) != null;
 
+final _titleWordPattern = RegExp(r'[a-z]{2,}');
+
 String? inferredTrackLanguage(String? language, String? title) {
   final tagged = normalizeTrackLanguage(language);
   if (tagged != null) return tagged;
-  final words = RegExp(r'[a-z]{2,}')
+  final words = _titleWordPattern
       .allMatches(title?.toLowerCase() ?? '')
       .map((match) => match.group(0)!)
       .toSet();
@@ -1390,6 +1409,13 @@ String? inferredTrackLanguage(String? language, String? title) {
   return null;
 }
 
+final _fullSubtitlePattern = RegExp(r'\b(full|dialogue|dialog|complete)\b');
+final _signsSubtitlePattern = RegExp(r'\b(signs?|songs?|forced)\b');
+final _mainAudioPattern = RegExp(r'\b(main|original)\b');
+final _commentaryAudioPattern = RegExp(
+  r'\b(commentary|descriptive|description)\b',
+);
+
 int automaticTrackScore({
   String? title,
   bool isDefault = false,
@@ -1399,24 +1425,27 @@ int automaticTrackScore({
   final name = title?.toLowerCase() ?? '';
   var score = isDefault ? 25 : 0;
   if (subtitle) {
-    if (RegExp(r'\b(full|dialogue|dialog|complete)\b').hasMatch(name)) {
+    if (_fullSubtitlePattern.hasMatch(name)) {
       score += 60;
     }
-    if (isForced || RegExp(r'\b(signs?|songs?|forced)\b').hasMatch(name)) {
+    if (isForced || _signsSubtitlePattern.hasMatch(name)) {
       score -= 100;
     }
   } else {
-    if (RegExp(r'\b(main|original)\b').hasMatch(name)) score += 20;
-    if (RegExp(r'\b(commentary|descriptive|description)\b').hasMatch(name)) {
+    if (_mainAudioPattern.hasMatch(name)) score += 20;
+    if (_commentaryAudioPattern.hasMatch(name)) {
       score -= 100;
     }
   }
   return score;
 }
 
+final _assOverridePattern = RegExp(r'\{\\[^}]*\}');
+final _markupTagPattern = RegExp(r'<[^>]+>');
+
 String plainSubtitleText(String raw) => raw
-    .replaceAll(RegExp(r'\{\\[^}]*\}'), '')
-    .replaceAll(RegExp(r'<[^>]+>'), '')
+    .replaceAll(_assOverridePattern, '')
+    .replaceAll(_markupTagPattern, '')
     .replaceAll(r'\N', '\n')
     .replaceAll(r'\n', '\n')
     .trim();

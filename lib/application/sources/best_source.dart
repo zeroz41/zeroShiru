@@ -23,33 +23,35 @@ List<TorrentResult> rankBestSources(
   required Settings preferences,
   required Availability Function(TorrentResult result) availability,
 }) {
-  final indexed = candidates.indexed.toList(growable: false);
-  indexed.sort((left, right) {
-    final a = left.$2;
-    final b = right.$2;
-
-    var order = _availabilityRank(availability(a))
-        .compareTo(_availabilityRank(availability(b)));
-    if (order != 0) return order;
-
-    order =
-        releaseLanguagePreferenceScore(
-          b,
+  // The comparator runs O(n log n) times over lists that can hold hundreds of
+  // results, and the language/quality scores lowercase the title and run
+  // regexes. Compute each candidate's keys once up front.
+  final keyed = [
+    for (final (index, result) in candidates.indexed)
+      (
+        index: index,
+        result: result,
+        availability: _availabilityRank(availability(result)),
+        language: releaseLanguagePreferenceScore(
+          result,
           audioLanguage: preferences.audioLanguage,
           subtitleLanguage: preferences.releaseSubtitleLanguage,
-        ).compareTo(
-          releaseLanguagePreferenceScore(
-            a,
-            audioLanguage: preferences.audioLanguage,
-            subtitleLanguage: preferences.releaseSubtitleLanguage,
-          ),
-        );
+        ),
+        qualityDistance: _qualityDistance(result.title, preferences.rssQuality),
+        quality: sourceQuality(result.title),
+      ),
+  ];
+  keyed.sort((left, right) {
+    final a = left.result;
+    final b = right.result;
+
+    var order = left.availability.compareTo(right.availability);
     if (order != 0) return order;
 
-    order = _qualityDistance(
-      a.title,
-      preferences.rssQuality,
-    ).compareTo(_qualityDistance(b.title, preferences.rssQuality));
+    order = right.language.compareTo(left.language);
+    if (order != 0) return order;
+
+    order = left.qualityDistance.compareTo(right.qualityDistance);
     if (order != 0) return order;
 
     order = _accuracyRank(a).compareTo(_accuracyRank(b));
@@ -60,7 +62,7 @@ List<TorrentResult> rankBestSources(
 
     order = switch (preferences.torrentSort) {
       'size' => (b.size ?? 0).compareTo(a.size ?? 0),
-      'quality' => sourceQuality(b.title).compareTo(sourceQuality(a.title)),
+      'quality' => right.quality.compareTo(left.quality),
       _ => (b.seeders ?? 0).compareTo(a.seeders ?? 0),
     };
     if (order != 0) return order;
@@ -91,9 +93,9 @@ List<TorrentResult> rankBestSources(
     if (order != 0) return order;
 
     // Preserve provider order when every meaningful signal ties.
-    return left.$1.compareTo(right.$1);
+    return left.index.compareTo(right.index);
   });
-  return [for (final item in indexed) item.$2];
+  return [for (final item in keyed) item.result];
 }
 
 int _swarmRatio(TorrentResult result) {
@@ -103,15 +105,13 @@ int _swarmRatio(TorrentResult result) {
   return peers <= 0 ? 0 : (seeders * 1000 ~/ peers);
 }
 
+final _qualityPattern = RegExp(
+  r'(2160|1440|1080|720|540|480)p?',
+  caseSensitive: false,
+);
+
 int sourceQuality(String title) =>
-    int.tryParse(
-      RegExp(
-            r'(2160|1440|1080|720|540|480)p?',
-            caseSensitive: false,
-          ).firstMatch(title)?.group(1) ??
-          '',
-    ) ??
-    0;
+    int.tryParse(_qualityPattern.firstMatch(title)?.group(1) ?? '') ?? 0;
 
 int _availabilityRank(Availability availability) => switch (availability) {
   Availability.cached => 0,

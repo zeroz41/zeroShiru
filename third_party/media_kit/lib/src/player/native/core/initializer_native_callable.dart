@@ -71,6 +71,11 @@ class InitializerNativeCallable {
   void _callback(Pointer<generated.mpv_handle> ctx) {
     _locks[ctx.address]?.synchronized(() async {
       while (true) {
+        // This loop suspends while a handler runs, and dispose() can execute
+        // during that suspension. Once the lock entry is gone the handle may
+        // be terminating (or freed) on another thread; it must not be waited
+        // on again.
+        if (!_locks.containsKey(ctx.address)) return;
         final event = mpv.mpv_wait_event(ctx, 0);
         if (event == nullptr) return;
         if (event.ref.event_id == generated.mpv_event_id.MPV_EVENT_NONE) return;

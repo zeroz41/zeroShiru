@@ -1,8 +1,8 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
+import '../../app/widgets/network_image.dart';
 import '../../app/widgets/poster_card.dart';
 import '../../domain/models/media.dart';
 
@@ -23,7 +23,9 @@ class MediaPoster extends StatelessWidget {
     final cover = media.coverImage;
     return PosterCard(
       title: media.title.display,
-      image: cover == null ? null : CachedNetworkImageProvider(cover),
+      image: cover == null
+          ? null
+          : sizedNetworkImage(context, cover, logicalWidth: width),
       bloomColor: parseMediaColor(media.coverColor),
       airing: media.status == MediaStatus.releasing,
       progress: _progress(media),
