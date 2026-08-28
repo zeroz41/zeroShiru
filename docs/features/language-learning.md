@@ -135,7 +135,13 @@ collapsed **Advanced** section. Persistent settings also control:
 - automatic retrieval of a missing Japanese episode track;
 - Japanese surface text, furigana, romaji, and translated line visibility;
 - pause on the first highlighted, focused, or tapped lookup in each cue; and
-- one subtitle text-size preference shared live with normal text subtitles.
+- one subtitle text-size preference, available in both **Settings → Subtitles**
+  and the in-player subtitle panel, shared live with normal text subtitles.
+
+Styled ASS tracks retain their authored typeface and relative sizing, so an
+unusually designed release can still differ slightly. Zero calibrates the
+normal libass baseline against Learning mode and applies every size choice to
+both renderers together.
 
 Before a manual track is chosen, playback infers missing language tags from
 track titles and prefers main/full-dialogue tracks over commentary, forced,

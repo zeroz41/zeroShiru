@@ -3,6 +3,16 @@ import 'debrid_route.dart';
 
 const Object _unsetSetting = Object();
 
+/// The complete set of persisted subtitle-size choices. Settings, the player
+/// panel, and tolerant decoding all consume this map so one surface cannot
+/// offer a value another surface rejects or labels differently.
+final subtitleTextScaleOptions = Map<double, String>.unmodifiable({
+  0.85: 'Compact',
+  1.0: 'Comfortable',
+  1.2: 'Large',
+  1.4: 'Extra large',
+});
+
 /// Stable identifiers for the built-in visual themes.
 enum AppThemePreset {
   standard,
@@ -96,8 +106,9 @@ class Settings {
   final String playerSubtitleMode;
 
   /// One visual scale for every text-subtitle surface. Native libass and the
-  /// interactive Learning overlay both consume this value so switching modes
-  /// never silently changes the user's preferred reading size.
+  /// interactive Learning overlay both consume this preference, with a small
+  /// renderer-specific baseline calibration, so switching modes keeps the
+  /// user's preferred apparent reading size.
   final double subtitleTextScale;
 
   /// The subtitle language that should influence release ordering. Learning

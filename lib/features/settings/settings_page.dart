@@ -39,6 +39,7 @@ class SettingsPage extends ConsumerWidget {
 enum _SettingsSection {
   interface,
   player,
+  subtitles,
   learning,
   sources,
   extensions,
@@ -86,6 +87,7 @@ extension on _SettingsSection {
   String get label => switch (this) {
     _SettingsSection.interface => 'Interface',
     _SettingsSection.player => 'Player',
+    _SettingsSection.subtitles => 'Subtitles',
     _SettingsSection.learning => 'Learning',
     _SettingsSection.sources => 'Sources',
     _SettingsSection.extensions => 'Extensions',
@@ -95,7 +97,8 @@ extension on _SettingsSection {
 
   String get description => switch (this) {
     _SettingsSection.interface => 'Titles, posters, and language',
-    _SettingsSection.player => 'Playback behavior and tracks',
+    _SettingsSection.player => 'Playback behavior',
+    _SettingsSection.subtitles => 'Language and text appearance',
     _SettingsSection.learning => 'Interactive Japanese subtitles',
     _SettingsSection.sources => 'Quality and release ranking',
     _SettingsSection.extensions => 'Installed source catalogs',
@@ -106,6 +109,7 @@ extension on _SettingsSection {
   IconData get icon => switch (this) {
     _SettingsSection.interface => Icons.palette_outlined,
     _SettingsSection.player => Icons.play_circle_outline_rounded,
+    _SettingsSection.subtitles => Icons.closed_caption_outlined,
     _SettingsSection.learning => Icons.school_outlined,
     _SettingsSection.sources => Icons.travel_explore_rounded,
     _SettingsSection.extensions => Icons.extension_outlined,
@@ -200,17 +204,29 @@ class _SettingsBodyState extends ConsumerState<_SettingsBody> {
               ),
             ),
           ),
+        ],
+      ),
+      _SettingsCard(
+        title: 'Subtitles',
+        icon: Icons.closed_caption_outlined,
+        subtitle: 'Styled and Learning use one reading-size preference. You can also change it from the subtitle panel while a video is playing.',
+        children: [
+          _DropdownRow<String>(
+            label: 'Preferred subtitle language',
+            description: 'Ranks releases with these subtitles first and selects the matching embedded track.',
+            value: settings.subtitleLanguage,
+            items: _subtitleLanguageOptions,
+            onChanged: (value) => unawaited(
+              controller.persist(
+                (current) => current.copyWith(subtitleLanguage: value),
+              ),
+            ),
+          ),
           _DropdownRow<double>(
             label: 'Subtitle text size',
-            description:
-                'Applies immediately to Styled and Learning text subtitles.',
+            description: 'Changes Styled and Learning text live. Authored ASS typography stays intact, so decorative tracks may vary slightly.',
             value: settings.subtitleTextScale,
-            items: {
-              0.85: 'Compact',
-              1.0: 'Comfortable',
-              1.2: 'Large',
-              1.4: 'Extra large',
-            },
+            items: subtitleTextScaleOptions,
             onChanged: (value) => unawaited(
               controller.persist(
                 (current) => current.copyWith(subtitleTextScale: value),
@@ -232,17 +248,6 @@ class _SettingsBodyState extends ConsumerState<_SettingsBody> {
             onChanged: (value) => unawaited(
               controller.persist(
                 (current) => current.copyWith(audioLanguage: value),
-              ),
-            ),
-          ),
-          _DropdownRow<String>(
-            label: 'Preferred subtitle language',
-            description: 'Ranks releases with these subtitles first and selects the matching embedded track.',
-            value: settings.subtitleLanguage,
-            items: _subtitleLanguageOptions,
-            onChanged: (value) => unawaited(
-              controller.persist(
-                (current) => current.copyWith(subtitleLanguage: value),
               ),
             ),
           ),

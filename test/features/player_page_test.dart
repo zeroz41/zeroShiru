@@ -261,7 +261,71 @@ void main() {
     await tester.pump();
 
     expect(engine.subtitleScales, isNotEmpty);
-    expect(engine.subtitleScales.last, 1.4);
+    expect(engine.subtitleScales.last, closeTo(1.26, 0.001));
+  });
+
+  testWidgets('subtitle panel persists one live text size for both modes', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1000, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final engine = _FakeEngine();
+    const source = PlayerFile(
+      name: 'Episode 03.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      _app(const PlayerPage(initialSource: source), _FakeBackend(engine)),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Subtitles'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Shared by Styled and Learning subtitles.'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('subtitle-text-scale-0.85')));
+    await tester.pump();
+    await tester.pump();
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(PlayerPage)),
+    );
+    expect(
+      (await container.read(settingsControllerProvider.future))
+          .subtitleTextScale,
+      0.85,
+    );
+    expect(engine.subtitleScales.last, closeTo(0.765, 0.001));
+  });
+
+  testWidgets('system text scaling keeps Styled in step with Learning', (
+    tester,
+  ) async {
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final engine = _FakeEngine();
+    const source = PlayerFile(
+      name: 'Episode 03.mkv',
+      url: 'https://cdn.example/video.mkv',
+    );
+    await tester.pumpWidget(
+      _app(const PlayerPage(initialSource: source), _FakeBackend(engine)),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(engine.subtitleScales.last, closeTo(0.9, 0.001));
+    tester.platformDispatcher.textScaleFactorTestValue = 1.25;
+    await tester.pump();
+    await tester.pump();
+
+    // Learning Text widgets receive Flutter's accessibility scaling. The
+    // native libass renderer follows a live system-scale change too.
+    expect(engine.subtitleScales.last, closeTo(1.125, 0.001));
   });
 
   testWidgets('a new player clears Learning rendering retained by the engine', (

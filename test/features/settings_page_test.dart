@@ -45,6 +45,7 @@ void main() {
 
       expect(find.text('Interface'), findsWidgets);
       expect(find.text('Player'), findsOneWidget);
+      expect(find.text('Subtitles'), findsOneWidget);
       expect(find.text('Learning'), findsOneWidget);
       expect(find.text('Sources'), findsOneWidget);
       expect(find.text('Extensions'), findsOneWidget);
@@ -64,13 +65,23 @@ void main() {
       expect(repository.current.themePreset, AppThemePreset.midnight);
       await tester.tap(find.byKey(const ValueKey('settings-section-player')));
       await tester.pumpAndSettle();
+      expect(find.text('Subtitle text size'), findsNothing);
+      await tester.tap(
+        find.byKey(const ValueKey('settings-section-subtitles')),
+      );
+      await tester.pumpAndSettle();
       expect(find.text('Subtitle text size'), findsOneWidget);
+      expect(find.text('Preferred subtitle language'), findsOneWidget);
       expect(find.text('Preferred audio language'), findsNothing);
-      expect(find.text('Preferred subtitle language'), findsNothing);
+      await tester.tap(find.text('Comfortable'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Compact').last);
+      await tester.pumpAndSettle();
+      expect(repository.current.subtitleTextScale, 0.85);
       await tester.tap(find.byKey(const ValueKey('settings-section-sources')));
       await tester.pumpAndSettle();
       expect(find.text('Preferred audio language'), findsOneWidget);
-      expect(find.text('Preferred subtitle language'), findsOneWidget);
+      expect(find.text('Preferred subtitle language'), findsNothing);
       await tester.tap(find.text('1080p'));
       await tester.pumpAndSettle();
       expect(find.text('480p'), findsOneWidget);

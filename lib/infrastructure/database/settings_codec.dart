@@ -114,7 +114,7 @@ Settings settingsFromJson(Map<String, dynamic> json) {
     subtitleTextScale: _choiceDouble(
       json['subtitleTextScale'] ?? json['learningSubtitleScale'],
       defaults.subtitleTextScale,
-      const [0.85, 1.0, 1.2, 1.4],
+      subtitleTextScaleOptions.keys,
     ),
     learningTranslationLanguage: _choiceString(
       json['learningTranslationLanguage'],
@@ -214,7 +214,7 @@ int _int(dynamic value, int fallback) =>
     value is num ? value.toInt() : fallback;
 double _double(dynamic value, double fallback) =>
     value is num ? value.toDouble() : fallback;
-double _choiceDouble(dynamic value, double fallback, List<double> choices) {
+double _choiceDouble(dynamic value, double fallback, Iterable<double> choices) {
   if (value is! num) return fallback;
   final decoded = value.toDouble();
   return choices.contains(decoded) ? decoded : fallback;

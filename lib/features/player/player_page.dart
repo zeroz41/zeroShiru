@@ -83,8 +83,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   bool _playerPreferencesLoaded = false;
   String? _playbackTuningIdentity;
   PlaybackTuning _playbackTuning = const PlaybackTuning();
-  double? _appliedSubtitleScale;
-  double? _pendingSubtitleScale;
+  double? _appliedStyledSubtitleScale;
+  double? _pendingStyledSubtitleScale;
   int _activePlaybackGeneration = 0;
   BoxFit _fit = BoxFit.contain;
   double _lastAudibleVolume = 1;
@@ -374,6 +374,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   Future<void> _open(PlayerFile source) async {
+    final textScaler = MediaQuery.textScalerOf(context);
     _activePlaybackGeneration = 0;
     final settings = await ref.read(settingsControllerProvider.future);
     final tuningIdentity = playbackTuningIdentity(source);
@@ -419,10 +420,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         );
       }
       try {
-        await _engine.setSubtitleScale(settings.subtitleTextScale);
-        _appliedSubtitleScale = settings.subtitleTextScale;
-        if (_pendingSubtitleScale == settings.subtitleTextScale) {
-          _pendingSubtitleScale = null;
+        final styledScale = _styledSubtitleScale(
+          settings.subtitleTextScale,
+          textScaler,
+        );
+        await _engine.setSubtitleScale(styledScale);
+        _appliedStyledSubtitleScale = styledScale;
+        if (_pendingStyledSubtitleScale == styledScale) {
+          _pendingStyledSubtitleScale = null;
         }
       } on PlaybackFailure {
         // A reduced backend can still play even when it cannot resize text.
@@ -887,23 +892,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   Future<void> _persistSettings(Settings Function(Settings) update) =>
       ref.read(settingsControllerProvider.notifier).persist(update);
 
-  void _syncSubtitleScale(double scale) {
-    if (_appliedSubtitleScale == scale || _pendingSubtitleScale == scale) {
+  void _syncStyledSubtitleScale(double scale) {
+    if (_appliedStyledSubtitleScale == scale ||
+        _pendingStyledSubtitleScale == scale) {
       return;
     }
-    _pendingSubtitleScale = scale;
+    _pendingStyledSubtitleScale = scale;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _pendingSubtitleScale != scale) return;
+      if (!mounted || _pendingStyledSubtitleScale != scale) return;
       unawaited(() async {
         try {
           await _engine.setSubtitleScale(scale);
-          if (mounted) _appliedSubtitleScale = scale;
+          if (mounted) _appliedStyledSubtitleScale = scale;
         } on PlaybackFailure {
           // Bitmap subtitles and a reduced platform backend may not expose a
           // live text scale. The persisted preference still applies when a
           // capable text renderer becomes active.
         } finally {
-          if (_pendingSubtitleScale == scale) _pendingSubtitleScale = null;
+          if (_pendingStyledSubtitleScale == scale) {
+            _pendingStyledSubtitleScale = null;
+          }
         }
       }());
     });
@@ -1476,7 +1484,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 _latest = snapshot;
                 if (snapshot.phase != PlaybackPhase.idle &&
                     snapshot.phase != PlaybackPhase.opening) {
-                  _syncSubtitleScale(learningSettings.subtitleTextScale);
+                  _syncStyledSubtitleScale(
+                    _styledSubtitleScale(
+                      learningSettings.subtitleTextScale,
+                      MediaQuery.textScalerOf(context),
+                    ),
+                  );
                 }
                 _maybePrepareLearningTracks(snapshot, learningSettings);
                 return _PlayerStage(
@@ -2576,6 +2589,19 @@ const _maximumUnknownPairingCueDuration = Duration(seconds: 6);
 const _learningCueAlignmentTolerance = Duration(milliseconds: 750);
 const _maximumRememberedLearningCues = 512;
 const _learningSubtitleFontSize = 48.0;
+
+// Authored ASS text is visually larger than Flutter text at the same nominal
+// scale on libass. Keep one user-facing preference, but calibrate the native
+// renderer so switching between Styled and Learning does not produce a size
+// jump for a typical dialogue track. Source-authored ASS sizes can still vary.
+const _styledSubtitleScaleFactor = 0.9;
+
+double _styledSubtitleScale(double textScale, TextScaler textScaler) {
+  final learningFontSize = _learningSubtitleFontSize * textScale;
+  final accessibilityScale =
+      textScaler.scale(learningFontSize) / learningFontSize;
+  return textScale * _styledSubtitleScaleFactor * accessibilityScale;
+}
 
 /// The translated line is deliberately smaller than the Japanese it supports.
 const _learningTranslationFontSize = 30.0;
@@ -3725,6 +3751,7 @@ class _SubtitlePanelState extends ConsumerState<_SubtitlePanel> {
   late bool _showKana = widget.learningSettings.learningShowFurigana;
   late bool _showRomaji = widget.learningSettings.learningShowRomaji;
   late bool _showTranslation = widget.learningSettings.learningShowTranslation;
+  late double _subtitleTextScale = widget.learningSettings.subtitleTextScale;
   String? _learningWarning;
   bool _learningMessagePositive = false;
   bool _findingJapanese = false;
@@ -3876,6 +3903,15 @@ class _SubtitlePanelState extends ConsumerState<_SubtitlePanel> {
     );
   }
 
+  void _setSubtitleTextScale(double scale) {
+    setState(() => _subtitleTextScale = scale);
+    unawaited(
+      ref
+          .read(settingsControllerProvider.notifier)
+          .persist((current) => current.copyWith(subtitleTextScale: scale)),
+    );
+  }
+
   Future<void> _setRendering(SubtitleRendering mode) async {
     final request = ++_learningRequest;
     setState(() {
@@ -3994,6 +4030,27 @@ class _SubtitlePanelState extends ConsumerState<_SubtitlePanel> {
                 selected: {_rendering},
                 onSelectionChanged: (selection) =>
                     _setRendering(selection.single),
+              ),
+              const SizedBox(height: ZeroTokens.space4),
+              Text('Text size', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: ZeroTokens.space1),
+              Text(
+                'Shared by Styled and Learning subtitles.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: ZeroTokens.space2),
+              Wrap(
+                spacing: ZeroTokens.space2,
+                runSpacing: ZeroTokens.space2,
+                children: [
+                  for (final option in subtitleTextScaleOptions.entries)
+                    ChoiceChip(
+                      key: ValueKey('subtitle-text-scale-${option.key}'),
+                      label: Text(option.value),
+                      selected: _subtitleTextScale == option.key,
+                      onSelected: (_) => _setSubtitleTextScale(option.key),
+                    ),
+                ],
               ),
               if (_rendering == SubtitleRendering.learning) ...[
                 const SizedBox(height: ZeroTokens.space4),
