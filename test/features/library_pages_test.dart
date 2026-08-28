@@ -127,9 +127,10 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final catalog = _FakeCatalog();
-    final show = media(9, 'Half Watched').withListEntry(
-      const ListEntry(status: ListStatus.current, progress: 1),
-    );
+    final show = media(
+      9,
+      'Half Watched',
+    ).withListEntry(const ListEntry(status: ListStatus.current, progress: 1));
     final personalized = PersonalizedHomeFeed(
       continueWatching: [
         ContinueWatchingItem(media: show, episode: 2, resumeProgress: 0.35),
@@ -141,7 +142,7 @@ void main() {
       ProviderScope(
         overrides: [
           catalogRepositoryProvider.overrideWithValue(catalog),
-          personalizedHomeFeedProvider.overrideWith((ref) async => personalized),
+          personalizedHomeFeedProvider.overrideWith((ref) => personalized),
         ],
         child: MaterialApp(
           theme: buildZeroTheme(),

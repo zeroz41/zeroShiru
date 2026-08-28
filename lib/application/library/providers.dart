@@ -108,13 +108,62 @@ final homeFeedProvider = FutureProvider<HomeFeed>((ref) {
   return loadHomeFeed(ref.watch(catalogRepositoryProvider));
 });
 
-final personalizedHomeFeedProvider = FutureProvider<PersonalizedHomeFeed>((
-  ref,
-) async {
-  final tracking = ref.watch(trackingRepositoryProvider);
-  final home = await ref.watch(homeFeedProvider.future);
-  final history = await ref.watch(watchHistoryRecentProvider.future);
-  return loadPersonalizedHomeFeed(tracking, home, localHistory: history);
+/// Remote enrichment is deliberately separate from personalization. Home can
+/// render local history immediately even while a tracker request is slow or
+/// offline; this provider updates the derived feed whenever it eventually
+/// settles.
+final trackerWatchingProvider = FutureProvider<List<Media>>((ref) async {
+  try {
+    return await ref
+        .watch(trackingRepositoryProvider)
+        .userList(ListStatus.current);
+  } catch (_) {
+    return const [];
+  }
+});
+
+/// One cached, non-blocking candidate page for the strongest established
+/// genre. Family state means switching profiles/genres gets an independent
+/// SWR cache key in the catalogue adapter.
+final personalizedGenreCandidatesProvider =
+    FutureProvider.family<List<Media>, String>((ref, genre) {
+      return loadPersonalizedGenreCandidates(
+        ref.watch(catalogRepositoryProvider),
+        genre,
+      );
+    });
+
+/// Synchronous derived state: cached Home and local history appear first,
+/// then tracker and genre-candidate providers transparently enrich the row.
+final personalizedHomeFeedProvider = Provider<PersonalizedHomeFeed>((ref) {
+  final home = ref.watch(homeFeedProvider).value;
+  if (home == null) return const PersonalizedHomeFeed();
+  final history =
+      ref.watch(watchHistoryRecentProvider).value ??
+      const <WatchHistoryEntry>[];
+  final watching = ref.watch(trackerWatchingProvider).value ?? const <Media>[];
+  final base = buildPersonalizedHomeFeed(
+    home,
+    watching: watching,
+    localHistory: history,
+  );
+  if (base.favoriteGenres.isEmpty) return base;
+
+  final expanded = ref
+      .watch(personalizedGenreCandidatesProvider(base.favoriteGenres.first))
+      .value;
+  if (expanded == null || expanded.isEmpty) return base;
+  return buildPersonalizedHomeFeed(
+    HomeFeed(
+      hero: home.hero,
+      trending: home.trending,
+      newReleases: home.newReleases,
+      popular: [...home.popular, ...expanded],
+      genreSections: home.genreSections,
+    ),
+    watching: watching,
+    localHistory: history,
+  );
 });
 
 final trackingAccountsProvider = FutureProvider<List<TrackingAccount>>((ref) {

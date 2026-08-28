@@ -501,6 +501,7 @@ class _ProfilePanel extends ConsumerWidget {
     );
     if (connected == null || !context.mounted) return;
     ref.invalidate(trackingAccountsProvider);
+    ref.invalidate(trackerWatchingProvider);
     ref.invalidate(personalizedHomeFeedProvider);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('AniList connected as ${connected.displayName}')),
@@ -539,6 +540,7 @@ class _ProfilePanel extends ConsumerWidget {
     if (confirmed != true || !context.mounted) return;
     await ref.read(trackingRepositoryProvider).disconnect(account.service);
     ref.invalidate(trackingAccountsProvider);
+    ref.invalidate(trackerWatchingProvider);
     ref.invalidate(personalizedHomeFeedProvider);
   }
 }

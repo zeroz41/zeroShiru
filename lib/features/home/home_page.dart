@@ -20,7 +20,7 @@ class HomePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final feed = ref.watch(homeFeedProvider);
-    final personalized = ref.watch(personalizedHomeFeedProvider).value;
+    final personalized = ref.watch(personalizedHomeFeedProvider);
     return feed.when(
       loading: () => const _HomeLoading(),
       error: (error, stack) =>
@@ -56,9 +56,9 @@ class HomePage extends ConsumerWidget {
                   // A sparse Continue Watching row directly under the hero
                   // reads as dead space, so the always-full For You rail
                   // leads and resume slots in after it.
-                  if (personalized?.recommendations.isNotEmpty ?? false)
+                  if (personalized.recommendations.isNotEmpty)
                     _MediaRail(
-                      title: personalized!.favoriteGenres.isEmpty
+                      title: personalized.favoriteGenres.isEmpty
                           ? 'For you'
                           : 'For you · ${personalized.favoriteGenres.join(' & ')}',
                       media: personalized.recommendations,
@@ -70,8 +70,8 @@ class HomePage extends ConsumerWidget {
                               sort: 'score',
                             ),
                     ),
-                  if (personalized?.continueWatching.isNotEmpty ?? false)
-                    _ContinueWatchingRail(items: personalized!.continueWatching),
+                  if (personalized.continueWatching.isNotEmpty)
+                    _ContinueWatchingRail(items: personalized.continueWatching),
                   if (data.trending.isNotEmpty)
                     _MediaRail(
                       title: 'Trending this season',

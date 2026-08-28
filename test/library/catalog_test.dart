@@ -96,6 +96,23 @@ void main() {
     },
   );
 
+  test('personalized expansion asks for one scored genre page', () async {
+    final catalog = _RecordingCatalog();
+
+    final media = await loadPersonalizedGenreCandidates(
+      catalog,
+      'Slice of Life',
+    );
+
+    expect(media, hasLength(1));
+    final query = catalog.queries.single;
+    expect(query.perPage, 25);
+    expect(query.sort, MediaSort.score);
+    expect(query.genres, ['Slice of Life']);
+    expect(query.excludedStatuses, [MediaStatus.notYetReleased]);
+    expect(query.includeAdult, isFalse);
+  });
+
   test('AniList catalogue translates the provider-neutral query', () async {
     final transport = FakeTransport();
     transport.onJson('graphql.anilist.co', {
@@ -184,7 +201,7 @@ void main() {
       expect(slot.media, watching);
       expect(slot.episode, 5);
       expect(slot.resumeProgress, isNull);
-      expect(feed.recommendations, [fantasy]);
+      expect(feed.recommendations, [fantasy, comedy]);
       expect(feed.favoriteGenres, ['Adventure', 'Fantasy']);
     },
   );
