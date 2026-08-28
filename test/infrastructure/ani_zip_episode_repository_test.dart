@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zero/domain/models/media.dart';
 import 'package:zero/infrastructure/tracking/ani_zip_episode_repository.dart';
 
+import '../tracking/fakes.dart';
 import 'test_support.dart';
 
 void main() {
@@ -65,4 +66,32 @@ void main() {
       expect(episodes[2].durationMinutes, 25);
     },
   );
+
+  test('a cached mapping serves a reopened show without the network', () async {
+    const payload = '''
+      {
+        "episodeCount": 1,
+        "episodes": {
+          "1": {"episodeNumber": 1, "title": {"en": "Only Step"}}
+        }
+      }
+    ''';
+    const media = Media(
+      id: 42,
+      title: MediaTitle(userPreferred: 'Test Show'),
+      episodes: 1,
+    );
+    final cache = InMemoryQueryCache();
+
+    final first = AniZipEpisodeRepository(
+      ScriptTransport([answer(200, payload)]),
+      cache: cache,
+    );
+    expect((await first.episodes(media)).single.title, 'Only Step');
+
+    // A fresh session with an empty transport must be answered by the cache;
+    // any request would throw inside ScriptTransport.
+    final second = AniZipEpisodeRepository(ScriptTransport([]), cache: cache);
+    expect((await second.episodes(media)).single.title, 'Only Step');
+  });
 }

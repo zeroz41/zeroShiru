@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/palette.dart';
@@ -16,6 +17,7 @@ import '../../domain/models/source_extension.dart';
 import '../../domain/ports/debrid_client.dart';
 import '../../domain/ports/language_learning.dart';
 import '../../domain/ports/learning_subtitles.dart';
+import '../../domain/ports/vocabulary.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -706,9 +708,7 @@ class _LearningSettingsCardState extends ConsumerState<_LearningSettingsCard> {
       _message = null;
     });
     try {
-      await ref
-          .read(languageLearningToolsProvider)
-          .installJapaneseEnglishDictionary();
+      await ref.read(languageLearningToolsProvider).installDictionary();
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -727,9 +727,7 @@ class _LearningSettingsCardState extends ConsumerState<_LearningSettingsCard> {
       _message = null;
     });
     try {
-      await ref
-          .read(languageLearningToolsProvider)
-          .removeJapaneseEnglishDictionary();
+      await ref.read(languageLearningToolsProvider).removeDictionary();
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -865,7 +863,182 @@ class _LearningSettingsCardState extends ConsumerState<_LearningSettingsCard> {
           onInstall: _install,
           onRemove: _remove,
         ),
+        const SizedBox(height: ZeroTokens.space3),
+        const _SavedWordsPanel(),
       ],
+    );
+  }
+}
+
+/// Words bookmarked from the player's definition popover: review, remove,
+/// export for Anki, or clear. Hidden entirely when no vocabulary store is
+/// installed.
+class _SavedWordsPanel extends ConsumerStatefulWidget {
+  const _SavedWordsPanel();
+
+  @override
+  ConsumerState<_SavedWordsPanel> createState() => _SavedWordsPanelState();
+}
+
+class _SavedWordsPanelState extends ConsumerState<_SavedWordsPanel> {
+  String? _message;
+
+  Future<void> _copyForAnki(List<SavedWord> words) async {
+    await Clipboard.setData(ClipboardData(text: savedWordsToAnkiTsv(words)));
+    if (mounted) {
+      setState(() {
+        _message =
+            '${words.length} word${words.length == 1 ? '' : 's'} copied as '
+            'tab-separated text. In Anki choose Import and paste it into a '
+            'text file.';
+      });
+    }
+  }
+
+  Future<void> _clear(VocabularyRepository vocabulary) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Clear saved words?'),
+        content: const Text('Every bookmarked word is removed permanently.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await vocabulary.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final vocabulary = ref.watch(vocabularyProvider);
+    if (vocabulary == null) return const SizedBox.shrink();
+    final words = ref.watch(savedWordsProvider).value ?? const <SavedWord>[];
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: context.zeroPalette.surfaceRaised,
+        border: Border.all(color: context.zeroPalette.border),
+        borderRadius: BorderRadius.circular(ZeroTokens.radiusPanel),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(ZeroTokens.space4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.bookmarks_outlined,
+                  color: context.zeroPalette.accentSoft,
+                ),
+                const SizedBox(width: ZeroTokens.space3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Saved words',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      Text(
+                        words.isEmpty
+                            ? 'Bookmark words from the Learning definition popover to collect them here.'
+                            : '${words.length} word${words.length == 1 ? '' : 's'} saved on this device.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                if (words.isNotEmpty) ...[
+                  TextButton.icon(
+                    key: const ValueKey('saved-words-copy'),
+                    onPressed: () => unawaited(_copyForAnki(words)),
+                    icon: const Icon(Icons.copy_all_rounded, size: 17),
+                    label: const Text('Copy for Anki'),
+                  ),
+                  IconButton(
+                    tooltip: 'Clear saved words',
+                    onPressed: () => unawaited(_clear(vocabulary)),
+                    icon: const Icon(Icons.delete_outline_rounded, size: 19),
+                  ),
+                ],
+              ],
+            ),
+            if (_message != null) ...[
+              const SizedBox(height: ZeroTokens.space2),
+              Text(_message!, style: Theme.of(context).textTheme.bodySmall),
+            ],
+            if (words.isNotEmpty) ...[
+              const SizedBox(height: ZeroTokens.space2),
+              Theme(
+                data: Theme.of(context)
+                    .copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  key: const ValueKey('saved-words-list'),
+                  tilePadding: EdgeInsets.zero,
+                  title: Text(
+                    'Review words',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  children: [
+                    for (final word in words.take(200))
+                      Padding(
+                        padding: const EdgeInsets.only(
+                          bottom: ZeroTokens.space2,
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    word.reading.isEmpty ||
+                                            word.reading == word.baseForm
+                                        ? word.baseForm
+                                        : '${word.baseForm} · ${word.reading}',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleSmall,
+                                  ),
+                                  if (word.glosses.isNotEmpty)
+                                    Text(
+                                      word.glosses.join('; '),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall,
+                                    ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Remove',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () => unawaited(
+                                vocabulary.remove(word.baseForm, word.reading),
+                              ),
+                              icon: const Icon(Icons.close_rounded, size: 16),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

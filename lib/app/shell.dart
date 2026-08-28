@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../application/library/providers.dart';
 import '../domain/models/tracking_account.dart';
@@ -437,7 +438,8 @@ class _ProfilePanel extends ConsumerWidget {
                     key: ValueKey('profile-empty'),
                     icon: Icons.person_add_alt_1_rounded,
                     message:
-                        'No AniList or MyAnimeList account is connected yet.',
+                        'Watch history stays on this device. Connect AniList '
+                        'to sync progress and pull in your list.',
                   )
                 : Column(
                     key: const ValueKey('profile-accounts'),
@@ -447,13 +449,34 @@ class _ProfilePanel extends ConsumerWidget {
                           padding: const EdgeInsets.only(
                             bottom: ZeroTokens.space2,
                           ),
-                          child: _TrackingAccountRow(account: account),
+                          child: _TrackingAccountRow(
+                            account: account,
+                            onReconnect:
+                                account.service ==
+                                        TrackingAccountService.aniList &&
+                                    account.health !=
+                                        TrackingAccountHealth.connected
+                                ? () => _connectAniList(context, ref)
+                                : null,
+                            onDisconnect: () =>
+                                _disconnect(context, ref, account),
+                          ),
                         ),
                     ],
                   ),
           ),
         ),
-        const SizedBox(height: ZeroTokens.space5),
+        const SizedBox(height: ZeroTokens.space3),
+        if (!_hasAniList(accounts))
+          Padding(
+            padding: const EdgeInsets.only(bottom: ZeroTokens.space2),
+            child: FilledButton.tonalIcon(
+              key: const ValueKey('connect-anilist'),
+              onPressed: () => _connectAniList(context, ref),
+              icon: const Icon(Icons.link_rounded),
+              label: const Text('Connect AniList'),
+            ),
+          ),
         FilledButton.icon(
           onPressed: () {
             Navigator.of(context).pop();
@@ -461,6 +484,183 @@ class _ProfilePanel extends ConsumerWidget {
           },
           icon: const Icon(Icons.tune_rounded),
           label: const Text('Open device settings'),
+        ),
+      ],
+    );
+  }
+
+  bool _hasAniList(AsyncValue<List<TrackingAccount>> accounts) =>
+      (accounts.value ?? const []).any(
+        (account) => account.service == TrackingAccountService.aniList,
+      );
+
+  Future<void> _connectAniList(BuildContext context, WidgetRef ref) async {
+    final connected = await showDialog<TrackingAccount>(
+      context: context,
+      builder: (_) => const _ConnectAniListDialog(),
+    );
+    if (connected == null || !context.mounted) return;
+    ref.invalidate(trackingAccountsProvider);
+    ref.invalidate(personalizedHomeFeedProvider);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('AniList connected as ${connected.displayName}')),
+    );
+  }
+
+  Future<void> _disconnect(
+    BuildContext context,
+    WidgetRef ref,
+    TrackingAccount account,
+  ) async {
+    final serviceName = switch (account.service) {
+      TrackingAccountService.aniList => 'AniList',
+      TrackingAccountService.myAnimeList => 'MyAnimeList',
+    };
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Disconnect $serviceName?'),
+        content: const Text(
+          'Progress stops syncing to the tracker. Local watch history stays '
+          'on this device.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Disconnect'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    await ref.read(trackingRepositoryProvider).disconnect(account.service);
+    ref.invalidate(trackingAccountsProvider);
+    ref.invalidate(personalizedHomeFeedProvider);
+  }
+}
+
+/// AniList uses an implicit grant: the browser lands on a redirect address
+/// whose fragment carries the access token, and the user pastes that address
+/// (or the bare token) back here. No secret is involved and the token never
+/// travels anywhere except to AniList itself.
+const _aniListAuthorizeUrl =
+    'https://anilist.co/api/v2/oauth/authorize?client_id=21788&response_type=token';
+
+class _ConnectAniListDialog extends ConsumerStatefulWidget {
+  const _ConnectAniListDialog();
+
+  @override
+  ConsumerState<_ConnectAniListDialog> createState() =>
+      _ConnectAniListDialogState();
+}
+
+class _ConnectAniListDialogState extends ConsumerState<_ConnectAniListDialog> {
+  final _pasted = TextEditingController();
+  bool _connecting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _pasted.dispose();
+    super.dispose();
+  }
+
+  Future<void> _connect() async {
+    final text = _pasted.text.trim();
+    if (text.isEmpty) {
+      setState(() => _error = 'Paste the address AniList sent you to.');
+      return;
+    }
+    setState(() {
+      _connecting = true;
+      _error = null;
+    });
+    try {
+      final account = await ref
+          .read(trackingRepositoryProvider)
+          .connectAniList(text);
+      if (mounted) Navigator.of(context).pop(account);
+    } on ArgumentError catch (error) {
+      if (mounted) {
+        setState(() {
+          _connecting = false;
+          _error = '${error.message}';
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _connecting = false;
+          _error =
+              'AniList could not verify the token. Approve access again and '
+              'paste the fresh address.';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
+    return AlertDialog(
+      title: const Text('Connect AniList'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Approve Zero in the browser, then copy the address of the page '
+              'you land on and paste it below.',
+              style: Theme.of(context).textTheme.bodyMedium
+                  ?.copyWith(color: colors.textSecondary, height: 1.4),
+            ),
+            const SizedBox(height: ZeroTokens.space4),
+            OutlinedButton.icon(
+              onPressed: () => launchUrl(
+                Uri.parse(_aniListAuthorizeUrl),
+                mode: LaunchMode.externalApplication,
+              ),
+              icon: const Icon(Icons.open_in_new_rounded),
+              label: const Text('Open AniList'),
+            ),
+            const SizedBox(height: ZeroTokens.space4),
+            TextField(
+              key: const ValueKey('anilist-redirect'),
+              controller: _pasted,
+              autofocus: true,
+              enabled: !_connecting,
+              onSubmitted: (_) => _connect(),
+              decoration: InputDecoration(
+                labelText: 'Redirect address or token',
+                hintText: 'shiru://alauth#access_token=…',
+                errorText: _error,
+                errorMaxLines: 3,
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _connecting ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const ValueKey('anilist-connect-submit'),
+          onPressed: _connecting ? null : _connect,
+          child: _connecting
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Connect'),
         ),
       ],
     );
@@ -509,10 +709,18 @@ class _AccountMessage extends StatelessWidget {
   }
 }
 
+enum _TrackingAccountAction { reconnect, disconnect }
+
 class _TrackingAccountRow extends StatelessWidget {
-  const _TrackingAccountRow({required this.account});
+  const _TrackingAccountRow({
+    required this.account,
+    this.onReconnect,
+    this.onDisconnect,
+  });
 
   final TrackingAccount account;
+  final VoidCallback? onReconnect;
+  final VoidCallback? onDisconnect;
 
   @override
   Widget build(BuildContext context) {
@@ -541,6 +749,21 @@ class _TrackingAccountRow extends StatelessWidget {
         Icons.error_outline_rounded,
       ),
     };
+    final actions =
+        <({_TrackingAccountAction value, String label, IconData icon})>[
+          if (onReconnect != null)
+            (
+              value: _TrackingAccountAction.reconnect,
+              label: 'Reconnect',
+              icon: Icons.refresh_rounded,
+            ),
+          if (onDisconnect != null)
+            (
+              value: _TrackingAccountAction.disconnect,
+              label: 'Disconnect',
+              icon: Icons.link_off_rounded,
+            ),
+        ];
     return DecoratedBox(
       decoration: BoxDecoration(
         color: colors.panel,
@@ -571,19 +794,56 @@ class _TrackingAccountRow extends StatelessWidget {
                 children: [
                   Text(
                     account.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   Text(service, style: Theme.of(context).textTheme.bodySmall),
+                  const SizedBox(height: ZeroTokens.space1),
+                  Row(
+                    children: [
+                      Icon(statusIcon, size: 17, color: statusColor),
+                      const SizedBox(width: ZeroTokens.space1),
+                      Flexible(
+                        child: Text(
+                          status,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelMedium
+                              ?.copyWith(color: statusColor),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
-            Icon(statusIcon, size: 17, color: statusColor),
-            const SizedBox(width: ZeroTokens.space1),
-            Text(
-              status,
-              style: Theme.of(context).textTheme.labelMedium
-                  ?.copyWith(color: statusColor),
-            ),
+            if (actions.isNotEmpty)
+              PopupMenuButton<_TrackingAccountAction>(
+                key: ValueKey('account-actions-${account.service.name}'),
+                tooltip: 'Account actions',
+                onSelected: (action) {
+                  switch (action) {
+                    case _TrackingAccountAction.reconnect:
+                      onReconnect?.call();
+                    case _TrackingAccountAction.disconnect:
+                      onDisconnect?.call();
+                  }
+                },
+                itemBuilder: (context) => [
+                  for (final action in actions)
+                    PopupMenuItem(
+                      value: action.value,
+                      child: Row(
+                        children: [
+                          Icon(action.icon, size: 18),
+                          const SizedBox(width: ZeroTokens.space2),
+                          Text(action.label),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
           ],
         ),
       ),

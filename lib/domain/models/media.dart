@@ -96,6 +96,8 @@ class Media {
     this.nextAiringEpisode,
     this.listEntry,
     this.synonyms = const [],
+    this.studios = const [],
+    this.sourceMaterial,
   });
 
   final int id;
@@ -124,8 +126,40 @@ class Media {
   final ListEntry? listEntry;
   final List<String> synonyms;
 
+  /// Main animation studios, e.g. `['MAPPA']`.
+  final List<String> studios;
+
+  /// AniList source enum name (`MANGA`, `LIGHT_NOVEL`, `ORIGINAL`, …).
+  final String? sourceMaterial;
+
   /// Highest episode number that can currently exist.
   int? get maxEpisode =>
       episodes ??
       (nextAiringEpisode != null ? nextAiringEpisode!.episode - 1 : null);
+
+  /// The same show carrying a different list state — used when a progress
+  /// source other than the tracker (local watch history) supplies the entry.
+  Media withListEntry(ListEntry? entry) => Media(
+    id: id,
+    idMal: idMal,
+    title: title,
+    format: format,
+    status: status,
+    season: season,
+    seasonYear: seasonYear,
+    episodes: episodes,
+    duration: duration,
+    coverImage: coverImage,
+    bannerImage: bannerImage,
+    coverColor: coverColor,
+    description: description,
+    genres: genres,
+    averageScore: averageScore,
+    isAdult: isAdult,
+    nextAiringEpisode: nextAiringEpisode,
+    listEntry: entry,
+    synonyms: synonyms,
+    studios: studios,
+    sourceMaterial: sourceMaterial,
+  );
 }

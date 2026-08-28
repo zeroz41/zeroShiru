@@ -50,7 +50,7 @@ void main() {
       expect(second?.source, first?.source);
       final cached = File.fromUri(Uri.parse(first!.source));
       expect(await cached.exists(), isTrue);
-      expect(cached.path, contains('v6-archive-formats'));
+      expect(cached.path, contains('v8-learning-cues'));
       expect(first.originalName, '[JP] Test Show - 07.ass');
       expect(second?.originalName, '[JP] Test Show - 07.ass');
       expect(first.title, contains('[JP] Test Show - 07.ass'));
@@ -69,6 +69,101 @@ void main() {
       );
     },
   );
+
+  test('strips foreign event layers from a Japanese ASS download', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zero-jimaku-bilingual-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final transport = _JimakuTransport(
+      files: const [
+        {
+          'name': '[JP] Test Show - 07.ass',
+          'url': 'https://files.example/show-07.ass',
+          'last_modified': '2026-08-24T00:00:00Z',
+        },
+      ],
+      downloads: {
+        '/show-07.ass': utf8.encode('''
+[Script Info]
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 5,0:00:01.00,0:00:02.00,Default,,0,0,0,,Gone.
+Dialogue: 0,0:00:01.00,0:00:02.00,Default-ja,,0,0,0,,なーし
+Dialogue: 5,0:00:02.00,0:00:04.00,Default,,0,0,0,,Everything considered, she did it.
+Dialogue: 0,0:00:02.00,0:00:04.00,Default-ja,,0,0,0,,状況から考えてあの子がやった
+Dialogue: 5,0:00:04.00,0:00:06.00,Default-ru,,0,0,0,,Это перевод.
+Dialogue: 0,0:00:04.00,0:00:06.00,Default-ja,,0,0,0,,これは日本語です
+'''),
+      },
+    );
+    final repository = JimakuLearningSubtitleRepository(
+      transport: transport,
+      cacheDirectory: directory.path,
+    );
+
+    final match = await repository.findJapanese(
+      const LearningSubtitleQuery(
+        anilistId: 123,
+        episode: 7,
+        releaseName: 'Test Show - 07.mkv',
+      ),
+      credential: 'personal-key',
+    );
+
+    final cached = await File.fromUri(Uri.parse(match!.source)).readAsString();
+    expect(cached, contains('なーし'));
+    expect(cached, contains('状況から'));
+    expect(cached, isNot(contains('Gone.')));
+    expect(cached, isNot(contains('Everything considered')));
+    expect(cached, isNot(contains('Это перевод')));
+    expect(match.source, contains('v8-learning-cues'));
+  });
+
+  test('coalesces ASS karaoke animation frames into one stable cue', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zero-jimaku-karaoke-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final transport = _JimakuTransport(
+      files: const [
+        {
+          'name': '[JP] Test Show - 07.ass',
+          'url': 'https://files.example/show-07.ass',
+          'last_modified': '2026-08-26T00:00:00Z',
+        },
+      ],
+      downloads: {
+        '/show-07.ass': utf8.encode(r'''
+[Script Info]
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:01:02.45,0:01:04.37,OP Kana,,0,0,0,,{\fad(100,0)}まだ人生長いでしょ？
+Dialogue: 0,0:01:04.37,0:01:04.41,OP Kana,,0,0,0,,{\alpha&H80&}まだ人生長いでしょ？
+Dialogue: 0,0:01:04.41,0:01:04.46,OP Kana,,0,0,0,,{\alpha&HFF&}まだ人生長いでしょ？
+Dialogue: 0,0:01:05.00,0:01:07.00,OP Kana,,0,0,0,,次の歌詞です
+'''),
+      },
+    );
+    final repository = JimakuLearningSubtitleRepository(
+      transport: transport,
+      cacheDirectory: directory.path,
+    );
+
+    final match = await repository.findJapanese(
+      const LearningSubtitleQuery(
+        anilistId: 123,
+        episode: 7,
+        releaseName: 'Test Show - 07.mkv',
+      ),
+      credential: 'personal-key',
+    );
+
+    final cached = await File.fromUri(Uri.parse(match!.source)).readAsString();
+    expect('まだ人生長いでしょ？'.allMatches(cached), hasLength(1));
+    expect(cached, contains('0:01:04.46'));
+    expect(cached, contains('次の歌詞です'));
+  });
 
   test('selects the requested non-OCR episode inside a bounded zip', () async {
     final directory = await Directory.systemTemp.createTemp('zero-jimaku-zip-');

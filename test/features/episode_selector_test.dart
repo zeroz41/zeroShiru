@@ -62,4 +62,39 @@ void main() {
       expect(played, 42);
     },
   );
+
+  testWidgets('a partially watched episode paints its resume fraction', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(900, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildZeroTheme(),
+        home: Scaffold(
+          body: Padding(
+            padding: const EdgeInsets.all(24),
+            child: EpisodeSelector(
+              episodeCount: 4,
+              watchedThrough: 1,
+              selectedEpisode: 2,
+              // Episode 1 is completed: its stale partial position must not
+              // repaint a bar under the watched badge.
+              progress: const {1: 0.4, 2: 0.62},
+              onSelected: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.byKey(const ValueKey('episode-progress-2')),
+    );
+    expect(bar.value, closeTo(0.62, 0.001));
+    expect(find.byKey(const ValueKey('episode-progress-1')), findsNothing);
+    expect(find.byKey(const ValueKey('episode-progress-3')), findsNothing);
+  });
 }

@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/theme/palette.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/widgets/network_image.dart';
+import '../../app/widgets/titled_rail.dart';
 import '../../application/library/providers.dart';
 import '../../application/logging/providers.dart';
 import '../../application/playback/request.dart';
@@ -25,7 +26,9 @@ import '../../domain/ports/debrid_client.dart';
 import '../../domain/media/info_hash.dart';
 import '../../domain/media/filename.dart';
 import '../../domain/media/pack_picker.dart';
+import '../schedule/schedule_page.dart' show formatAiringCountdown;
 import 'episode_selector.dart';
+import 'media_poster.dart';
 
 typedef EpisodeSelected = void Function(Media media, int episode);
 
@@ -99,10 +102,28 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
   final _sourcePickerKey = GlobalKey<_ReleaseHandoffState>();
   bool _releaseOpen = false;
   bool _findingBestSource = false;
+  bool _userPickedEpisode = false;
   String? _playbackError;
   String? _releaseError;
 
   Media get media => widget.media;
+
+  /// The show as presentation code should see it: tracker progress and local
+  /// watch history merged, whichever is further ahead. Source resolution keeps
+  /// the original object so playback identity never depends on display state.
+  Media _mergedProgress(Media media, int localThrough) {
+    final entry = media.listEntry;
+    if (localThrough <= (entry?.progress ?? 0)) return media;
+    return media.withListEntry(
+      ListEntry(
+        status: entry?.status ?? ListStatus.current,
+        progress: localThrough,
+        score: entry?.score,
+        repeat: entry?.repeat ?? 0,
+        customLists: entry?.customLists ?? const [],
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -132,6 +153,7 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
   }
 
   void _selectEpisode(int episode) {
+    _userPickedEpisode = true;
     setState(() {
       _episode = episode;
       _playbackError = null;
@@ -141,6 +163,7 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
   }
 
   void _playEpisode(int episode) {
+    _userPickedEpisode = true;
     final selectionChanged = episode != _episode;
     if (selectionChanged) {
       setState(() {
@@ -219,9 +242,29 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
     final compact = size.width < 900;
     final settings = ref.watch(settingsControllerProvider);
     final currentSettings = settings.value;
+    final localThrough =
+        ref.watch(localWatchedThroughProvider(media.id)).value ?? 0;
+    // When local history is ahead of the tracker and the user has not chosen
+    // an episode themselves, follow it forward — the modal should open on the
+    // episode the player would come back to.
+    ref.listen(localWatchedThroughProvider(media.id), (previous, next) {
+      final through = next.value ?? 0;
+      if (through <= 0 || _userPickedEpisode || widget.initialEpisode != null) {
+        return;
+      }
+      final suggested = _requestedEpisode(
+        _mergedProgress(media, through),
+        null,
+      );
+      if (suggested > _episode) setState(() => _episode = suggested);
+    });
+    final display = _mergedProgress(media, localThrough);
+    final episodeProgress =
+        ref.watch(episodeResumeProgressProvider(media.id)).value ??
+        const <int, double>{};
     final episodeMetadata = ref.watch(episodeMetadataProvider(media));
     final episodes = episodeMetadata.value ?? fallbackEpisodeMetadata(media);
-    final episodeCount = _episodeCount(media, episodes);
+    final episodeCount = _episodeCount(display, episodes);
     final selectedEpisode = _episodeInfo(episodes, _episode, media);
     if (currentSettings != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -254,10 +297,11 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
                   _DetailsBackdrop(media: media, episode: selectedEpisode),
                   if (compact)
                     _CompactDetails(
-                      media: media,
+                      media: display,
                       episode: _episode,
                       episodeInfo: selectedEpisode,
                       episodes: episodes,
+                      episodeProgress: episodeProgress,
                       episodeCount: episodeCount,
                       episodeMetadataLoading: episodeMetadata.isLoading,
                       episodeMetadataError: episodeMetadata.error,
@@ -271,10 +315,11 @@ class _MediaDetailsState extends ConsumerState<MediaDetails> {
                     )
                   else
                     _DesktopDetails(
-                      media: media,
+                      media: display,
                       episode: _episode,
                       episodeInfo: selectedEpisode,
                       episodes: episodes,
+                      episodeProgress: episodeProgress,
                       episodeCount: episodeCount,
                       episodeMetadataLoading: episodeMetadata.isLoading,
                       episodeMetadataError: episodeMetadata.error,
@@ -397,6 +442,7 @@ class _DesktopDetails extends StatelessWidget {
     required this.episode,
     required this.episodeInfo,
     required this.episodes,
+    required this.episodeProgress,
     required this.episodeCount,
     required this.episodeMetadataLoading,
     required this.episodeMetadataError,
@@ -413,6 +459,7 @@ class _DesktopDetails extends StatelessWidget {
   final int episode;
   final EpisodeInfo episodeInfo;
   final List<EpisodeInfo> episodes;
+  final Map<int, double> episodeProgress;
   final int episodeCount;
   final bool episodeMetadataLoading;
   final Object? episodeMetadataError;
@@ -472,6 +519,7 @@ class _DesktopDetails extends StatelessWidget {
                     fallbackArtwork: media.bannerImage ?? media.coverImage,
                     durationMinutes: media.duration,
                     items: episodes,
+                    progress: episodeProgress,
                     expanded: true,
                     onSelected: onSelectEpisode,
                     onPlay: onPlayEpisode,
@@ -493,6 +541,7 @@ class _CompactDetails extends StatelessWidget {
     required this.episode,
     required this.episodeInfo,
     required this.episodes,
+    required this.episodeProgress,
     required this.episodeCount,
     required this.episodeMetadataLoading,
     required this.episodeMetadataError,
@@ -509,6 +558,7 @@ class _CompactDetails extends StatelessWidget {
   final int episode;
   final EpisodeInfo episodeInfo;
   final List<EpisodeInfo> episodes;
+  final Map<int, double> episodeProgress;
   final int episodeCount;
   final bool episodeMetadataLoading;
   final Object? episodeMetadataError;
@@ -565,12 +615,15 @@ class _CompactDetails extends StatelessWidget {
             fallbackArtwork: media.bannerImage ?? media.coverImage,
             durationMinutes: media.duration,
             items: episodes,
+            progress: episodeProgress,
             maxHeight: 610,
             onSelected: onSelectEpisode,
             onPlay: onPlayEpisode,
             playingEpisode: findingBestSource ? episode : null,
           ),
         ],
+        const SizedBox(height: ZeroTokens.space5),
+        _MoreLikeThis(media: media),
       ],
     );
   }
@@ -633,8 +686,42 @@ class _OverviewScroll extends StatelessWidget {
           ),
           const SizedBox(height: ZeroTokens.space6),
           _AboutSeries(media: media, episodeCount: episodeCount),
+          const SizedBox(height: ZeroTokens.space6),
+          _MoreLikeThis(media: media),
         ],
       ),
+    );
+  }
+}
+
+/// Community recommendations rail. Renders nothing while loading, on failure,
+/// or when the provider has no suggestions — the modal must never wait on it.
+class _MoreLikeThis extends ConsumerWidget {
+  const _MoreLikeThis({required this.media});
+
+  final Media media;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settings = ref.watch(settingsControllerProvider).value;
+    final similar =
+        ref.watch(similarMediaProvider(media.id)).value ?? const <Media>[];
+    final allowAdult = (settings?.adultContent ?? 'none') != 'none';
+    final items = [
+      for (final item in similar)
+        if (item.id != media.id && (allowAdult || !item.isAdult)) item,
+    ].take(15).toList(growable: false);
+    if (items.isEmpty) return const SizedBox.shrink();
+    return TitledRail(
+      title: 'More like this',
+      children: [
+        for (final item in items)
+          MediaPoster(
+            key: ValueKey(item.id),
+            media: item,
+            onTap: () => showMediaDetails(context, item),
+          ),
+      ],
     );
   }
 }
@@ -927,6 +1014,18 @@ class _AboutSeries extends StatelessWidget {
             if (media.seasonYear case final year?) '$year',
           ].join(' '),
         ),
+      if (media.studios.firstOrNull case final studio?)
+        (icon: Icons.brush_rounded, label: studio),
+      if (_sourceLabel(media.sourceMaterial) case final source?)
+        (icon: Icons.auto_stories_outlined, label: source),
+      if (media.nextAiringEpisode case final airing?)
+        if (airing.airingAt.isAfter(DateTime.now()))
+          (
+            icon: Icons.timer_outlined,
+            label:
+                'Ep ${airing.episode} in '
+                '${formatAiringCountdown(airing.airingAt, DateTime.now())}',
+          ),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1735,7 +1834,7 @@ class _ReleaseHandoffState extends ConsumerState<_ReleaseHandoff> {
   final _titleEpisodeCache = <String, int?>{};
 
   int? _titleEpisode(TorrentResult result) => _titleEpisodeCache.putIfAbsent(
-    '${result.title} ${result.mappedEpisode}',
+    '${result.title}\u0000${result.mappedEpisode}',
     () => releaseEpisodeFor(
       parseFilename(result.title),
       episode: widget.episode,
@@ -2805,6 +2904,14 @@ String _serviceTitle(DebridService service) => switch (service) {
   DebridService.realdebrid => 'Real-Debrid',
   DebridService.torbox => 'TorBox',
 };
+
+/// AniList source enum → a human pill label ('MANGA' → 'From manga').
+String? _sourceLabel(String? source) {
+  if (source == null || source.isEmpty) return null;
+  if (source == 'ORIGINAL') return 'Original story';
+  final pretty = source.toLowerCase().replaceAll('_', ' ');
+  return 'From $pretty';
+}
 
 String _capitalize(String value) => value.isEmpty
     ? value

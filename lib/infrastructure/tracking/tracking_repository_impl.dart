@@ -142,33 +142,65 @@ class TrackingRepositoryImpl implements TrackingRepository {
   Media _withMalEntry(Media media, MalListItem item) {
     final status = item.status;
     if (status == null) return media;
-    return Media(
-      id: media.id,
-      idMal: media.idMal,
-      title: media.title,
-      format: media.format,
-      status: media.status,
-      season: media.season,
-      seasonYear: media.seasonYear,
-      episodes: media.episodes,
-      duration: media.duration,
-      coverImage: media.coverImage,
-      bannerImage: media.bannerImage,
-      coverColor: media.coverColor,
-      description: media.description,
-      genres: media.genres,
-      averageScore: media.averageScore,
-      isAdult: media.isAdult,
-      nextAiringEpisode: media.nextAiringEpisode,
-      listEntry: ListEntry(
+    // withListEntry carries every other field, so a new Media field can never
+    // again be silently dropped for MAL-only accounts.
+    return media.withListEntry(
+      ListEntry(
         status: status,
         progress: item.progress,
         score: item.score,
         repeat: item.repeat,
       ),
-      synonyms: media.synonyms,
     );
   }
+
+  @override
+  Future<TrackingAccount> connectAniList(String pasted) async {
+    final token = parseAniListRedirect(pasted) ?? _bareAniListToken(pasted);
+    if (token == null) {
+      throw ArgumentError(
+        'That text does not contain an AniList token. Paste the full address '
+        'the browser lands on after approving Zero.',
+      );
+    }
+    final viewer = await _anilist.viewer(token: token);
+    if (viewer == null) {
+      throw StateError(
+        'AniList did not accept the token. Approve access again and paste '
+        'the fresh address.',
+      );
+    }
+    await _auth.writeAniList(
+      AniListToken.issue(
+        token,
+        now: _clock.now(),
+        viewerId: viewer.id,
+        viewerName: viewer.name,
+        viewerAvatar: viewer.avatar,
+      ),
+    );
+    return TrackingAccount(
+      service: TrackingAccountService.aniList,
+      displayName: viewer.name,
+      avatarUrl: viewer.avatar,
+      health: TrackingAccountHealth.connected,
+    );
+  }
+
+  /// A pasted bare token: one whitespace-free blob long enough to be a JWT.
+  static String? _bareAniListToken(String pasted) {
+    final trimmed = pasted.trim();
+    if (trimmed.length < 40) return null;
+    if (trimmed.contains(RegExp(r'\s'))) return null;
+    if (trimmed.contains('://')) return null;
+    return trimmed;
+  }
+
+  @override
+  Future<void> disconnect(TrackingAccountService service) => switch (service) {
+    TrackingAccountService.aniList => _auth.deleteAniList(),
+    TrackingAccountService.myAnimeList => _auth.deleteMal(),
+  };
 
   @override
   Future<void> updateProgress(Media media, int episode) async {

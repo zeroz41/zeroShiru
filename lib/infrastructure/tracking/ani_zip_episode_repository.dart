@@ -1,23 +1,31 @@
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:convert';
 
 import '../../domain/models/media.dart';
 import '../../domain/ports/episode_repository.dart';
 import '../../domain/ports/http_transport.dart';
+import '../../domain/ports/query_cache.dart';
 
 /// Episode artwork/title enrichment from the same AniZip mapping endpoint the
 /// original app used. The adapter is deliberately tolerant of partial rows;
 /// a missing field falls back to the parent media in the feature layer.
+///
+/// With a [QueryCache] attached, the raw mapping payload rides the shared
+/// stale-while-revalidate store: reopening a show renders episode titles and
+/// stills instantly (and offline) while one background refresh runs.
 class AniZipEpisodeRepository implements EpisodeRepository {
-  const AniZipEpisodeRepository(this._transport);
+  const AniZipEpisodeRepository(this._transport, {QueryCache? cache})
+    : _cache = cache;
 
   final HttpTransport _transport;
+  final QueryCache? _cache;
 
-  @override
-  Future<List<EpisodeInfo>> episodes(Media media) async {
+  Future<Map<String, dynamic>> _fetchRoot(int anilistId) async {
     final response = await _transport.send(
       HttpRequest(
         HttpMethod.get,
-        Uri.https('api.ani.zip', '/mappings', {'anilist_id': '${media.id}'}),
+        Uri.https('api.ani.zip', '/mappings', {'anilist_id': '$anilistId'}),
         headers: const {'accept': 'application/json'},
         timeout: const Duration(seconds: 12),
       ),
@@ -26,7 +34,29 @@ class AniZipEpisodeRepository implements EpisodeRepository {
       throw StateError('episode mapping request failed (${response.status})');
     }
     final root = jsonDecode(utf8.decode(response.bodyBytes));
-    if (root is! Map) return const [];
+    return root is Map ? root.cast<String, dynamic>() : const {};
+  }
+
+  Future<Map<String, dynamic>> _root(int anilistId) async {
+    final cache = _cache;
+    if (cache == null) return _fetchRoot(anilistId);
+    const ttl = Duration(hours: 12);
+    final key = 'anizip:$anilistId';
+    final cached = await cache.swrRead(
+      CacheStores.queryEpisodes,
+      key,
+      () => _fetchRoot(anilistId),
+      maxAge: ttl,
+    );
+    if (cached != null) return cached;
+    final fresh = await _fetchRoot(anilistId);
+    await cache.write(CacheStores.queryEpisodes, key, fresh, maxAge: ttl);
+    return fresh;
+  }
+
+  @override
+  Future<List<EpisodeInfo>> episodes(Media media) async {
+    final Map root = await _root(media.id);
     final rawEpisodes = root['episodes'];
     if (rawEpisodes is! Map) return const [];
 

@@ -33,6 +33,9 @@ class _Catalog implements CatalogRepository {
 
   @override
   Future<Media?> mediaById(int id) async => null;
+
+  @override
+  Future<List<Media>> similar(int mediaId) async => const [];
 }
 
 void main() {

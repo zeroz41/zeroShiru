@@ -31,6 +31,9 @@ class _RecordingCatalog implements CatalogRepository {
 
   @override
   Future<Media?> mediaById(int id) async => null;
+
+  @override
+  Future<List<Media>> similar(int mediaId) async => const [];
 }
 
 class _WatchingRepository implements TrackingRepository {
@@ -53,6 +56,13 @@ class _WatchingRepository implements TrackingRepository {
 
   @override
   Future<void> updateProgress(Media media, int episode) async {}
+
+  @override
+  Future<TrackingAccount> connectAniList(String pasted) =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> disconnect(TrackingAccountService service) async {}
 }
 
 void main() {
@@ -170,7 +180,10 @@ void main() {
         home,
       );
 
-      expect(feed.continueWatching, [watching]);
+      final slot = feed.continueWatching.single;
+      expect(slot.media, watching);
+      expect(slot.episode, 5);
+      expect(slot.resumeProgress, isNull);
       expect(feed.recommendations, [fantasy]);
       expect(feed.favoriteGenres, ['Adventure', 'Fantasy']);
     },

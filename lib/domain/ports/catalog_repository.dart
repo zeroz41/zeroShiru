@@ -6,4 +6,8 @@ import '../models/media.dart';
 abstract interface class CatalogRepository {
   Future<MediaPage> browse(MediaBrowseQuery query);
   Future<Media?> mediaById(int id);
+
+  /// Community "more like this" for one show, best first. Empty when the
+  /// provider has nothing; never required for the details page to render.
+  Future<List<Media>> similar(int mediaId);
 }

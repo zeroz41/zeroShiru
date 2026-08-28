@@ -32,11 +32,30 @@ class PersonalizedHomeFeed {
     this.favoriteGenres = const [],
   });
 
-  final List<Media> continueWatching;
+  final List<ContinueWatchingItem> continueWatching;
   final List<Media> recommendations;
   final List<String> favoriteGenres;
 
   bool get isEmpty => continueWatching.isEmpty && recommendations.isEmpty;
+}
+
+/// One Continue Watching slot: the show plus the episode a tap should open
+/// and, when the user stopped mid-episode, how far through it they were.
+class ContinueWatchingItem {
+  const ContinueWatchingItem({
+    required this.media,
+    required this.episode,
+    this.resumeProgress,
+  });
+
+  final Media media;
+
+  /// The mid-episode resume target, or the next unwatched episode.
+  final int episode;
+
+  /// Watched fraction of [episode], null when it has not been meaningfully
+  /// started (the card then falls back to series progress).
+  final double? resumeProgress;
 }
 
 /// The season AniList uses for northern-hemisphere anime cours.
@@ -119,21 +138,62 @@ List<HomeGenreSection> _genreSections(List<Media> source) {
 /// Builds a small, explainable recommendation set from the user's active
 /// watches. It deliberately re-ranks the already cached home catalogue rather
 /// than adding another network request to startup.
+///
+/// Progress evidence comes from two places: the local watch history (always
+/// present, no account required) and the tracker's Currently Watching list.
+/// Local history leads Continue Watching because it is ordered by when the
+/// user actually pressed play here, then tracker-only shows follow.
 Future<PersonalizedHomeFeed> loadPersonalizedHomeFeed(
   TrackingRepository tracking,
-  HomeFeed home,
-) async {
-  final watching = await tracking.userList(ListStatus.current);
-  final continueWatching = watching
-      .where((media) {
-        final progress = media.listEntry?.progress ?? 0;
-        final maximum = media.maxEpisode;
-        return progress > 0 && (maximum == null || progress < maximum);
-      })
-      .toList(growable: false);
+  HomeFeed home, {
+  List<WatchHistoryEntry> localHistory = const [],
+}) async {
+  List<Media> watching;
+  try {
+    watching = await tracking.userList(ListStatus.current);
+  } catch (_) {
+    // A tracker outage (or no account) must not empty the local rails.
+    watching = const [];
+  }
+
+  final continueWatching = <ContinueWatchingItem>[];
+  final continueIds = <int>{};
+  for (final entry in localHistory) {
+    final maximum = entry.media.maxEpisode;
+    final finished =
+        entry.resume == null &&
+        maximum != null &&
+        entry.watchedThrough >= maximum;
+    if (finished) continue;
+    if (entry.watchedThrough == 0 && entry.resume == null) continue;
+    if (!continueIds.add(entry.media.id)) continue;
+    final fraction = entry.resume?.fraction ?? 0;
+    continueWatching.add(
+      ContinueWatchingItem(
+        media: entry.media.withListEntry(
+          ListEntry(status: ListStatus.current, progress: entry.watchedThrough),
+        ),
+        episode: entry.nextEpisode,
+        resumeProgress: fraction > 0 ? fraction : null,
+      ),
+    );
+  }
+  for (final media in watching) {
+    final progress = media.listEntry?.progress ?? 0;
+    final maximum = media.maxEpisode;
+    final active = progress > 0 && (maximum == null || progress < maximum);
+    if (active && continueIds.add(media.id)) {
+      continueWatching.add(
+        ContinueWatchingItem(media: media, episode: progress + 1),
+      );
+    }
+  }
 
   final affinity = <String, int>{};
-  for (final media in watching) {
+  for (final media in [
+    ...watching,
+    for (final entry in localHistory) entry.media,
+  ]) {
     for (final genre in media.genres) {
       affinity.update(genre, (score) => score + 1, ifAbsent: () => 1);
     }
@@ -144,7 +204,10 @@ Future<PersonalizedHomeFeed> loadPersonalizedHomeFeed(
       return byWeight != 0 ? byWeight : a.compareTo(b);
     });
 
-  final watchedIds = {for (final media in watching) media.id};
+  final watchedIds = {
+    for (final media in watching) media.id,
+    for (final entry in localHistory) entry.media.id,
+  };
   final candidates = <int, Media>{
     for (final media in [
       ...home.trending,

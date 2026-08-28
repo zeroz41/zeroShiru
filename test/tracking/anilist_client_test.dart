@@ -42,6 +42,12 @@ Map<String, dynamic> sampleMediaJson({
     'color': '#e4a15d',
   },
   'bannerImage': 'https://img/banner.png',
+  'source': 'MANGA',
+  'studios': {
+    'nodes': [
+      {'name': 'Toei Animation'},
+    ],
+  },
   'nextAiringEpisode': {'episode': 1140, 'airingAt': 1766448000},
   'mediaListEntry': entry,
 };
@@ -99,6 +105,8 @@ void main() {
       expect(media.averageScore, 88);
       expect(media.isAdult, isFalse);
       expect(media.synonyms, ['OP']);
+      expect(media.studios, ['Toei Animation']);
+      expect(media.sourceMaterial, 'MANGA');
       expect(media.nextAiringEpisode!.episode, 1140);
       expect(
         media.nextAiringEpisode!.airingAt,
@@ -170,7 +178,7 @@ void main() {
 
         final request = transport.requests.single;
         expect(request.method.name, 'post');
-        expect(request.headers['Authorization'], 'ani-token');
+        expect(request.headers['Authorization'], 'Bearer ani-token');
         final body = lastBody();
         final query = body['query'] as String;
         expect(query, contains('customLists(asArray: true)'));
@@ -410,6 +418,55 @@ void main() {
         final (store, _, ttl) = cache.writes.single;
         expect(store, 'query_recommendations');
         expect(ttl!.inMinutes, inInclusiveRange(1500, 2000));
+      },
+    );
+
+    test(
+      'similarMedia returns renderable cards ordered by community rating',
+      () async {
+        transport.onJson('graphql.anilist.co', {
+          'data': {
+            'Media': {
+              'id': 21,
+              'recommendations': {
+                'edges': [
+                  {
+                    'node': {
+                      'rating': 40,
+                      'mediaRecommendation': sampleMediaJson(id: 31),
+                    },
+                  },
+                  {
+                    'node': {
+                      'rating': 900,
+                      'mediaRecommendation': sampleMediaJson(id: 30),
+                    },
+                  },
+                  {
+                    'node': {'rating': 5, 'mediaRecommendation': null},
+                  },
+                ],
+              },
+            },
+          },
+        });
+
+        final similar = await client.similarMedia(21);
+
+        expect(similar.map((media) => media.id), [30, 31]);
+        expect(similar.first.title.display, 'One Piece');
+        expect(similar.first.coverImage, 'https://img/xl.png');
+        final (store, key, _) = cache.writes.single;
+        expect(store, 'query_recommendations');
+        expect(key, 'similar:21');
+        final query =
+            (lastBody()['query'] as String).replaceAll(RegExp(r'\s+'), ' ');
+        expect(query, contains('mediaRecommendation {'));
+        expect(
+          query,
+          contains('coverImage'),
+          reason: 'the full media fragment rides along',
+        );
       },
     );
   });

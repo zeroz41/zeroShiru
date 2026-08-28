@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zero/app/theme/theme.dart';
+import 'package:zero/application/library/home_feed.dart';
 import 'package:zero/application/library/providers.dart';
 import 'package:zero/domain/models/catalog.dart';
 import 'package:zero/domain/models/media.dart';
 import 'package:zero/domain/ports/catalog_repository.dart';
 import 'package:zero/features/home/home_page.dart';
+import 'package:zero/features/library/continue_watching_card.dart';
 import 'package:zero/features/library/media_poster.dart';
 import 'package:zero/features/schedule/schedule_page.dart';
 import 'package:zero/features/search/search_page.dart';
@@ -75,6 +77,9 @@ class _FakeCatalog implements CatalogRepository {
 
   @override
   Future<Media?> mediaById(int id) async => null;
+
+  @override
+  Future<List<Media>> similar(int mediaId) async => const [];
 }
 
 class _DeferredSearchCatalog extends _FakeCatalog {
@@ -112,6 +117,57 @@ void main() {
     await tester.pump();
     expect(find.text('Popular Show'), findsOneWidget);
     expect(find.text('All-time popular'), findsOneWidget);
+  });
+
+  testWidgets('Continue watching follows For You and shows resume progress', (
+    tester,
+  ) async {
+    // Tall viewport so both personalized rails build inside the sliver list.
+    tester.view.physicalSize = const Size(1400, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final catalog = _FakeCatalog();
+    final show = media(9, 'Half Watched').withListEntry(
+      const ListEntry(status: ListStatus.current, progress: 1),
+    );
+    final personalized = PersonalizedHomeFeed(
+      continueWatching: [
+        ContinueWatchingItem(media: show, episode: 2, resumeProgress: 0.35),
+      ],
+      recommendations: [media(30, 'Suggested Show')],
+      favoriteGenres: const ['Action'],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          catalogRepositoryProvider.overrideWithValue(catalog),
+          personalizedHomeFeedProvider.overrideWith((ref) async => personalized),
+        ],
+        child: MaterialApp(
+          theme: buildZeroTheme(),
+          home: const Scaffold(body: HomePage()),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    // The resume rail sits below For You so a sparse row never leads the page.
+    final forYouY = tester.getTopLeft(find.text('For you · Action')).dy;
+    final continueY = tester.getTopLeft(find.text('Continue watching')).dy;
+    expect(continueY, greaterThan(forYouY));
+
+    expect(find.text('Half Watched'), findsOneWidget);
+    expect(find.text('EP 2'), findsOneWidget);
+    expect(find.text('Ep 2 of 12'), findsOneWidget);
+    expect(find.text('35% watched'), findsOneWidget);
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.descendant(
+        of: find.byType(ContinueWatchingCard),
+        matching: find.byType(LinearProgressIndicator),
+      ),
+    );
+    expect(bar.value, closeTo(0.35, 0.001));
   });
 
   testWidgets('Search loads an initial page and submits a title query', (
@@ -184,14 +240,18 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('toggle-search-filters')));
     await tester.pumpAndSettle();
+    final queriesBeforeToggles = catalog.queries.length;
     await tester.tap(find.widgetWithText(FilterChip, 'TV'));
     await tester.pump();
     await tester.tap(find.widgetWithText(FilterChip, 'Action'));
     await tester.pump();
     await tester.tap(find.widgetWithText(FilterChip, 'Airing'));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.pump(const Duration(milliseconds: 20));
 
+    // The debounce folds three quick chip taps into one catalogue request.
+    expect(catalog.queries.length, queriesBeforeToggles + 1);
     final query = catalog.queries.last;
     expect(query.page, 1);
     expect(query.formats, contains(MediaFormat.tv));
@@ -201,6 +261,7 @@ void main() {
 
     await tester.tap(find.text('Reset filters'));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.pump(const Duration(milliseconds: 20));
     expect(catalog.queries.last.formats, isEmpty);
     expect(catalog.queries.last.genres, isEmpty);

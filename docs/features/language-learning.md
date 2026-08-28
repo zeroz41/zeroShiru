@@ -45,6 +45,24 @@ current implementation starts with English and can pair the other translation
 languages already supported by the player's subtitle preferences. Translation
 is authored subtitle text; Zero does not generate or rewrite it.
 
+When a release offers several translation tracks, Learning prefers complete
+dialogue subtitles over signs/songs, forced tracks, dub captions, SDH/closed
+captions, commentary, and karaoke. Tracks labelled as AI, machine-translated,
+Whisper, Subgen, or otherwise generated are not selected automatically. An
+explicit manual choice in Advanced still wins, so the heuristic never prevents
+the user from opening an unusually labelled track.
+
+The **Translation** layer owns its authored subtitle track: enabling it selects
+the best authored track in the configured translation language, and disabling
+it clears that track. The source picker remains available for overrides, but a
+second trip into Advanced is not required. The main Learning panel exposes the
+authored translation choice directly.
+**Add authored translation** accepts a local path, file URI, or HTTPS ASS, SSA,
+SRT, or WebVTT sidecar, loads it into the secondary subtitle slot, and preserves
+the selected Japanese primary track. This is the deterministic fallback when a
+release does not contain a good translated track; Zero uses the supplied
+sentences verbatim and does not send them to a translation service.
+
 If the release has no Japanese text track, Zero can resolve one from
 [Jimaku](https://jimaku.cc) using the AniList ID and episode already carried by
 the playback request. Jimaku requires a free personal API key, stored in the OS
@@ -55,7 +73,10 @@ source-cut, retime, and filename-token signals instead of requiring an exact
 name, verifies that the chosen file contains Japanese text, and stores only
 that member in a per-episode, per-release cache so differently timed WEB and
 Blu-ray variants do not collide. A cached match is reused offline without
-another provider request.
+another provider request. Bilingual ASS event layers are reduced to the study
+language, and adjacent karaoke animation frames with identical visible lyrics
+are coalesced into a single stable Learning cue; Standard mode retains the
+original authored rendering.
 
 Each Japanese cue is segmented in a persistent background isolate without a
 warm-up model or native NLP runtime. When JMdict is installed, the pipeline
@@ -63,7 +84,10 @@ checks increasingly long adjacent spans
 and conservative candidates for common polite, negative, past, te-form,
 desiderative, and adjective inflections. A candidate is used only when it
 matches the local index. This lets a surface such as `食べました` resolve to
-`食べる` without an LLM or a speculative definition.
+`食べる` without an LLM or a speculative definition. Readings remain attached
+to the dictionary base form for lookup, while the displayed kana and romaji
+are inflected back to the exact subtitle surface—for example, `食べたい`
+displays `たべたい` / `tabetai`, not `たべる` / `taberu`.
 
 ## Local dictionary and privacy
 
@@ -121,27 +145,32 @@ authoritative; explicit compatible subtitle picks win on subsequent
 preparation.
 
 Hovering a token highlights it and opens a compact local definition popover on
-pointer devices. Touch keeps tap-to-select, while keyboard and TV-style input
+pointer devices. The popover carries a bookmark toggle: a saved word keeps its
+base form, reading, romaji, part of speech, top glosses, and the subtitle line
+it came from in the profile database. **Settings → Learning → Saved words**
+lists them, removes them singly or wholesale, and copies the collection as
+Anki-importable tab-separated text. Nothing about a saved word leaves the
+device. Touch keeps tap-to-select, while keyboard and TV-style input
 uses focus as the highlight and Select/Enter as the toggle. Moving the pointer
 or focus outside the learning surface fades the definition away; tapping the
 same token or the close button also dismisses it. The popover includes the
-base form, reading, romanization, part of speech, and English definitions. The overlay
-records a bounded cue history and pairs all translated cues whose adjusted
-time windows overlap the current Japanese cue, including a small boundary
-tolerance and each track's delay. It never pairs unrelated lines merely because
-they were the last cues observed. Authored subtitle tracks can still segment or
-paraphrase dialogue differently, so this is intentionally translation context,
-not a claim that independently authored lines are literal one-to-one
+base form, reading, romanization, part of speech, and English definitions. The
+overlay records a bounded cue history and pairs up to three distinct translated
+cues whose adjusted time windows overlap the current Japanese cue, including a
+small boundary tolerance and each track's delay. Open-ended cues use a tighter
+pairing window than their display fallback, so old translation lines cannot
+accumulate under current dialogue. Authored subtitle tracks can still segment
+or paraphrase dialogue differently, so this is intentionally translation
+context, not a claim that independently authored lines are literal one-to-one
 translations. Timeline dragging previews locally and commits one seek; the
 player clears stale cue work during that seek and refreshes both active lines
-after MPV settles. Unknown-duration cues also have a bounded display fallback.
-The active Japanese line is bottom-anchored over the video with clean outlined
-type, furigana above each word, optional romaji below it, and a full-size
-outlined translation on its own line. MPV's active cue transition is the only
-display clock; the overlay does not re-gate a new cue against Flutter's more
-coarsely sampled position stream. Only lookup results and actionable warnings
-use a surface; ordinary subtitles are rendered without a persistent opaque
-panel.
+after MPV settles. The active Japanese line is bottom-anchored over the video
+with clean outlined type, furigana above each word, optional romaji below it,
+and a smaller outlined translation on its own line. MPV's active cue transition
+is the only display clock; the overlay does not re-gate a new cue against
+Flutter's more coarsely sampled position stream. Only lookup results and
+actionable warnings use a surface; ordinary subtitles are rendered without a
+persistent opaque panel.
 
 Learning track intent is persistent rather than session-only. Choosing **Off**
 for the secondary track also turns off the Translation layer, so switching to
@@ -166,6 +195,16 @@ and Japanese text. The attached track and preparation result retain the
 selected catalog filename so a timing source is visible instead of becoming an
 anonymous cached file. The release-aware cache prevents an older mismatched
 candidate from being reused for the same video source.
+
+Because the Japanese and translated tracks are usually authored
+independently, they often disagree by one constant shift. The subtitle
+panel's **Auto-align timing** action measures that shift from cue start times
+observed for the current episode and selected tracks (nearest-pair deltas,
+median, with a dead band so near-agreement never churns the tuning). Normally
+it adjusts the secondary line; when Japanese is an external sidecar paired
+with an embedded translation, it preserves the muxed timing and moves the
+sidecar instead. The per-release timing memory keeps the result. Auto-align
+refuses to guess until enough current matched lines have been seen.
 
 The main release list uses the same persisted intent as playback: the chosen
 audio language is the first language signal; Standard uses the regular
@@ -196,8 +235,10 @@ The read-only Jimaku integration can be checked against the current catalog
 with `ZERO_LIVE_JIMAKU_KEY='…' flutter test
 test/learning/live_jimaku_test.dart`.
 
-The first version intentionally does not include OCR, machine translation,
-sentence explanations, flashcard export, or vocabulary history. Per-character
-kanji readings are also not inferred; furigana is displayed at the verified
-word level. Those can be added behind separate local capability ports without
-changing standard playback or sending subtitle text away from the device.
+Vocabulary history landed as the local saved-words store described above,
+with clipboard TSV as its only export surface. The feature still intentionally
+excludes OCR, machine translation, sentence explanations, and in-app
+spaced repetition. Per-character kanji readings are also not inferred;
+furigana is displayed at the verified word level. Those can be added behind
+separate local capability ports without changing standard playback or sending
+subtitle text away from the device.

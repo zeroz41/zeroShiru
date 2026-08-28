@@ -50,6 +50,8 @@ Future<void> main() async {
           catalogRepositoryProvider.overrideWithValue(services.catalog),
           episodeRepositoryProvider.overrideWithValue(services.episodes),
           trackingRepositoryProvider.overrideWithValue(services.tracking),
+          watchHistoryProvider.overrideWithValue(services.watchHistory),
+          vocabularyProvider.overrideWithValue(services.vocabulary),
           settingsRepositoryProvider.overrideWithValue(services.settings),
           sourceResolverProvider.overrideWithValue(services.sources),
           credentialStoreProvider.overrideWithValue(services.credentials),

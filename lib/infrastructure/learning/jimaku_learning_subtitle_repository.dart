@@ -26,7 +26,7 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
   // A matcher change gets a new cache generation: a cached subtitle is a
   // release decision, not merely a downloaded file. Never let a decision made
   // by an older ranker silently override the current release-aware result.
-  static const _cacheVersion = 'v6-archive-formats';
+  static const _cacheVersion = 'v8-learning-cues';
   static const _maximumArchiveExpansion = 64 * 1024 * 1024;
   static const _maximumSubtitleBytes = 8 * 1024 * 1024;
   static const _maximumArchiveEntries = 2048;
@@ -174,8 +174,11 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
           return _CachedSubtitle(target, remote.name);
         }
       }
-      final bytes = await _download(remote.url);
-      if (!_containsJapanese(bytes)) return null;
+      final bytes = _prepareJapaneseSubtitle(
+        await _download(remote.url),
+        extension,
+      );
+      if (bytes == null) return null;
       await directory.create(recursive: true);
       await _writeAtomically(target, bytes);
       await _prune(directory, keeping: target);
@@ -225,13 +228,13 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
                 ),
           );
       for (final member in candidates) {
-        final bytes = await archive.readBytes(
-          member,
-          maxSize: _maximumSubtitleBytes,
-        );
-        if (!_containsJapanese(bytes)) continue;
         final memberName = p.basename(member.path);
         final memberExtension = p.extension(memberName).toLowerCase();
+        final bytes = _prepareJapaneseSubtitle(
+          await archive.readBytes(member, maxSize: _maximumSubtitleBytes),
+          memberExtension,
+        );
+        if (bytes == null) continue;
         final target = File(
           p.join(
             directory.path,
@@ -431,6 +434,239 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
     return false;
   }
 
+  static Uint8List? _prepareJapaneseSubtitle(
+    List<int> source,
+    String extension,
+  ) {
+    if (!_containsJapanese(source)) return null;
+    if (extension != '.ass' && extension != '.ssa') {
+      return Uint8List.fromList(source);
+    }
+    final text = utf8.decode(source, allowMalformed: true);
+    final prepared = utf8.encode(_japaneseOnlyAss(text));
+    return _containsJapanese(prepared) ? Uint8List.fromList(prepared) : null;
+  }
+
+  /// Prepares ASS/SSA for the plain-text Learning renderer.
+  ///
+  /// Foreign event layers are removed from bilingual downloads. Adjacent
+  /// animation frames with the same visible Japanese text are also coalesced:
+  /// karaoke typesetting commonly emits dozens of alpha/clip frames for one
+  /// lyric, but Learning needs one stable textual cue rather than a new cue on
+  /// every highlighted syllable.
+  static String _japaneseOnlyAss(String source) {
+    final lines = source.split('\n');
+    final events = <_AssDialogue>[];
+    var inEvents = false;
+    List<String>? format;
+    for (final (index, original) in lines.indexed) {
+      final line = original.trimRight();
+      if (line.startsWith('[') && line.endsWith(']')) {
+        inEvents = line.toLowerCase() == '[events]';
+        format = null;
+        continue;
+      }
+      if (!inEvents) continue;
+      final separator = line.indexOf(':');
+      if (separator < 0) continue;
+      final kind = line.substring(0, separator).trim().toLowerCase();
+      final body = line.substring(separator + 1).trimLeft();
+      if (kind == 'format') {
+        format = body
+            .split(',')
+            .map((field) => field.trim().toLowerCase())
+            .toList(growable: false);
+        continue;
+      }
+      if (kind != 'dialogue' || format == null) continue;
+      final fields = _assFields(body, format.length);
+      if (fields == null) continue;
+      final textIndex = format.indexOf('text');
+      if (textIndex < 0 || textIndex >= fields.length) continue;
+      final styleIndex = format.indexOf('style');
+      final style = styleIndex < 0
+          ? ''
+          : fields[styleIndex].trim().toLowerCase();
+      final startIndex = format.indexOf('start');
+      final endIndex = format.indexOf('end');
+      if (startIndex < 0 || endIndex < 0) continue;
+      final start = _assTimestamp(fields[startIndex]);
+      final end = _assTimestamp(fields[endIndex]);
+      if (start == null || end == null) continue;
+      final visible = fields[textIndex]
+          .replaceAll(_assOverridePattern, '')
+          .replaceAll(r'\N', '\n')
+          .replaceAll(r'\n', '\n')
+          .replaceAll(r'\h', ' ');
+      events.add(
+        _AssDialogue(
+          lineIndex: index,
+          style: style,
+          start: start,
+          end: end,
+          visible: visible.replaceAll(_assWhitespacePattern, ' ').trim(),
+          fields: fields,
+          endIndex: endIndex,
+          japanese: _containsJapaneseText(visible),
+          foreign: _containsForeignScriptText(visible),
+        ),
+      );
+    }
+
+    final japaneseCount = events.where((event) => event.japanese).length;
+    final foreignCount = events
+        .where((event) => !event.japanese && event.foreign)
+        .length;
+    final removed = <int>{};
+    if (japaneseCount >= 2 && foreignCount >= 2) {
+      final japaneseByStyle = <String, int>{};
+      final foreignByStyle = <String, int>{};
+      for (final event in events) {
+        if (event.japanese) {
+          japaneseByStyle.update(
+            event.style,
+            (count) => count + 1,
+            ifAbsent: () => 1,
+          );
+        } else if (event.foreign) {
+          foreignByStyle.update(
+            event.style,
+            (count) => count + 1,
+            ifAbsent: () => 1,
+          );
+        }
+      }
+      final japaneseStyles = <String>{
+        for (final style in {...japaneseByStyle.keys, ...foreignByStyle.keys})
+          if (_japaneseAssStylePattern.hasMatch(style) ||
+              ((japaneseByStyle[style] ?? 0) > 0 &&
+                  (foreignByStyle[style] ?? 0) == 0))
+            style,
+      };
+      removed.addAll({
+        for (final event in events)
+          if (!event.japanese &&
+              event.foreign &&
+              !japaneseStyles.contains(event.style))
+            event.lineIndex,
+      });
+    }
+
+    final replacementEnds = <int, Duration>{};
+    final active = <String, _AssDialogue>{};
+    final chronological = events.where((event) => event.japanese).toList()
+      ..sort((left, right) {
+        final start = left.start.compareTo(right.start);
+        return start != 0 ? start : left.lineIndex.compareTo(right.lineIndex);
+      });
+    for (final event in chronological) {
+      if (event.visible.isEmpty) continue;
+      final signature = '${event.style}\u0000${event.visible}';
+      final previous = active[signature];
+      final previousEnd = previous == null
+          ? null
+          : replacementEnds[previous.lineIndex] ?? previous.end;
+      if (previous != null &&
+          previousEnd != null &&
+          event.start <= previousEnd + const Duration(milliseconds: 80)) {
+        removed.add(event.lineIndex);
+        if (event.end > previousEnd) {
+          replacementEnds[previous.lineIndex] = event.end;
+        }
+      } else {
+        active[signature] = event;
+      }
+    }
+
+    if (removed.isEmpty && replacementEnds.isEmpty) return source;
+    final eventsByLine = {for (final event in events) event.lineIndex: event};
+    return [
+      for (final (index, line) in lines.indexed)
+        if (!removed.contains(index))
+          if (replacementEnds[index] case final end?)
+            eventsByLine[index]!.withEnd(end)
+          else
+            line,
+    ].join('\n');
+  }
+
+  static Duration? _assTimestamp(String value) {
+    final match = _assTimestampPattern.firstMatch(value.trim());
+    if (match == null) return null;
+    final hours = int.tryParse(match.group(1)!);
+    final minutes = int.tryParse(match.group(2)!);
+    final seconds = int.tryParse(match.group(3)!);
+    final fraction = match.group(4) ?? '0';
+    if (hours == null || minutes == null || seconds == null) return null;
+    final milliseconds = int.tryParse(fraction.padRight(3, '0'));
+    if (milliseconds == null) return null;
+    return Duration(
+      hours: hours,
+      minutes: minutes,
+      seconds: seconds,
+      milliseconds: milliseconds,
+    );
+  }
+
+  static String _formatAssTimestamp(Duration value) {
+    final totalCentiseconds = value.inMilliseconds ~/ 10;
+    final centiseconds = totalCentiseconds % 100;
+    final totalSeconds = totalCentiseconds ~/ 100;
+    final seconds = totalSeconds % 60;
+    final totalMinutes = totalSeconds ~/ 60;
+    final minutes = totalMinutes % 60;
+    final hours = totalMinutes ~/ 60;
+    return '$hours:${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}.'
+        '${centiseconds.toString().padLeft(2, '0')}';
+  }
+
+  static List<String>? _assFields(String source, int count) {
+    if (count <= 0) return null;
+    final fields = <String>[];
+    var start = 0;
+    for (var index = 1; index < count; index++) {
+      final comma = source.indexOf(',', start);
+      if (comma < 0) return null;
+      fields.add(source.substring(start, comma));
+      start = comma + 1;
+    }
+    fields.add(source.substring(start));
+    return fields;
+  }
+
+  static bool _containsJapaneseText(String text) => text.runes.any(
+    (rune) =>
+        (rune >= 0x3040 && rune <= 0x30ff) ||
+        (rune >= 0x3400 && rune <= 0x9fff) ||
+        (rune >= 0xf900 && rune <= 0xfaff),
+  );
+
+  static bool _containsForeignScriptText(String text) => text.runes.any(
+    (rune) =>
+        (rune >= 0x0041 && rune <= 0x005a) ||
+        (rune >= 0x0061 && rune <= 0x007a) ||
+        (rune >= 0x00c0 && rune <= 0x024f) ||
+        (rune >= 0x0400 && rune <= 0x052f) ||
+        (rune >= 0x0600 && rune <= 0x06ff) ||
+        (rune >= 0x0750 && rune <= 0x077f) ||
+        (rune >= 0x08a0 && rune <= 0x08ff) ||
+        (rune >= 0x0900 && rune <= 0x097f) ||
+        (rune >= 0x0e00 && rune <= 0x0e7f) ||
+        (rune >= 0x1100 && rune <= 0x11ff) ||
+        (rune >= 0x3130 && rune <= 0x318f) ||
+        (rune >= 0xac00 && rune <= 0xd7af),
+  );
+
+  static final _assOverridePattern = RegExp(r'\{\\[^}]*\}');
+  static final _assWhitespacePattern = RegExp(r'\s+');
+  static final _assTimestampPattern = RegExp(
+    r'^(\d+):(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$',
+  );
+  static final _japaneseAssStylePattern = RegExp(
+    r'(^|[ ._-])(ja|jp|jpn|japanese)($|[ ._-])',
+  );
+
   static int _candidateScore(String name, LearningSubtitleQuery query) {
     final lower = name.toLowerCase();
     final extension = p.extension(lower);
@@ -623,6 +859,38 @@ class JimakuLearningSubtitleRepository implements LearningSubtitleRepository {
     // for ASS over SRT, while common show-title words still cancel out across
     // otherwise equivalent candidates.
     return left.intersection(right).length * 3;
+  }
+}
+
+class _AssDialogue {
+  const _AssDialogue({
+    required this.lineIndex,
+    required this.style,
+    required this.start,
+    required this.end,
+    required this.visible,
+    required this.fields,
+    required this.endIndex,
+    required this.japanese,
+    required this.foreign,
+  });
+
+  final int lineIndex;
+  final String style;
+  final Duration start;
+  final Duration end;
+  final String visible;
+  final List<String> fields;
+  final int endIndex;
+  final bool japanese;
+  final bool foreign;
+
+  String withEnd(Duration value) {
+    final rewritten = fields.toList(growable: false);
+    rewritten[endIndex] = JimakuLearningSubtitleRepository._formatAssTimestamp(
+      value,
+    );
+    return 'Dialogue: ${rewritten.join(',')}';
   }
 }
 

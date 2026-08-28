@@ -45,6 +45,8 @@ averageScore,
 genres,
 synonyms,
 isAdult,
+source(version: 3),
+studios(isMain: true) { nodes { name } },
 coverImage { extraLarge, large, medium, color },
 bannerImage,
 nextAiringEpisode { episode, airingAt },
@@ -261,7 +263,8 @@ class AnilistClient {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'Authorization': ?auth,
+          // AniList requires the OAuth Bearer scheme; a raw token is refused.
+          'Authorization': ?(auth == null ? null : 'Bearer $auth'),
         },
         body: BytesBody(
           utf8.encode(jsonEncode({'query': query, 'variables': vars})),
@@ -516,6 +519,48 @@ class AnilistClient {
             ),
           ),
     ];
+  }
+
+  /// The community's "users also liked" list for one show, best-rated first,
+  /// carrying the full media fragment so results render as cards directly.
+  Future<List<Media>> similarMedia(int mediaId) async {
+    final query =
+        '''
+    query(\$id: Int) {
+      Media(id: \$id, type: ANIME) {
+        id,
+        recommendations(sort: RATING_DESC, perPage: 25) {
+          edges {
+            node {
+              rating,
+              mediaRecommendation { $anilistMediaFragment }
+            }
+          }
+        }
+      }
+    }''';
+    final res = await _cachedRequest(
+      CacheStores.queryRecommendations,
+      'similar:$mediaId',
+      _ttlMinutes(1500, 2000),
+      () => request(query, {'id': mediaId, 'sort': 'OMIT'}),
+    );
+    final edges =
+        _dig(res, ['data', 'Media', 'recommendations'])?['edges'] as List? ??
+        const [];
+    final rated = <(int, Media)>[];
+    for (final edge in edges.whereType<Map>()) {
+      final node = edge['node'];
+      if (node is! Map) continue;
+      final raw = node['mediaRecommendation'];
+      if (raw is! Map) continue;
+      rated.add((
+        (node['rating'] as num?)?.toInt() ?? 0,
+        mediaFromAnilistJson(raw.cast<String, dynamic>()),
+      ));
+    }
+    rated.sort((a, b) => b.$1.compareTo(a.$1));
+    return [for (final entry in rated) entry.$2];
   }
 
   Future<List<AnilistRecommendation>> recommendations(int mediaId) async {
@@ -784,5 +829,12 @@ Media mediaFromAnilistJson(Map<String, dynamic> json) {
         : null,
     listEntry: listEntry,
     synonyms: (json['synonyms'] as List? ?? const []).cast<String>(),
+    studios: [
+      for (final node
+          in (_dig(json, ['studios'])?['nodes'] as List? ?? const [])
+              .whereType<Map>())
+        if (node['name'] is String) node['name'] as String,
+    ],
+    sourceMaterial: json['source'] as String?,
   );
 }

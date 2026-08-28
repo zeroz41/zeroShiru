@@ -38,7 +38,7 @@ void main() {
     );
     addTearDown(tools.dispose);
 
-    final tokens = await tools.tokenizeJapanese('彼は寿司を食べたい。');
+    final tokens = await tools.tokenize('彼は寿司を食べたい。');
 
     expect(tokens.map((token) => token.surface).join(), '彼は寿司を食べたい。');
     expect(tokens.where((token) => token.lookupable), isNotEmpty);
@@ -69,7 +69,7 @@ void main() {
     );
     addTearDown(subscription.cancel);
 
-    await tools.installJapaneseEnglishDictionary();
+    await tools.installDictionary();
     await Future<void>.delayed(Duration.zero);
 
     expect(tools.dictionaryStatus.installed, isTrue);
@@ -88,9 +88,41 @@ void main() {
     expect(definitions.first.term, '食べる');
     expect(definitions.first.definitions, contains('to eat'));
 
-    await tools.removeJapaneseEnglishDictionary();
+    await tools.removeDictionary();
     expect(tools.dictionaryStatus.phase, LearningDictionaryPhase.missing);
   });
+
+  test(
+    'repeated cues and lookups are served from the analysis caches',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('zero-cache-');
+      addTearDown(() => directory.delete(recursive: true));
+      final tools = LocalJapaneseLearningTools(
+        databasePath: '${directory.path}/learning.db',
+        transport: _BytesTransport(_testDictionaryBytes()),
+      );
+      addTearDown(tools.dispose);
+      await tools.installDictionary();
+
+      // A seek-back replays the identical cue text: the second call must reuse
+      // the first result instead of another isolate round trip.
+      final first = await tools.tokenize('彼は寿司を食べたい。');
+      final second = await tools.tokenize('彼は寿司を食べたい。');
+      expect(identical(first, second), isTrue);
+
+      const token = LearningToken(surface: '食べました', start: 0, end: 5);
+      final lookupFirst = await tools.lookup(token);
+      final lookupSecond = await tools.lookup(token);
+      expect(identical(lookupFirst, lookupSecond), isTrue);
+      expect(lookupFirst.first.term, '食べる');
+
+      // Removing the dictionary invalidates cached analysis wholesale.
+      await tools.removeDictionary();
+      expect(await tools.lookup(token), isEmpty);
+      final afterRemoval = await tools.tokenize('彼は寿司を食べたい。');
+      expect(identical(first, afterRemoval), isFalse);
+    },
+  );
 
   test('Yomitan term banks import into a replaceable SQLite cache', () async {
     final directory = await Directory.systemTemp.createTemp('zero-jmdict-');
@@ -128,11 +160,11 @@ void main() {
       transport: _NoNetworkTransport(),
     );
     addTearDown(tools.dispose);
-    final tokens = await tools.tokenizeJapanese('寿司を食べたい。');
+    final tokens = await tools.tokenize('寿司を食べたい。');
     final verb = tokens.firstWhere((token) => token.baseForm == '食べる');
     expect(verb.surface, '食べたい');
-    expect(verb.reading, 'たべる');
-    expect(verb.romanization, 'taberu');
+    expect(verb.reading, 'たべたい');
+    expect(verb.romanization, 'tabetai');
     expect(verb.partOfSpeech, 'ichidan verb');
   });
 }

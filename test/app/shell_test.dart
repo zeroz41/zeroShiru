@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:zero/app/shell.dart';
 import 'package:zero/app/theme/theme.dart';
 import 'package:zero/app/theme/tokens.dart';
+import 'package:zero/application/library/providers.dart';
+import 'package:zero/domain/models/media.dart';
+import 'package:zero/domain/models/tracking_account.dart';
+import 'package:zero/domain/ports/ports.dart';
 
 GoRouter _router(String initial) {
   return GoRouter(
@@ -168,4 +173,148 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('You’re all caught up'), findsOneWidget);
   });
+
+  testWidgets('profile account actions fit in the narrow mobile menu', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final tracking = _ConnectableTracking(
+      initialAccounts: const [
+        TrackingAccount(
+          service: TrackingAccountService.aniList,
+          displayName: 'A deliberately long account name',
+          health: TrackingAccountHealth.expired,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [trackingRepositoryProvider.overrideWithValue(tracking)],
+        child: _app(_router('/home')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Profile'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Reconnect required'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.byKey(const ValueKey('account-actions-aniList')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Reconnect'), findsOneWidget);
+    expect(find.text('Disconnect'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the profile panel connects AniList from a pasted redirect', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final tracking = _ConnectableTracking();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [trackingRepositoryProvider.overrideWithValue(tracking)],
+        child: _app(_router('/home')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.account_circle_outlined));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('connect-anilist')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('anilist-redirect')),
+      'shiru://alauth#access_token=pasted-token&token_type=Bearer',
+    );
+    await tester.tap(find.byKey(const ValueKey('anilist-connect-submit')));
+    await tester.pumpAndSettle();
+
+    expect(tracking.pasted, [
+      'shiru://alauth#access_token=pasted-token&token_type=Bearer',
+    ]);
+    expect(find.byKey(const ValueKey('anilist-redirect')), findsNothing);
+    expect(find.text('AniList connected as Frieren'), findsOneWidget);
+  });
+
+  testWidgets('a rejected paste keeps the dialog open with the reason', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final tracking = _ConnectableTracking(reject: true);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [trackingRepositoryProvider.overrideWithValue(tracking)],
+        child: _app(_router('/home')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.account_circle_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('connect-anilist')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('anilist-redirect')),
+      'not a token',
+    );
+    await tester.tap(find.byKey(const ValueKey('anilist-connect-submit')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('anilist-redirect')), findsOneWidget);
+    expect(
+      find.textContaining('does not contain an AniList token'),
+      findsOneWidget,
+    );
+  });
+}
+
+class _ConnectableTracking implements TrackingRepository {
+  _ConnectableTracking({this.reject = false, this.initialAccounts = const []});
+
+  final bool reject;
+  final List<TrackingAccount> initialAccounts;
+  final pasted = <String>[];
+
+  @override
+  Future<List<TrackingAccount>> accounts() async => initialAccounts;
+
+  @override
+  Future<TrackingAccount> connectAniList(String text) async {
+    if (reject) {
+      throw ArgumentError('That text does not contain an AniList token.');
+    }
+    pasted.add(text);
+    return const TrackingAccount(
+      service: TrackingAccountService.aniList,
+      displayName: 'Frieren',
+      health: TrackingAccountHealth.connected,
+    );
+  }
+
+  @override
+  Future<void> disconnect(TrackingAccountService service) async {}
+
+  @override
+  Future<Media?> mediaById(int id) async => null;
+
+  @override
+  Future<List<Media>> search(String query, {int page = 1}) async => const [];
+
+  @override
+  Future<List<Media>> userList(ListStatus status) async => const [];
+
+  @override
+  Future<void> updateProgress(Media media, int episode) async {}
 }

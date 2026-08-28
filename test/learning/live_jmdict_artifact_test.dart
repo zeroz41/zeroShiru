@@ -39,9 +39,7 @@ void main() {
       expect(tools.dictionaryStatus.entryCount, count);
 
       final lookupWatch = Stopwatch()..start();
-      final tokens = await tools.tokenizeJapanese(
-        '昨日、友達と寿司を食べました。日本語を勉強しています。',
-      );
+      final tokens = await tools.tokenize('昨日、友達と寿司を食べました。日本語を勉強しています。');
       lookupWatch.stop();
       expect(
         tokens.map((token) => token.surface).join(),

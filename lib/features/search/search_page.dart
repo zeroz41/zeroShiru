@@ -64,6 +64,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   late DiscoveryFilters _filters;
   _GridDensity _density = _GridDensity.compact;
   Timer? _searchDebounce;
+  Timer? _filterDebounce;
   int _generation = 0;
   int _nextPage = 1;
   bool _hasNextPage = true;
@@ -71,6 +72,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   bool _refreshing = false;
   bool _failedRefresh = false;
   bool _filtersOpen = false;
+  bool _animateEntrance = true;
   Object? _error;
 
   @override
@@ -89,6 +91,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _filterDebounce?.cancel();
     _search.dispose();
     _scroll
       ..removeListener(_loadNearEnd)
@@ -110,6 +113,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   void _submitSearch() {
     _searchDebounce?.cancel();
+    _filterDebounce?.cancel();
     _load(reset: true);
   }
 
@@ -135,7 +139,12 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           .browse(_filters.toQuery(search: _search.text, page: pageNumber));
       if (!mounted || requestGeneration != _generation) return;
       setState(() {
-        if (reset) _items.clear();
+        if (reset) {
+          // Replacing an already-visible grid must not replay every tile's
+          // staggered entrance — that reads as a full reload.
+          _animateEntrance = _items.isEmpty;
+          _items.clear();
+        }
         final known = {for (final media in _items) media.id};
         _items.addAll(page.items.where((media) => known.add(media.id)));
         _hasNextPage = page.hasNextPage;
@@ -163,6 +172,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   void _clearSearch() {
     _searchDebounce?.cancel();
+    _filterDebounce?.cancel();
     _search.clear();
     setState(() {});
     _load(reset: true);
@@ -171,7 +181,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   void _updateFilters(DiscoveryFilters next) {
     if (identical(next, _filters)) return;
     setState(() => _filters = next);
-    _load(reset: true);
+    // Short debounce so tapping three genre chips costs one request, not
+    // three back-to-back resets.
+    _filterDebounce?.cancel();
+    _filterDebounce = Timer(
+      const Duration(milliseconds: 280),
+      () => _load(reset: true),
+    );
   }
 
   void _clearFilters() => _updateFilters(const DiscoveryFilters());
@@ -286,6 +302,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             return _ResultEntrance(
               key: ValueKey(media.id),
               order: index,
+              animate: _animateEntrance,
               child: LayoutBuilder(
                 builder: (context, constraints) => MediaPoster(
                   media: media,
@@ -785,10 +802,10 @@ class _DiscoveryPanel extends StatelessWidget {
                   MediaFormat.special,
                   MediaFormat.music,
                 ])
-                  FilterChip(
-                    label: Text(_formatLabel(format)),
+                  _PillChip(
+                    label: _formatLabel(format),
                     selected: filters.formats.contains(format),
-                    onSelected: (_) => onToggleFormat(format),
+                    onSelected: () => onToggleFormat(format),
                   ),
               ],
             ),
@@ -797,10 +814,10 @@ class _DiscoveryPanel extends StatelessWidget {
               title: 'Status',
               children: [
                 for (final status in MediaStatus.values)
-                  FilterChip(
-                    label: Text(_statusLabel(status)),
+                  _PillChip(
+                    label: _statusLabel(status),
                     selected: filters.statuses.contains(status),
-                    onSelected: (_) => onToggleStatus(status),
+                    onSelected: () => onToggleStatus(status),
                   ),
               ],
             ),
@@ -809,15 +826,52 @@ class _DiscoveryPanel extends StatelessWidget {
               title: 'Genres',
               children: [
                 for (final genre in _genres)
-                  FilterChip(
-                    label: Text(genre),
+                  _PillChip(
+                    label: genre,
                     selected: filters.genres.contains(genre),
-                    onSelected: (_) => onToggleGenre(genre),
+                    onSelected: () => onToggleGenre(genre),
                   ),
               ],
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Quiet stadium pill for the filter groups: bordered and muted at rest,
+/// accent-tinted when active, no checkmark reflow.
+class _PillChip extends StatelessWidget {
+  const _PillChip({
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.zeroPalette;
+    return FilterChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => onSelected(),
+      showCheckmark: false,
+      visualDensity: VisualDensity.compact,
+      backgroundColor: colors.panel,
+      selectedColor: colors.navSelected,
+      shape: StadiumBorder(
+        side: BorderSide(
+          color: selected ? colors.accentSoft : colors.border,
+        ),
+      ),
+      labelStyle: Theme.of(context).textTheme.labelMedium?.copyWith(
+        color: selected ? colors.accentSoft : colors.textSecondary,
+        fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
       ),
     );
   }
@@ -944,23 +998,18 @@ class _FilterSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        if (loading)
-          const Padding(
-            padding: EdgeInsets.only(right: ZeroTokens.space3),
-            child: SizedBox.square(
-              dimension: 15,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          )
-        else
-          Padding(
-            padding: const EdgeInsets.only(right: ZeroTokens.space3),
-            child: Text(
-              resultCount == 0 ? 'Discover' : '$resultCount loaded',
-              style: Theme.of(context).textTheme.labelMedium
-                  ?.copyWith(color: context.zeroPalette.textSecondary),
-            ),
+        Padding(
+          padding: const EdgeInsets.only(right: ZeroTokens.space3),
+          child: Text(
+            // Keep the label stable while a refresh runs: swapping it for a
+            // spinner made every filter tap read as a page reload.
+            resultCount == 0
+                ? (loading ? 'Loading…' : 'Discover')
+                : '$resultCount loaded',
+            style: Theme.of(context).textTheme.labelMedium
+                ?.copyWith(color: context.zeroPalette.textSecondary),
           ),
+        ),
         Expanded(
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -1045,13 +1094,20 @@ class _ActiveFilterChip extends StatelessWidget {
 }
 
 class _ResultEntrance extends StatelessWidget {
-  const _ResultEntrance({super.key, required this.order, required this.child});
+  const _ResultEntrance({
+    super.key,
+    required this.order,
+    required this.child,
+    this.animate = true,
+  });
 
   final int order;
   final Widget child;
+  final bool animate;
 
   @override
   Widget build(BuildContext context) {
+    if (!animate) return RepaintBoundary(child: child);
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),

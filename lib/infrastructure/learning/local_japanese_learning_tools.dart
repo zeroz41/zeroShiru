@@ -33,11 +33,44 @@ class LocalJapaneseLearningTools implements LanguageLearningTools {
   final HttpTransport transport;
   final Database _db;
   final _JapaneseAnalysisWorker _analysisWorker;
+
+  @override
+  String get languageCode => 'ja';
   final _statusController =
       StreamController<LearningDictionaryStatus>.broadcast();
   late LearningDictionaryStatus _status;
   Future<void>? _activeInstall;
   var _disposed = false;
+
+  // Subtitle text repeats constantly — every seek-back replays the same cues
+  // and every hover re-asks about the same word — so both hot paths keep a
+  // small insertion-ordered LRU. Entries are invalidated wholesale whenever
+  // the installed dictionary changes.
+  static const _tokenizeCacheLimit = 96;
+  static const _lookupCacheLimit = 256;
+  final _tokenizeCache = <String, List<LearningToken>>{};
+  final _lookupCache = <String, List<LearningDefinition>>{};
+
+  void _clearAnalysisCaches() {
+    _tokenizeCache.clear();
+    _lookupCache.clear();
+  }
+
+  static V? _recallLru<V>(Map<String, V> cache, String key) {
+    final hit = cache.remove(key);
+    if (hit != null) cache[key] = hit;
+    return hit;
+  }
+
+  static void _storeLru<V>(
+    Map<String, V> cache,
+    String key,
+    V value,
+    int limit,
+  ) {
+    cache[key] = value;
+    if (cache.length > limit) cache.remove(cache.keys.first);
+  }
 
   @override
   LearningDictionaryStatus get dictionaryStatus => _status;
@@ -52,9 +85,20 @@ class LocalJapaneseLearningTools implements LanguageLearningTools {
   }
 
   @override
-  Future<List<LearningToken>> tokenizeJapanese(String text) async {
+  Future<List<LearningToken>> tokenize(String text) async {
     if (_disposed || text.trim().isEmpty) return const [];
-    return _analysisWorker.tokenize(text, useDictionary: _status.installed);
+    final useDictionary = _status.installed;
+    final cacheKey = '${useDictionary ? 'd' : 'p'}\u0000$text';
+    final cached = _recallLru(_tokenizeCache, cacheKey);
+    if (cached != null) return cached;
+    final tokens = await _analysisWorker.tokenize(
+      text,
+      useDictionary: useDictionary,
+    );
+    if (!_disposed) {
+      _storeLru(_tokenizeCache, cacheKey, tokens, _tokenizeCacheLimit);
+    }
+    return tokens;
   }
 
   @override
@@ -65,6 +109,14 @@ class LocalJapaneseLearningTools implements LanguageLearningTools {
     if (_disposed || !_status.installed || !token.lookupable || limit <= 0) {
       return const [];
     }
+    final cacheKey = [
+      token.surface,
+      token.baseForm ?? '',
+      token.reading ?? '',
+      '$limit',
+    ].join('\u0000');
+    final cached = _recallLru(_lookupCache, cacheKey);
+    if (cached != null) return cached;
     final candidates = <String>{
       if (_usable(token.baseForm)) token.baseForm!,
       ...japaneseLookupCandidates(token.surface),
@@ -98,11 +150,12 @@ class LocalJapaneseLearningTools implements LanguageLearningTools {
         );
       }
     }
+    _storeLru(_lookupCache, cacheKey, results, _lookupCacheLimit);
     return results;
   }
 
   @override
-  Future<void> installJapaneseEnglishDictionary() {
+  Future<void> installDictionary() {
     final active = _activeInstall;
     if (active != null) return active;
     final install = _install();
@@ -155,6 +208,7 @@ class LocalJapaneseLearningTools implements LanguageLearningTools {
         ),
       );
       if (_disposed) return;
+      _clearAnalysisCaches();
       _setStatus(_readStatus(_db));
     } catch (error) {
       if (_disposed) return;
@@ -172,7 +226,7 @@ class LocalJapaneseLearningTools implements LanguageLearningTools {
   }
 
   @override
-  Future<void> removeJapaneseEnglishDictionary() async {
+  Future<void> removeDictionary() async {
     if (_disposed || _activeInstall != null) return;
     _db.execute('BEGIN');
     try {
@@ -183,6 +237,7 @@ class LocalJapaneseLearningTools implements LanguageLearningTools {
       _db.execute('ROLLBACK');
       rethrow;
     }
+    _clearAnalysisCaches();
     _setStatus(const LearningDictionaryStatus.missing());
   }
 
@@ -268,7 +323,11 @@ List<LearningToken> _enrichTokens(Database db, List<LearningToken> tokens) {
         .join();
     final reading = match.reading == null
         ? null
-        : katakanaToHiragana(match.reading!);
+        : _readingForSurface(
+            surface: surface,
+            term: match.term,
+            dictionaryReading: match.reading!,
+          );
     output.add(
       LearningToken(
         surface: surface,
@@ -285,6 +344,42 @@ List<LearningToken> _enrichTokens(Database db, List<LearningToken> tokens) {
     index = matchedEnd;
   }
   return output;
+}
+
+/// Adapts a dictionary-form reading to the inflected text that is actually on
+/// screen. Dictionary hits intentionally retain [term] as their lookup key,
+/// but showing its unmodified reading for `食べたい` (`たべる`) drops the
+/// visible `たい` ending from both furigana and romaji.
+String _readingForSurface({
+  required String surface,
+  required String term,
+  required String dictionaryReading,
+}) {
+  final reading = katakanaToHiragana(dictionaryReading);
+  if (surface == term) return reading;
+  if (_isKanaOnly(surface)) return katakanaToHiragana(surface);
+
+  final surfaceRunes = surface.runes.toList(growable: false);
+  final termRunes = term.runes.toList(growable: false);
+  var shared = 0;
+  while (shared < surfaceRunes.length &&
+      shared < termRunes.length &&
+      surfaceRunes[shared] == termRunes[shared]) {
+    shared++;
+  }
+  if (shared == 0) return reading;
+
+  final termEnding = String.fromCharCodes(termRunes.skip(shared));
+  final surfaceEnding = String.fromCharCodes(surfaceRunes.skip(shared));
+  if (termEnding.isEmpty ||
+      !_isKanaOnly(termEnding) ||
+      !_isKanaOnly(surfaceEnding)) {
+    return reading;
+  }
+  final normalizedTermEnding = katakanaToHiragana(termEnding);
+  if (!reading.endsWith(normalizedTermEnding)) return reading;
+  return '${reading.substring(0, reading.length - normalizedTermEnding.length)}'
+      '${katakanaToHiragana(surfaceEnding)}';
 }
 
 Map<String, _DictionaryMatch> _dictionaryMatches(

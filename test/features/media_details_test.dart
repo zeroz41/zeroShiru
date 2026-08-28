@@ -9,6 +9,7 @@ import 'package:zero/application/playback/request.dart';
 import 'package:zero/application/settings/providers.dart';
 import 'package:zero/application/sources/providers.dart';
 import 'package:zero/domain/models/availability.dart';
+import 'package:zero/domain/models/catalog.dart';
 import 'package:zero/domain/models/media.dart';
 import 'package:zero/domain/models/settings.dart';
 import 'package:zero/domain/models/source_extension.dart';
@@ -126,6 +127,70 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('source-results')), findsNothing);
     expect(find.byKey(const ValueKey('episode-list')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('series facts include studio, source, airing countdown, and '
+      'a more-like-this rail', (tester) async {
+    tester.view.physicalSize = const Size(1400, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final media = Media(
+      id: 7,
+      title: const MediaTitle(userPreferred: 'Modern Details Show'),
+      format: MediaFormat.tv,
+      status: MediaStatus.releasing,
+      episodes: 12,
+      duration: 24,
+      averageScore: 81,
+      genres: const ['Action'],
+      description: 'A synopsis.',
+      studios: const ['MAPPA'],
+      sourceMaterial: 'LIGHT_NOVEL',
+      nextAiringEpisode: AiringEpisode(
+        episode: 13,
+        airingAt: DateTime.now().add(const Duration(days: 2, hours: 4)),
+      ),
+    );
+    const similar = Media(
+      id: 900,
+      title: MediaTitle(userPreferred: 'Similar Show'),
+      averageScore: 77,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(
+            _SettingsRepository(
+              const Settings(debridService: DebridService.torbox),
+            ),
+          ),
+          credentialStoreProvider.overrideWithValue(
+            const _Credentials('torbox-key'),
+          ),
+          sourceResolverProvider.overrideWithValue(const _Sources()),
+          catalogRepositoryProvider.overrideWithValue(
+            const _SimilarCatalog([similar]),
+          ),
+          debridClientsProvider.overrideWithValue({
+            DebridService.torbox: const _Debrid(),
+          }),
+        ],
+        child: MaterialApp(
+          theme: buildZeroTheme(),
+          home: MediaDetails(media: media),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('MAPPA'), findsOneWidget);
+    expect(find.text('From light novel'), findsOneWidget);
+    expect(find.textContaining('Ep 13 in 2d'), findsOneWidget);
+    expect(find.text('More like this'), findsOneWidget);
+    expect(find.text('Similar Show'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -991,4 +1056,20 @@ class _Credentials implements CredentialStore {
 
   @override
   Future<void> delete(String key) async {}
+}
+
+class _SimilarCatalog implements CatalogRepository {
+  const _SimilarCatalog(this.similarItems);
+
+  final List<Media> similarItems;
+
+  @override
+  Future<MediaPage> browse(MediaBrowseQuery query) async =>
+      const MediaPage(items: [], hasNextPage: false);
+
+  @override
+  Future<Media?> mediaById(int id) async => null;
+
+  @override
+  Future<List<Media>> similar(int mediaId) async => similarItems;
 }

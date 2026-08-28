@@ -1,9 +1,8 @@
 /// Local-only language-learning capabilities used by the player and settings.
 ///
-/// The interface deliberately has no translation or LLM method. Japanese
-/// subtitle text is tokenized on-device, dictionary lookup is against the
-/// user's local cache, and translated lines come from subtitle tracks the
-/// media already provides.
+/// The interface deliberately has no translation or LLM method. Study text is
+/// tokenized on-device, dictionary lookup is against the user's local cache,
+/// and translated lines come from subtitle tracks the media already provides.
 library;
 
 enum LearningDictionaryPhase { missing, downloading, importing, ready, failed }
@@ -75,21 +74,26 @@ class LearningDefinition {
 }
 
 abstract interface class LanguageLearningTools {
+  /// BCP-47 language handled by this installed analyzer (currently `ja`).
+  /// The player treats this as capability metadata instead of assuming that
+  /// every future learning implementation targets Japanese.
+  String get languageCode;
+
   LearningDictionaryStatus get dictionaryStatus;
   Stream<LearningDictionaryStatus> get dictionaryStatuses;
 
   /// Segments a short subtitle cue and enriches it from local language data.
-  Future<List<LearningToken>> tokenizeJapanese(String text);
+  Future<List<LearningToken>> tokenize(String text);
 
   /// Looks up a token only in the locally installed dictionary.
   Future<List<LearningDefinition>> lookup(LearningToken token, {int limit = 6});
 
-  /// Downloads the freely redistributable Japanese-English dictionary and
-  /// imports it into the app-support cache. No playback content is uploaded.
-  Future<void> installJapaneseEnglishDictionary();
+  /// Installs this analyzer's local dictionary data. No playback content is
+  /// uploaded.
+  Future<void> installDictionary();
 
   /// Removes only the rebuildable local dictionary cache.
-  Future<void> removeJapaneseEnglishDictionary();
+  Future<void> removeDictionary();
 
   Future<void> dispose();
 }

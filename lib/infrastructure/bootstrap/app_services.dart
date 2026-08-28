@@ -19,6 +19,8 @@ import '../tracking/anilist_catalog_repository.dart';
 import '../tracking/anilist_client.dart';
 import '../tracking/ani_zip_episode_repository.dart';
 import '../tracking/auth.dart';
+import '../database/vocabulary_repository_impl.dart';
+import '../database/watch_history_repository_impl.dart';
 import '../tracking/mal_client.dart';
 import '../tracking/tracking_repository_impl.dart';
 
@@ -37,6 +39,8 @@ class AppServices {
     required this.sources,
     required this.learning,
     required this.learningSubtitles,
+    required this.watchHistory,
+    required this.vocabulary,
     required this._profileDatabase,
     required this._sharedDatabase,
     required this._queryCache,
@@ -55,6 +59,8 @@ class AppServices {
   final SourceResolver sources;
   final LanguageLearningTools learning;
   final LearningSubtitleRepository learningSubtitles;
+  final SqliteWatchHistoryRepository watchHistory;
+  final SqliteVocabularyRepository vocabulary;
 
   final AppDatabase _profileDatabase;
   final AppDatabase _sharedDatabase;
@@ -116,7 +122,7 @@ class AppServices {
 
     return AppServices._(
       catalog: AnilistCatalogRepository(anilist),
-      episodes: AniZipEpisodeRepository(transport),
+      episodes: AniZipEpisodeRepository(transport, cache: queryCache),
       tracking: TrackingRepositoryImpl(anilist: anilist, mal: mal, auth: auth),
       settings: settings,
       credentials: credentials,
@@ -127,6 +133,8 @@ class AppServices {
       sources: sources,
       learning: learning,
       learningSubtitles: learningSubtitles,
+      watchHistory: SqliteWatchHistoryRepository(databases.profile),
+      vocabulary: SqliteVocabularyRepository(databases.profile),
       profileDatabase: databases.profile,
       sharedDatabase: databases.shared,
       queryCache: queryCache,
@@ -146,6 +154,8 @@ class AppServices {
       if (settings case final SqliteSettingsRepository repository) {
         repository.dispose();
       }
+      watchHistory.dispose();
+      vocabulary.dispose();
       _queryCache.dispose();
       _transport.close();
       playbackProbe.close();

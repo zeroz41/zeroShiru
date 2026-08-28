@@ -36,6 +36,9 @@ class AnilistCatalogRepository implements CatalogRepository {
   @override
   Future<Media?> mediaById(int id) => _client.mediaById(id);
 
+  @override
+  Future<List<Media>> similar(int mediaId) => _client.similarMedia(mediaId);
+
   static String? _nonEmpty(String? value) {
     final trimmed = value?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;

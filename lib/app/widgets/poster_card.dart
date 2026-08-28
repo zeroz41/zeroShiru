@@ -35,6 +35,8 @@ class PosterCard extends StatefulWidget {
     this.progress,
     this.metadata = const [],
     this.width = ZeroTokens.cardWidth,
+    this.aspect = ZeroTokens.cardAspect,
+    this.artAspect = ZeroTokens.cardArtAspect,
   }) : assert(
          image == null || imageBuilder == null,
          'Provide image or imageBuilder, not both.',
@@ -67,6 +69,11 @@ class PosterCard extends StatefulWidget {
   final List<PosterCardMetadata> metadata;
 
   final double width;
+
+  /// Overall card and artwork proportions; the defaults are the portrait
+  /// poster shape, landscape callers (episode cards) override both.
+  final double aspect;
+  final double artAspect;
 
   @override
   State<PosterCard> createState() => _PosterCardState();
@@ -102,7 +109,7 @@ class _PosterCardState extends State<PosterCard> {
             child: SizedBox(
               width: widget.width,
               child: AspectRatio(
-                aspectRatio: ZeroTokens.cardAspect,
+                aspectRatio: widget.aspect,
                 child: Stack(
                   clipBehavior: Clip.none,
                   children: [
@@ -114,7 +121,7 @@ class _PosterCardState extends State<PosterCard> {
                             ? Offset(
                                 0,
                                 -ZeroTokens.cardHoverRise /
-                                    (widget.width / ZeroTokens.cardAspect),
+                                    (widget.width / widget.aspect),
                               )
                             : Offset.zero,
                         duration: _pressed
@@ -203,7 +210,7 @@ class _PosterCardState extends State<PosterCard> {
                     ZeroTokens.radiusPosterArt,
                   ),
                   child: AspectRatio(
-                    aspectRatio: ZeroTokens.cardArtAspect,
+                    aspectRatio: widget.artAspect,
                     child: Stack(
                       fit: StackFit.expand,
                       children: [

@@ -8,6 +8,8 @@ import '../../app/widgets/skeleton.dart';
 import '../../app/widgets/titled_rail.dart';
 import '../../application/library/providers.dart';
 import '../../domain/models/media.dart';
+import '../../application/library/home_feed.dart';
+import '../library/continue_watching_card.dart';
 import '../library/media_details.dart';
 import '../library/media_poster.dart';
 import 'home_hero.dart';
@@ -51,11 +53,9 @@ class HomePage extends ConsumerWidget {
               ),
               sliver: SliverList.list(
                 children: _withSectionSpacing([
-                  if (personalized?.continueWatching.isNotEmpty ?? false)
-                    _MediaRail(
-                      title: 'Continue watching',
-                      media: personalized!.continueWatching,
-                    ),
+                  // A sparse Continue Watching row directly under the hero
+                  // reads as dead space, so the always-full For You rail
+                  // leads and resume slots in after it.
                   if (personalized?.recommendations.isNotEmpty ?? false)
                     _MediaRail(
                       title: personalized!.favoriteGenres.isEmpty
@@ -70,6 +70,8 @@ class HomePage extends ConsumerWidget {
                               sort: 'score',
                             ),
                     ),
+                  if (personalized?.continueWatching.isNotEmpty ?? false)
+                    _ContinueWatchingRail(items: personalized!.continueWatching),
                   if (data.trending.isNotEmpty)
                     _MediaRail(
                       title: 'Trending this season',
@@ -114,6 +116,23 @@ class HomePage extends ConsumerWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _ContinueWatchingRail extends StatelessWidget {
+  const _ContinueWatchingRail({required this.items});
+
+  final List<ContinueWatchingItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return TitledRail(
+      title: 'Continue watching',
+      children: [
+        for (final item in items)
+          ContinueWatchingCard(key: ValueKey(item.media.id), item: item),
+      ],
     );
   }
 }

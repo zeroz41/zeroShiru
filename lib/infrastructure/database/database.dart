@@ -14,13 +14,16 @@ import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 
 /// Bump when adding a migration to [_migrations].
-const int schemaVersion = 1;
+const int schemaVersion = 2;
 
 /// One migration step. Runs inside a transaction; the journal row is written
 /// by the caller.
 typedef Migration = void Function(Database db);
 
-const Map<int, Migration> _migrations = {1: _createInitialSchema};
+const Map<int, Migration> _migrations = {
+  1: _createInitialSchema,
+  2: _createWatchHistorySchema,
+};
 
 void _createInitialSchema(Database db) {
   db.execute('''
@@ -41,6 +44,43 @@ void _createInitialSchema(Database db) {
     CREATE TABLE IF NOT EXISTS kv (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
+    )
+  ''');
+}
+
+/// Watch history (per-episode progress plus a renderable show snapshot) and
+/// the learning mode's saved vocabulary. Both are user-owned durable state,
+/// so they live in the profile database; the shared cache database simply
+/// carries the empty tables.
+void _createWatchHistorySchema(Database db) {
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS episode_progress (
+      media_id INTEGER NOT NULL,
+      episode INTEGER NOT NULL,
+      position_ms INTEGER NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      completed INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (media_id, episode)
+    )
+  ''');
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS watched_media (
+      media_id INTEGER PRIMARY KEY,
+      media_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  ''');
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS saved_words (
+      base_form TEXT NOT NULL,
+      reading TEXT NOT NULL DEFAULT '',
+      romaji TEXT,
+      part_of_speech TEXT,
+      glosses TEXT NOT NULL DEFAULT '[]',
+      context TEXT,
+      saved_at INTEGER NOT NULL,
+      PRIMARY KEY (base_form, reading)
     )
   ''');
 }

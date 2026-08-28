@@ -15,6 +15,8 @@ export 'episode_repository.dart';
 export 'language_learning.dart';
 export 'learning_subtitles.dart';
 export 'media_engine.dart';
+export 'vocabulary.dart';
+export 'watch_history.dart';
 
 /// Runs source searches (declarative manifests) and merges results.
 abstract interface class SourceResolver {
@@ -41,6 +43,14 @@ abstract interface class TrackingRepository {
   /// Apply the watch-counts rules (never move progress backward, zero-episode
   /// offset, completion/repeat handling) and queue the mutation offline-safely.
   Future<void> updateProgress(Media media, int episode);
+
+  /// Exchanges a pasted AniList OAuth redirect — or a bare access token — for
+  /// a stored, validated account. Throws [ArgumentError] when no token can be
+  /// read from the text and [StateError] when AniList rejects it.
+  Future<TrackingAccount> connectAniList(String pasted);
+
+  /// Removes the stored credentials for one service.
+  Future<void> disconnect(TrackingAccountService service);
 }
 
 abstract interface class SettingsRepository {

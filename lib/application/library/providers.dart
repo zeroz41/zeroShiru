@@ -49,6 +49,61 @@ List<EpisodeInfo> fallbackEpisodeMetadata(Media media) => [
     ),
 ];
 
+/// Optional like [episodeRepositoryProvider]: rails and details degrade to
+/// tracker-only (or no) progress when no local history store is installed,
+/// which is also what keeps existing widget tests hermetic.
+final watchHistoryProvider = Provider<WatchHistoryRepository?>((ref) => null);
+
+final watchHistoryRecentProvider = FutureProvider<List<WatchHistoryEntry>>((
+  ref,
+) async {
+  final history = ref.watch(watchHistoryProvider);
+  if (history == null) return const [];
+  final subscription = history.changes.listen((_) => ref.invalidateSelf());
+  ref.onDispose(subscription.cancel);
+  return history.recent();
+});
+
+/// Highest locally-completed episode for one show; live against history
+/// writes so the details modal and episode list update as episodes finish.
+final localWatchedThroughProvider = FutureProvider.family<int, int>((
+  ref,
+  mediaId,
+) async {
+  final history = ref.watch(watchHistoryProvider);
+  if (history == null) return 0;
+  final subscription = history.changes.listen((_) => ref.invalidateSelf());
+  ref.onDispose(subscription.cancel);
+  return history.watchedThrough(mediaId);
+});
+
+/// In-episode resume fractions for one show, keyed by episode number.
+/// Completed episodes are excluded — rows already mark those as watched.
+final episodeResumeProgressProvider =
+    FutureProvider.family<Map<int, double>, int>((ref, mediaId) async {
+      final history = ref.watch(watchHistoryProvider);
+      if (history == null) return const {};
+      final subscription = history.changes.listen((_) => ref.invalidateSelf());
+      ref.onDispose(subscription.cancel);
+      final rows = await history.progressForMedia(mediaId);
+      return {
+        for (final row in rows)
+          if (!row.completed &&
+              row.position >= minimumMeaningfulWatch &&
+              row.fraction > 0)
+            row.episode: row.fraction,
+      };
+    });
+
+/// Community "more like this" for the details modal; SWR-cached beneath the
+/// catalog port, so reopening a show is instant and offline-tolerant.
+final similarMediaProvider = FutureProvider.family<List<Media>, int>((
+  ref,
+  mediaId,
+) {
+  return ref.watch(catalogRepositoryProvider).similar(mediaId);
+});
+
 final homeFeedProvider = FutureProvider<HomeFeed>((ref) {
   return loadHomeFeed(ref.watch(catalogRepositoryProvider));
 });
@@ -58,7 +113,8 @@ final personalizedHomeFeedProvider = FutureProvider<PersonalizedHomeFeed>((
 ) async {
   final tracking = ref.watch(trackingRepositoryProvider);
   final home = await ref.watch(homeFeedProvider.future);
-  return loadPersonalizedHomeFeed(tracking, home);
+  final history = await ref.watch(watchHistoryRecentProvider.future);
+  return loadPersonalizedHomeFeed(tracking, home, localHistory: history);
 });
 
 final trackingAccountsProvider = FutureProvider<List<TrackingAccount>>((ref) {

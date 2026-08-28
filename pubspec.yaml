@@ -32,6 +32,7 @@ dependencies:
   path_provider: ^2.1.6
   sqlite3: ^3.5.2
   tiny_segmenter_dart: ^1.0.1
+  url_launcher: ^6.3.2
   window_manager: ^0.5.2
 
 dev_dependencies:

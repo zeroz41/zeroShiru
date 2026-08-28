@@ -28,6 +28,7 @@ class EpisodeSelector extends StatefulWidget {
     this.fallbackArtwork,
     this.durationMinutes,
     this.items = const [],
+    this.progress = const {},
     this.onPlay,
     this.playingEpisode,
   });
@@ -41,6 +42,10 @@ class EpisodeSelector extends StatefulWidget {
   final String? fallbackArtwork;
   final int? durationMinutes;
   final List<EpisodeInfo> items;
+
+  /// In-episode watched fraction by episode number, for partially watched
+  /// episodes only; completed ones use [watchedThrough].
+  final Map<int, double> progress;
   final ValueChanged<int> onSelected;
   final ValueChanged<int>? onPlay;
   final int? playingEpisode;
@@ -161,6 +166,9 @@ class _EpisodeSelectorState extends State<EpisodeSelector> {
             selected: episode == widget.selectedEpisode,
             watched: episode <= widget.watchedThrough,
             next: episode == widget.watchedThrough + 1,
+            progress: episode <= widget.watchedThrough
+                ? null
+                : widget.progress[episode],
             onTap: () => widget.onSelected(episode),
             onPlay: widget.onPlay == null
                 ? null
@@ -396,6 +404,7 @@ class _EpisodeRow extends StatelessWidget {
     required this.selected,
     required this.watched,
     required this.next,
+    required this.progress,
     required this.onTap,
     required this.onPlay,
     required this.playing,
@@ -411,6 +420,9 @@ class _EpisodeRow extends StatelessWidget {
   final bool selected;
   final bool watched;
   final bool next;
+
+  /// Watched fraction for a partially watched episode, null otherwise.
+  final double? progress;
   final VoidCallback onTap;
   final VoidCallback? onPlay;
   final bool playing;
@@ -484,6 +496,17 @@ class _EpisodeRow extends StatelessWidget {
                             left: ZeroTokens.space2,
                             bottom: ZeroTokens.space2,
                             child: _WatchedMark(),
+                          ),
+                        if (progress case final progress? when progress > 0)
+                          Align(
+                            alignment: Alignment.bottomCenter,
+                            child: LinearProgressIndicator(
+                              key: ValueKey('episode-progress-$episode'),
+                              value: progress,
+                              minHeight: 3,
+                              color: context.zeroPalette.accentHover,
+                              backgroundColor: const Color(0x99000000),
+                            ),
                           ),
                       ],
                     ),
