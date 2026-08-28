@@ -25,14 +25,23 @@ completed or nearly-finished (≥95%) episodes start from the beginning.
 
 - **Continue watching** on Home: local shows lead (ordered by when you last
   pressed play here), tracker-only Currently Watching entries follow.
-- **For you**: engagement- and recency-weighted genre affinity counts local
-  history alongside the tracker list, so recommendations work signed out.
-  Local results render without waiting for the tracker, then tracker data and
-  one cached page from the strongest established genre enrich the row when
-  available. Candidate genres are cosine-ranked instead of used as a hard
-  filter; low-confidence profiles explore more often, established profiles
-  reserve one in five slots for discovery, and likely sequel titles are
-  collapsed or suppressed when that franchise is already in watch history.
+- **For you**: a profile with no meaningful watch evidence gets normal popular
+  and trending titles, diversified across genres and franchises. As viewing
+  supplies evidence, engagement- and recency-weighted genre affinity gradually
+  personalizes the same rail. Local history is counted alongside the tracker
+  list, so recommendations work signed out. Local results render without
+  waiting for the tracker, then tracker data and one cached page from the
+  strongest established genre enrich the row when available. Candidate genres
+  are cosine-ranked instead of used as a hard filter; low-confidence profiles
+  explore more often, established profiles reserve one in five slots for
+  discovery, and likely sequel titles are collapsed or suppressed when that
+  franchise is already in watch history.
+- **Genre picks**: established profiles get up to two rails for demonstrated
+  tastes and one adjacent discovery genre selected by catalogue co-occurrence.
+  This lets niche combinations remain the profile's baseline instead of
+  pulling every user toward mainstream genres. With no reliable evidence, the
+  rails remain broad catalogue defaults. Trending, new, and all-time-popular
+  rails keep their global meaning rather than masquerading as recommendations.
 - The details modal and episode selector show watched state as the maximum
   of tracker progress and local completions, and open on the episode the
   player would come back to.

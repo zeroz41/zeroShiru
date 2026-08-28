@@ -32,11 +32,13 @@ class PersonalizedHomeFeed {
     this.continueWatching = const [],
     this.recommendations = const [],
     this.favoriteGenres = const [],
+    this.genreSections = const [],
   });
 
   final List<ContinueWatchingItem> continueWatching;
   final List<Media> recommendations;
   final List<String> favoriteGenres;
+  final List<HomeGenreSection> genreSections;
 
   bool get isEmpty => continueWatching.isEmpty && recommendations.isEmpty;
 }
@@ -132,33 +134,166 @@ Future<List<Media>> loadPersonalizedGenreCandidates(
   }
 }
 
+const _genrePriority = [
+  'Action',
+  'Fantasy',
+  'Comedy',
+  'Romance',
+  'Adventure',
+  'Drama',
+  'Sci-Fi',
+  'Mystery',
+  'Slice of Life',
+  'Sports',
+];
+
+const _minimumGenreSectionSize = 5;
+
 List<HomeGenreSection> _genreSections(List<Media> source) {
-  const priority = [
-    'Action',
-    'Fantasy',
-    'Comedy',
-    'Romance',
-    'Adventure',
-    'Drama',
-    'Sci-Fi',
-    'Mystery',
-    'Slice of Life',
-    'Sports',
-  ];
-  final unique = <int, Media>{for (final media in source) media.id: media};
+  final buckets = _genreBuckets(source);
   return [
-    for (final genre in priority)
-      if (unique.values.where((media) => media.genres.contains(genre)).length >=
-          5)
+    for (final genre in _genrePriority)
+      if ((buckets[genre]?.length ?? 0) >= _minimumGenreSectionSize)
         HomeGenreSection(
           genre: genre,
-          media: unique.values
-              .where((media) => media.genres.contains(genre))
-              .take(25)
-              .toList(growable: false),
+          media: buckets[genre]!.take(25).toList(growable: false),
         ),
   ].take(3).toList(growable: false);
 }
+
+Map<String, List<Media>> _genreBuckets(List<Media> source) {
+  final unique = <int, Media>{for (final media in source) media.id: media};
+  final buckets = <String, List<Media>>{};
+  for (final media in unique.values) {
+    final genres = media.genres
+        .map((genre) => genre.trim())
+        .where((genre) => genre.isNotEmpty)
+        .toSet();
+    for (final genre in genres) {
+      buckets.putIfAbsent(genre, () => []).add(media);
+    }
+  }
+  return buckets;
+}
+
+/// Keeps the broad catalogue rails honest while making the optional genre
+/// rails useful to an established profile. Two rails follow demonstrated
+/// taste; the final rail favors a genre that co-occurs with that taste, giving
+/// niche profiles adjacent discovery instead of forcing a mainstream genre.
+List<HomeGenreSection> _personalizedGenreSections(
+  HomeFeed home, {
+  required Map<String, double> affinity,
+  required double profileConfidence,
+}) {
+  if (profileConfidence < 0.18 || affinity.isEmpty) {
+    return home.genreSections;
+  }
+
+  final source = [...home.trending, ...home.newReleases, ...home.popular];
+  final buckets = _genreBuckets(source)
+    ..removeWhere((_, media) => media.length < _minimumGenreSectionSize);
+  if (buckets.isEmpty) return home.genreSections;
+
+  final tasteGenres =
+      affinity.keys.where(buckets.containsKey).toList(growable: false)
+        ..sort((a, b) {
+          final byAffinity = affinity[b]!.compareTo(affinity[a]!);
+          return byAffinity != 0 ? byAffinity : a.compareTo(b);
+        });
+  final selected = tasteGenres.take(2).toList();
+
+  if (selected.isNotEmpty && selected.length < 3) {
+    final strongestAffinity = affinity.values.reduce(math.max);
+    final dominantGenres = affinity.keys
+        .where((genre) => affinity[genre]! >= strongestAffinity * 0.55)
+        .toSet();
+    final discoveryGenres =
+        buckets.keys
+            .where(
+              (genre) =>
+                  !selected.contains(genre) && !dominantGenres.contains(genre),
+            )
+            .toList(growable: false)
+          ..sort((a, b) {
+            final byScore =
+                _genreDiscoveryScore(
+                  b,
+                  buckets[b]!,
+                  affinity,
+                  strongestAffinity,
+                ).compareTo(
+                  _genreDiscoveryScore(
+                    a,
+                    buckets[a]!,
+                    affinity,
+                    strongestAffinity,
+                  ),
+                );
+            return byScore != 0 ? byScore : a.compareTo(b);
+          });
+    if (discoveryGenres.isNotEmpty) selected.add(discoveryGenres.first);
+  }
+
+  for (final section in home.genreSections) {
+    if (selected.length == 3) break;
+    if (!selected.contains(section.genre) &&
+        buckets.containsKey(section.genre)) {
+      selected.add(section.genre);
+    }
+  }
+  if (selected.length < 3) {
+    final remaining =
+        buckets.keys
+            .where((genre) => !selected.contains(genre))
+            .toList(growable: false)
+          ..sort((a, b) {
+            final byQuality = _genreQuality(buckets[b]!)
+                .compareTo(_genreQuality(buckets[a]!));
+            return byQuality != 0 ? byQuality : a.compareTo(b);
+          });
+    selected.addAll(remaining.take(3 - selected.length));
+  }
+
+  return [
+    for (final genre in selected.take(3))
+      HomeGenreSection(
+        genre: genre,
+        media: buckets[genre]!.take(25).toList(growable: false),
+      ),
+  ];
+}
+
+double _genreDiscoveryScore(
+  String genre,
+  List<Media> media,
+  Map<String, double> affinity,
+  double strongestAffinity,
+) {
+  var relatedness = 0.0;
+  for (final item in media) {
+    final companions = item.genres
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty && value != genre)
+        .toSet();
+    if (companions.isEmpty) continue;
+    relatedness +=
+        companions.fold<double>(
+          0,
+          (sum, value) => sum + (affinity[value] ?? 0),
+        ) /
+        companions.length;
+  }
+  relatedness = relatedness / media.length / strongestAffinity;
+  final coverage = (media.length / 25).clamp(0.0, 1.0);
+  return relatedness * 0.65 + _genreQuality(media) * 0.25 + coverage * 0.10;
+}
+
+double _genreQuality(List<Media> media) =>
+    media.fold<double>(
+      0,
+      (sum, item) => sum + (item.averageScore ?? 55) / 100,
+    ) /
+    media.length;
 
 /// Builds a small, explainable recommendation set from the user's active
 /// watches. It deliberately re-ranks the already cached home catalogue rather
@@ -335,20 +470,24 @@ PersonalizedHomeFeed buildPersonalizedHomeFeed(
     for (final seed in tasteSeeds.values)
       _franchiseKey(seed.media.title.display),
   };
-  final recommendations = affinity.isEmpty
-      ? const <Media>[]
-      : _rankRecommendations(
-          catalogCandidates.values,
-          affinity: affinity,
-          dominantGenres: dominantGenres.toSet(),
-          profileConfidence: profileConfidence,
-          excludedFranchises: watchedFranchises,
-        );
+  final recommendations = _rankRecommendations(
+    catalogCandidates.values,
+    affinity: affinity,
+    dominantGenres: dominantGenres.toSet(),
+    profileConfidence: profileConfidence,
+    excludedFranchises: watchedFranchises,
+  );
+  final genreSections = _personalizedGenreSections(
+    home,
+    affinity: affinity,
+    profileConfidence: profileConfidence,
+  );
 
   return PersonalizedHomeFeed(
     continueWatching: continueWatching,
     recommendations: recommendations,
     favoriteGenres: shownFavoriteGenres,
+    genreSections: genreSections,
   );
 }
 
@@ -478,6 +617,7 @@ List<Media> _rankRecommendations(
 
   final remaining = byFranchise.values.toList();
   final selected = <_RankedCandidate>[];
+  final diversityWeight = affinity.isEmpty ? 0.22 : 0.10;
   final discoveryInterval = profileConfidence < 0.40
       ? 3
       : profileConfidence < 0.70
@@ -495,11 +635,11 @@ List<Media> _rankRecommendations(
     if (pool.isEmpty) pool = remaining;
     final next = pool.reduce(
       (best, candidate) =>
-          _diversifiedScore(candidate, selected) >
-              _diversifiedScore(best, selected)
+          _diversifiedScore(candidate, selected, diversityWeight) >
+              _diversifiedScore(best, selected, diversityWeight)
           ? candidate
-          : _diversifiedScore(candidate, selected) ==
-                    _diversifiedScore(best, selected) &&
+          : _diversifiedScore(candidate, selected, diversityWeight) ==
+                    _diversifiedScore(best, selected, diversityWeight) &&
                 _compareCandidates(candidate, best) < 0
           ? candidate
           : best,
@@ -513,6 +653,7 @@ List<Media> _rankRecommendations(
 double _diversifiedScore(
   _RankedCandidate candidate,
   List<_RankedCandidate> selected,
+  double diversityWeight,
 ) {
   if (selected.isEmpty) return candidate.baseScore;
   final genres = candidate.media.genres.toSet();
@@ -524,7 +665,7 @@ double _diversifiedScore(
     final overlap = genres.intersection(other).length / union;
     greatestOverlap = math.max(greatestOverlap, overlap);
   }
-  return candidate.baseScore - greatestOverlap * 0.10;
+  return candidate.baseScore - greatestOverlap * diversityWeight;
 }
 
 int _compareCandidates(_RankedCandidate a, _RankedCandidate b) {

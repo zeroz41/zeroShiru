@@ -79,6 +79,30 @@ void main() {
     popular: const [],
   );
 
+  test('a new profile gets diverse popular defaults', () {
+    final defaultHome = HomeFeed(
+      hero: const [],
+      trending: [
+        _media(501, 'Big Action', genres: const ['Action'], score: 99),
+        _media(502, 'More Action', genres: const ['Action'], score: 98),
+        _media(503, 'Great Drama', genres: const ['Drama'], score: 97),
+        _media(504, 'Great Mystery', genres: const ['Mystery'], score: 96),
+        _media(505, 'Great Fantasy', genres: const ['Fantasy'], score: 95),
+      ],
+      newReleases: const [],
+      popular: const [],
+    );
+
+    final feed = buildPersonalizedHomeFeed(defaultHome);
+
+    expect(feed.favoriteGenres, isEmpty);
+    expect(feed.recommendations, hasLength(5));
+    expect(
+      feed.recommendations.take(3).map((media) => media.genres.single).toSet(),
+      hasLength(3),
+    );
+  });
+
   test(
     'local history alone fills Continue Watching and recommendations',
     () async {
@@ -258,6 +282,72 @@ void main() {
       ),
     );
     expect(feed.recommendations[4].genres, isNot(contains('Slice of Life')));
+  });
+
+  test('an established niche profile stays niche and discovers nearby', () {
+    final nicheHome = HomeFeed(
+      hero: const [],
+      trending: [
+        for (var id = 510; id < 515; id++)
+          _media(
+            id,
+            'Unsettling Experiment $id',
+            genres: const ['Psychological', 'Horror'],
+            score: 68,
+          ),
+        for (var id = 520; id < 525; id++)
+          _media(
+            id,
+            'Strange Thriller $id',
+            genres: const ['Psychological', 'Thriller'],
+            score: 70,
+          ),
+        for (var id = 530; id < 535; id++)
+          _media(
+            id,
+            'Mainstream Action $id',
+            genres: const ['Action'],
+            score: 99,
+          ),
+      ],
+      newReleases: const [],
+      popular: const [],
+    );
+
+    final feed = buildPersonalizedHomeFeed(
+      nicheHome,
+      localHistory: [
+        for (var id = 1; id <= 4; id++)
+          _history(
+            _media(
+              id,
+              'Niche Favorite $id',
+              genres: const ['Psychological', 'Horror'],
+              episodes: 12,
+            ),
+            through: 12,
+          ),
+      ],
+      now: DateTime(2026, 8, 27),
+    );
+
+    expect(feed.favoriteGenres, ['Horror', 'Psychological']);
+    expect(
+      feed.recommendations.take(4),
+      everyElement(
+        isA<Media>().having(
+          (media) => media.genres,
+          'genres',
+          contains('Psychological'),
+        ),
+      ),
+    );
+    expect(feed.recommendations[4].genres, contains('Action'));
+    expect(feed.genreSections.map((section) => section.genre), [
+      'Horror',
+      'Psychological',
+      'Thriller',
+    ]);
   });
 
   test('one brief play stays a low-confidence taste signal', () {

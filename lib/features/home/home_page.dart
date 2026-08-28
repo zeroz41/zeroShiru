@@ -54,8 +54,8 @@ class HomePage extends ConsumerWidget {
               sliver: SliverList.list(
                 children: _withSectionSpacing([
                   // A sparse Continue Watching row directly under the hero
-                  // reads as dead space, so the always-full For You rail
-                  // leads and resume slots in after it.
+                  // reads as dead space, so the always-full recommendation
+                  // rail leads and resume slots in after it.
                   if (personalized.recommendations.isNotEmpty)
                     _MediaRail(
                       title: personalized.favoriteGenres.isEmpty
@@ -93,7 +93,10 @@ class HomePage extends ConsumerWidget {
                         year: DateTime.now().year,
                       ),
                     ),
-                  for (final section in data.genreSections)
+                  for (final section
+                      in personalized.genreSections.isEmpty
+                          ? data.genreSections
+                          : personalized.genreSections)
                     _MediaRail(
                       title: '${section.genre} picks',
                       media: section.media,

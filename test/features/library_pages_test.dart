@@ -109,6 +109,9 @@ void main() {
 
     expect(find.text('Seasonal Show'), findsWidgets);
     expect(find.text('84%'), findsWidgets);
+    expect(find.text('For you'), findsOneWidget);
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -800));
+    await tester.pump();
     expect(find.text('Trending this season'), findsOneWidget);
     expect(find.text('Browse by genre'), findsNothing);
     expect(catalog.queries, hasLength(3));
@@ -169,6 +172,34 @@ void main() {
       ),
     );
     expect(bar.value, closeTo(0.35, 0.001));
+  });
+
+  testWidgets('a cold-start profile keeps the normal For You rail', (
+    tester,
+  ) async {
+    final catalog = _FakeCatalog();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          catalogRepositoryProvider.overrideWithValue(catalog),
+          personalizedHomeFeedProvider.overrideWith(
+            (ref) => PersonalizedHomeFeed(
+              recommendations: [media(31, 'Starter Show')],
+            ),
+          ),
+        ],
+        child: MaterialApp(
+          theme: buildZeroTheme(),
+          home: const Scaffold(body: HomePage()),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(find.text('For you'), findsOneWidget);
+    expect(find.text('Start here'), findsNothing);
+    expect(find.text('Starter Show'), findsOneWidget);
   });
 
   testWidgets('Search loads an initial page and submits a title query', (
